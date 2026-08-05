@@ -1,0 +1,16 @@
+export const QUERY_SUGGESTIONS = [
+  "Show all customers",
+  "Show all products",
+  "Show all orders",
+  "Show monthly sales",
+  "Revenue chart",
+  "Monthly revenue",
+  "Top customers",
+  "Top selling products",
+  "ER Diagram",
+  "Show database schema",
+  "Total revenue",
+  "Average order value",
+  "Customer count",
+  "List all tables",
+];
