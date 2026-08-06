@@ -20,12 +20,12 @@ export function exportChatPDF(messages: Message[]) {
     const role = msg.role === "user" ? "User" : "BG AI";
 
     doc.setFontSize(12);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text(role, 20, y);
 
     y += 7;
 
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
 
     const text = doc.splitTextToSize(msg.content || "", 170);
 
@@ -34,11 +34,11 @@ export function exportChatPDF(messages: Message[]) {
     y += text.length * 7 + 8;
 
     if (msg.sql) {
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
       doc.text("Generated SQL", 20, y);
       y += 7;
 
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
 
       const sql = doc.splitTextToSize(msg.sql || "", 170);
 
