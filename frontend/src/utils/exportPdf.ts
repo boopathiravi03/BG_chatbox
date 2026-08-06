@@ -40,7 +40,7 @@ export function exportChatPDF(messages: Message[]) {
 
       doc.setFont(undefined, "normal");
 
-      const sql = doc.splitTextToSize(msg.sql, 170);
+      const sql = doc.splitTextToSize(msg.sql || "", 170);
 
       doc.text(sql, 20, y);
 

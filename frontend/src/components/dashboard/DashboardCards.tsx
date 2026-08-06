@@ -16,6 +16,7 @@ const cards = [
     color: "from-blue-500 to-blue-600",
     border: "border-blue-500/20",
     textColor: "text-blue-400",
+    prefix: "",
   },
   {
     key: "products",
@@ -24,6 +25,7 @@ const cards = [
     color: "from-emerald-500 to-emerald-600",
     border: "border-emerald-500/20",
     textColor: "text-emerald-400",
+    prefix: "",
   },
   {
     key: "orders",
@@ -32,6 +34,7 @@ const cards = [
     color: "from-amber-500 to-amber-600",
     border: "border-amber-500/20",
     textColor: "text-amber-400",
+    prefix: "",
   },
   {
     key: "revenue",
