@@ -141,100 +141,128 @@ export default function MessageBubble({ message, searchTerm, onSend, isTyping }:
           )}
         </div>
 
-        {!isUser && (
-          <>
-            {message.sql && (
-              <div className="mt-5">
-                <SQLBlock sql={message.sql} />
-              </div>
-            )}
+        {!isUser && (() => {
+          const hasData = !!(
+            message.sql ||
+            message.chart ||
+            message.diagram ||
+            message.analytics ||
+            (message.result?.rows && message.result.rows.length > 0)
+          );
 
-             {message.result?.success && (
-               <div className="mt-5">
-                 <ResultTable result={message.result} />
-               </div>
-             )}
+          return (
+            <>
+              {message.sql && (
+                <div className="mt-5">
+                  <SQLBlock sql={message.sql} />
+                </div>
+              )}
 
-             {message.chart && (
-               <div className="mt-5">
-                 <ChartRenderer chart={message.chart} />
-               </div>
-             )}
+              {message.result?.success && (message.result?.rows?.length || 0) > 0 && (
+                <div className="mt-5">
+                  <ResultTable result={message.result} />
+                </div>
+              )}
 
-             {message.diagram && (
-               <div className="mt-5">
-                 {typeof message.diagram === "string" ? (
-                   <MermaidChart chart={message.diagram} />
-                 ) : (
-                   <RelationshipGraph graph={message.diagram} />
-                 )}
-               </div>
-             )}
+              {message.chart && (
+                <div className="mt-5">
+                  <ChartRenderer chart={message.chart} />
+                </div>
+              )}
 
-             {message.analytics && (
-               <div className="mt-5">
-                 <AnalyticsDashboard data={message.analytics} />
-               </div>
-             )}
+              {message.diagram && (
+                <div className="mt-5">
+                  {typeof message.diagram === "string" ? (
+                    <MermaidChart chart={message.diagram} />
+                  ) : (
+                    <RelationshipGraph graph={message.diagram} />
+                  )}
+                </div>
+              )}
 
-             {message.explanation && (
-               <div className="mt-5">
-                 <ExplanationCard
-                   explanation={message.explanation}
-                 />
-               </div>
-             )}
+              {message.analytics && (
+                <div className="mt-5">
+                  <AnalyticsDashboard data={message.analytics} />
+                </div>
+              )}
 
-              {message.result?.success && (
-                <div className="mt-4 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/60 p-4">
-                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">⚡ Query Statistics</p>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
-                    <div>
-                      <span className="block text-gray-500 dark:text-gray-400">Execution Time</span>
-                      <span className="text-gray-900 dark:text-gray-100 font-medium">{message.result.execution_time_ms ?? 0} ms</span>
+              {message.explanation && (() => {
+                const hasData = !!(
+                  message.sql ||
+                  message.chart ||
+                  message.diagram ||
+                  message.analytics ||
+                  (message.result?.rows && message.result.rows.length > 0)
+                );
+                return hasData ? (
+                  <div className="mt-5">
+                    <ExplanationCard
+                      explanation={message.explanation}
+                    />
+                  </div>
+                ) : null;
+              })()}
+
+              {(() => {
+                const hasData = !!(
+                  message.sql ||
+                  message.chart ||
+                  message.diagram ||
+                  message.analytics ||
+                  (message.result?.rows && message.result.rows.length > 0)
+                );
+                return hasData && message.result?.success ? (
+                  <div className="mt-4 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900/60 p-4">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">⚡ Query Statistics</p>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
+                      <div>
+                        <span className="block text-gray-500 dark:text-gray-400">Execution Time</span>
+                        <span className="text-gray-900 dark:text-gray-100 font-medium">{message.result.execution_time_ms ?? 0} ms</span>
+                      </div>
+                      <div>
+                        <span className="block text-gray-500 dark:text-gray-400">Rows Returned</span>
+                        <span className="text-gray-900 dark:text-gray-100 font-medium">{message.result.rows_returned ?? 0}</span>
+                      </div>
+                      <div>
+                        <span className="block text-gray-500 dark:text-gray-400">Database</span>
+                        <span className="text-gray-900 dark:text-gray-100 font-medium">SQLite</span>
+                      </div>
+                      <div>
+                        <span className="block text-gray-500 dark:text-gray-400">Status</span>
+                        <span className="text-green-600 dark:text-green-400 font-medium">Success</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="block text-gray-500 dark:text-gray-400">Rows Returned</span>
-                      <span className="text-gray-900 dark:text-gray-100 font-medium">{message.result.rows_returned ?? 0}</span>
-                    </div>
-                    <div>
-                      <span className="block text-gray-500 dark:text-gray-400">Database</span>
-                      <span className="text-gray-900 dark:text-gray-100 font-medium">SQLite</span>
-                    </div>
-                    <div>
-                      <span className="block text-gray-500 dark:text-gray-400">Status</span>
-                      <span className="text-green-600 dark:text-green-400 font-medium">Success</span>
-                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {message.followups && message.followups.length > 0 && (
+                <div className="mt-5">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">💡 Suggested Follow-up Questions</p>
+                  <div className="flex flex-wrap gap-2">
+                    {message.followups.map((item, i) => (
+                      <button
+                        key={i}
+                        onClick={() => onSend?.(item)}
+                        className="px-3 py-2 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-blue-600 dark:hover:bg-blue-600 transition text-sm text-gray-900 dark:text-gray-100"
+                      >
+                        {item}
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
 
-             {message.followups && message.followups.length > 0 && (
-               <div className="mt-5">
-                 <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">💡 Suggested Follow-up Questions</p>
-                 <div className="flex flex-wrap gap-2">
-                   {message.followups.map((item, i) => (
-                     <button
-                       key={i}
-                       onClick={() => onSend?.(item)}
-                       className="px-3 py-2 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-blue-600 dark:hover:bg-blue-600 transition text-sm text-gray-900 dark:text-gray-100"
-                     >
-                       {item}
-                     </button>
-                   ))}
-                 </div>
-               </div>
-             )}
-
-            <button
-              onClick={copyResponse}
-              className="mt-4 text-sm dark:bg-zinc-800 bg-gray-200 dark:hover:bg-zinc-700 hover:bg-gray-300 px-3 py-2 rounded-lg flex items-center gap-2 dark:text-white text-gray-900"
-            >
-              {copied ? <Check size={16} /> : <Copy size={16} />}
-              {copied ? "Copied" : "Copy Response"}
-            </button>
-          </>
-        )}
+             <button
+               onClick={copyResponse}
+               className="mt-4 text-sm dark:bg-zinc-800 bg-gray-200 dark:hover:bg-zinc-700 hover:bg-gray-300 px-3 py-2 rounded-lg flex items-center gap-2 dark:text-white text-gray-900"
+             >
+               {copied ? <Check size={16} /> : <Copy size={16} />}
+               {copied ? "Copied" : "Copy Response"}
+             </button>
+           </>
+         );
+       })()}
       </div>
     </div>
   );

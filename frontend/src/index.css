@@ -196,3 +196,18 @@ body {
     transform: scaleY(2.2);
   }
 }
+
+.react-flow__node {
+  color: #000 !important;
+  background: #fff !important;
+  font-weight: 600;
+}
+
+.react-flow__node-default {
+  color: #000 !important;
+  background: #fff !important;
+}
+
+.react-flow__node-default:hover {
+  background: #f9f9f9 !important;
+}

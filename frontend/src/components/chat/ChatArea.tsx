@@ -6,7 +6,6 @@ import { Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { exportChatPDF } from "../../utils/exportPdf";
 import DatabaseStats from "./DatabaseStats";
-import DashboardCards from "../dashboard/DashboardCards";
 import { getDatabaseInfo } from "../../services/api";
 
 interface ChatAreaProps {
@@ -17,6 +16,7 @@ interface ChatAreaProps {
   onSend: (message: string) => void;
   onSessionClick?: (session: any) => void;
   uploadVersion?: number;
+  onStop?: () => void;
 }
 
 const SUGGESTIONS = [
@@ -28,7 +28,7 @@ const SUGGESTIONS = [
   "Top customers",
 ];
 
-export default function ChatArea({ messages, loading, sessions = [], activeSessionId, onSend, onSessionClick, uploadVersion = 0 }: ChatAreaProps) {
+export default function ChatArea({ messages, loading, sessions = [], activeSessionId, onSend, onSessionClick, uploadVersion = 0, onStop }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [suggestion, setSuggestion] = useState("");
   const [showDbStats, setShowDbStats] = useState(false);
@@ -83,7 +83,6 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
       {messages.length === 0 ? (
         <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0">
           <div className="max-w-4xl mx-auto">
-            <DashboardCards uploadVersion={uploadVersion} />
             <div className="flex flex-col items-center justify-center py-20">
               <Hero />
               <div className="flex flex-wrap gap-3 mt-8 justify-center">
@@ -150,7 +149,6 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
 
           <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0">
             <div className="max-w-4xl mx-auto">
-              <DashboardCards uploadVersion={uploadVersion} />
 
               {messages.map((msg, index) => (
                 <div key={index}>
@@ -171,16 +169,27 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
       <div className="sticky bottom-0 border-t border-white/5 bg-[#09090B] p-4">
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-end mb-3">
-            <button
-              onClick={() => exportChatPDF(messages)}
-              disabled={messages.length === 0}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg text-white text-sm"
-            >
-              📄 Export PDF
-            </button>
+            {messages.some((msg) => {
+              if (msg.role !== "assistant") return false;
+              return !!(
+                msg.generated_sql ||
+                msg.chart ||
+                msg.diagram ||
+                msg.analytics ||
+                (msg.result?.rows && msg.result.rows.length > 0)
+              );
+            }) && (
+              <button
+                onClick={() => exportChatPDF(messages)}
+                disabled={messages.length === 0}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg text-white text-sm"
+              >
+                📄 Export PDF
+              </button>
+            )}
           </div>
 
-          <ChatInput onSend={onSend} disabled={loading} initialMessage={suggestion} />
+          <ChatInput onSend={onSend} disabled={loading} initialMessage={suggestion} onStop={onStop} loading={loading} />
         </div>
       </div>
 

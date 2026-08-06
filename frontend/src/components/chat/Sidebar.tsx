@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { Database, Plus, Sun, Moon, Upload, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Database, Plus, Sun, Moon, Upload, X, Server } from "lucide-react";
 import type { ChatSession } from "../../types";
 import DatabaseUploader from "./DatabaseUploader";
 import DatabasePopup from "./DatabasePopup";
+import ConnectDatabaseModal from "./ConnectDatabaseModal";
+import { getDatabaseInfo, getDatabaseType } from "../../services/api";
 import { useTheme } from "../../context/ThemeContext";
 
 interface Props {
@@ -12,13 +14,51 @@ interface Props {
   activeSessionId?: string | null;
   onSessionClick?: (session: ChatSession) => void;
   onUploadComplete?: () => void;
+  onDatabaseConnected?: () => void;
 }
 
-export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessionId, onSessionClick, onUploadComplete }: Props) {
+type DbType = "sqlite" | "mysql" | "postgres" | "none";
+
+export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessionId, onSessionClick, onUploadComplete, onDatabaseConnected }: Props) {
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
   const [showDatabase, setShowDatabase] = useState(false);
+  const [showConnectModal, setShowConnectModal] = useState<"mysql" | "postgres" | null>(null);
+  const [dbType, setDbType] = useState<DbType>("none");
+  const [loadingDbInfo, setLoadingDbInfo] = useState(true);
   const { theme, toggleTheme } = useTheme();
+
+  const fetchDbInfo = async () => {
+    try {
+      const typeData = await getDatabaseType();
+      setDbType(typeData.db_type as DbType);
+    } catch (error) {
+      console.error("Failed to fetch database type:", error);
+      setDbType("none");
+    } finally {
+      setLoadingDbInfo(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDbInfo();
+  }, []);
+
+  const getDbStatusLabel = () => {
+    if (loadingDbInfo) return "Loading...";
+    switch (dbType) {
+      case "sqlite":
+        return "SQLite Connected";
+      case "mysql":
+        return "MySQL Connected";
+      case "postgres":
+        return "PostgreSQL Connected";
+      default:
+        return "Not Connected";
+    }
+  };
+
+  const isConnected = dbType !== "none";
 
   return (
     <aside className="w-72 border-r border-white/10 dark:bg-[#111111] bg-white dark:text-white text-gray-900 flex flex-col">
@@ -66,11 +106,31 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
                 className="w-full text-left px-4 py-2.5 dark:hover:bg-white/5 hover:bg-gray-100 text-sm flex items-center gap-2 dark:text-gray-300 text-gray-700"
               >
                 <Database size={14} />
-                Upload SQLite
+                SQLite
+              </button>
+              <button
+                onClick={() => {
+                  setShowUploadMenu(false);
+                  setShowConnectModal("mysql");
+                }}
+                className="w-full text-left px-4 py-2.5 dark:hover:bg-white/5 hover:bg-gray-100 text-sm flex items-center gap-2 dark:text-gray-300 text-gray-700"
+              >
+                <Server size={14} />
+                MySQL
+              </button>
+              <button
+                onClick={() => {
+                  setShowUploadMenu(false);
+                  setShowConnectModal("postgres");
+                }}
+                className="w-full text-left px-4 py-2.5 dark:hover:bg-white/5 hover:bg-gray-100 text-sm flex items-center gap-2 dark:text-gray-300 text-gray-700"
+              >
+                <Server size={14} />
+                PostgreSQL
               </button>
               <button className="w-full text-left px-4 py-2.5 dark:hover:bg-white/5 hover:bg-gray-100 text-sm flex items-center gap-2 dark:text-gray-300 text-gray-700">
                 <Upload size={14} />
-                Upload CSV
+                CSV
               </button>
             </div>
           )}
@@ -101,6 +161,11 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
       </div>
 
       <div className="p-4 border-t border-white/10">
+        <div className="flex items-center gap-2 mb-3 px-1">
+          <span className={`text-xs font-medium ${isConnected ? "text-green-400" : "text-gray-500"}`}>
+            {isConnected ? "🟢" : "⚪"} {getDbStatusLabel()}
+          </span>
+        </div>
         <nav className="space-y-2">
           <button
             onClick={() => setShowDatabase(true)}
@@ -134,6 +199,17 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
 
       {showDatabase && (
         <DatabasePopup onClose={() => setShowDatabase(false)} />
+      )}
+
+      {showConnectModal && (
+        <ConnectDatabaseModal
+          defaultType={showConnectModal}
+          onClose={() => setShowConnectModal(null)}
+          onConnected={() => {
+            fetchDbInfo();
+            onDatabaseConnected?.();
+          }}
+        />
       )}
     </aside>
   );

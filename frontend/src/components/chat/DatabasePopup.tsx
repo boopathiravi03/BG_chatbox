@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Database, X, Table } from "lucide-react";
-import { getSchema } from "../../services/api";
+import { Database, X, Table, Download, Upload, Save } from "lucide-react";
+import { getSchema, getDatabaseInfo, createBackup, restoreDatabase, downloadBackup } from "../../services/api";
 
 interface Props {
   onClose: () => void;
@@ -12,24 +12,91 @@ interface SchemaTable {
 
 export default function DatabasePopup({ onClose }: Props) {
   const [schema, setSchema] = useState<Record<string, any>>({});
+  const [dbInfo, setDbInfo] = useState<{ database?: string; tables?: number; rows?: number; size?: string }>({});
   const [loading, setLoading] = useState(true);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const fetchSchema = async () => {
+    const fetchData = async () => {
       try {
-        const data = await getSchema();
-        setSchema(data || {});
+        const [schemaData, infoData] = await Promise.all([
+          getSchema(),
+          getDatabaseInfo(),
+        ]);
+        setSchema(schemaData || {});
+        setDbInfo(infoData || {});
       } catch (error) {
-        console.error("Failed to fetch schema:", error);
+        console.error("Failed to fetch database info:", error);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchSchema();
+    fetchData();
   }, []);
 
   const tables = Object.keys(schema);
+
+  const handleBackup = async () => {
+    setBackupLoading(true);
+    setMessage("");
+    try {
+      const data = await createBackup();
+      if (data.status === "success") {
+        setMessage(`✅ ${data.message} (${data.size})`);
+      } else {
+        setMessage(`❌ ${data.message}`);
+      }
+    } catch (error) {
+      setMessage("❌ Backup failed");
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setRestoreLoading(true);
+    setMessage("");
+    try {
+      const data = await restoreDatabase(file);
+      if (data.status === "success") {
+        setMessage(`✅ ${data.message}`);
+        setTimeout(() => {
+          onClose();
+          window.location.reload();
+        }, 1500);
+      } else {
+        setMessage(`❌ ${data.message}`);
+      }
+    } catch (error) {
+      setMessage("❌ Restore failed");
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    try {
+      const response = await downloadBackup();
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = response.headers.get("Content-Disposition")?.split("filename=")[1]?.replace(/"/g, "") || "backup.db";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      setMessage("✅ Backup downloaded");
+    } catch (error) {
+      setMessage("❌ Download failed");
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -47,11 +114,22 @@ export default function DatabasePopup({ onClose }: Props) {
         <div className="mb-4">
           <p className="text-sm dark:text-gray-400 text-gray-700 mb-2">Database</p>
           <p className="text-sm font-mono dark:bg-white/5 bg-gray-100 rounded-lg px-3 py-2 dark:text-white text-black">
-            ecommerce.db
+            {dbInfo.database || "ecommerce.db"}
           </p>
         </div>
 
-        <div>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="dark:bg-white/5 bg-gray-100 rounded-xl p-3">
+            <p className="text-xs dark:text-gray-400 text-gray-500 mb-1">Tables</p>
+            <p className="text-lg font-semibold dark:text-white text-black">{dbInfo.tables ?? tables.length}</p>
+          </div>
+          <div className="dark:bg-white/5 bg-gray-100 rounded-xl p-3">
+            <p className="text-xs dark:text-gray-400 text-gray-500 mb-1">Rows</p>
+            <p className="text-lg font-semibold dark:text-white text-black">{dbInfo.rows ?? 0}</p>
+          </div>
+        </div>
+
+        <div className="mb-4">
           <p className="text-sm dark:text-gray-400 text-gray-700 mb-2 flex items-center gap-2">
             <Table size={14} />
             Tables
@@ -61,7 +139,7 @@ export default function DatabasePopup({ onClose }: Props) {
           ) : tables.length === 0 ? (
             <p className="text-sm dark:text-gray-500 text-gray-500">No tables found</p>
           ) : (
-            <div className="space-y-1 max-h-60 overflow-y-auto">
+            <div className="space-y-1 max-h-40 overflow-y-auto">
               {tables.map((table) => (
                 <div
                   key={table}
@@ -73,6 +151,42 @@ export default function DatabasePopup({ onClose }: Props) {
             </div>
           )}
         </div>
+
+        <div className="border-t border-white/10 dark:border-gray-700 pt-4 space-y-2">
+          <p className="text-xs dark:text-gray-400 text-gray-500 mb-2">Backup & Restore</p>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={handleBackup}
+              disabled={backupLoading}
+              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm"
+            >
+              <Save size={14} />
+              {backupLoading ? "Saving..." : "Backup"}
+            </button>
+            <label className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm cursor-pointer">
+              <Upload size={14} />
+              {restoreLoading ? "Restoring..." : "Restore"}
+              <input
+                type="file"
+                accept=".db"
+                onChange={handleRestore}
+                className="hidden"
+                disabled={restoreLoading}
+              />
+            </label>
+            <button
+              onClick={handleDownload}
+              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm"
+            >
+              <Download size={14} />
+              Download
+            </button>
+          </div>
+        </div>
+
+        {message && (
+          <p className="mt-4 text-sm text-center">{message}</p>
+        )}
       </div>
     </div>
   );

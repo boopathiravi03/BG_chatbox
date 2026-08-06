@@ -20,6 +20,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<"ready" | "thinking" | "executing" | "done" | "error">("ready");
   const loadedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("bgai_sessions");
@@ -73,9 +74,11 @@ export default function Home() {
     setLoading(true);
     setStatus("thinking");
 
+    abortControllerRef.current = new AbortController();
+
     try {
       setStatus("executing");
-      const data = await sendMessage(content);
+      const data = await sendMessage(content, abortControllerRef.current.signal);
 
       const assistantMessage: Message = {
         role: "assistant",
@@ -126,15 +129,27 @@ export default function Home() {
     }
   };
 
+  const handleStop = () => {
+    abortControllerRef.current?.abort();
+    setLoading(false);
+    setStatus("ready");
+  };
+
   const handleHistoryClick = (session: ChatSession) => {
     setActiveSessionId(session.id);
     setMessages(session.messages);
   };
 
   const [uploadVersion, setUploadVersion] = useState(0);
+  const [dbConnected, setDbConnected] = useState(false);
 
   const handleUploadComplete = () => {
     setUploadVersion((prev) => prev + 1);
+    setDbConnected(true);
+  };
+
+  const handleDatabaseConnected = () => {
+    setDbConnected(true);
   };
 
   return (
@@ -145,6 +160,8 @@ export default function Home() {
       activeSessionId={activeSessionId}
       onSessionClick={handleHistoryClick}
       onUploadComplete={handleUploadComplete}
+      dbConnected={dbConnected}
+      onDatabaseConnected={handleDatabaseConnected}
     >
       <ChatArea
         messages={messages}
@@ -154,6 +171,7 @@ export default function Home() {
         onSend={handleSend}
         onSessionClick={handleHistoryClick}
         uploadVersion={uploadVersion}
+        onStop={handleStop}
       />
     </MainLayout>
   );

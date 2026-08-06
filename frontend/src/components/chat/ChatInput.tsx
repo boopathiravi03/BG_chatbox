@@ -6,9 +6,11 @@ interface ChatInputProps {
   onSend?: (message: string) => void;
   disabled?: boolean;
   initialMessage?: string;
+  onStop?: () => void;
+  loading?: boolean;
 }
 
-export default function ChatInput({ onSend, disabled, initialMessage }: ChatInputProps) {
+export default function ChatInput({ onSend, disabled, initialMessage, onStop, loading }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [filtered, setFiltered] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -155,6 +157,23 @@ export default function ChatInput({ onSend, disabled, initialMessage }: ChatInpu
             </button>
           </div>
           <div className="flex items-center gap-3">
+            {loading && onStop ? (
+              <button
+                onClick={onStop}
+                className="bg-red-600 hover:bg-red-700 rounded-xl px-5 py-2 flex items-center gap-2 text-white text-sm"
+              >
+                ■ Stop BG AI
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={disabled || !message.trim()}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-5 py-2 flex items-center gap-2 text-white"
+              >
+                Ask BG AI
+                <SendHorizontal size={18} />
+              </button>
+            )}
             <button
               onClick={startListening}
               className={`relative flex items-center justify-center w-12 h-12 rounded-full transition-all duration-300 ${
@@ -168,14 +187,6 @@ export default function ChatInput({ onSend, disabled, initialMessage }: ChatInpu
               {listening && (
                 <span className="absolute inset-0 rounded-full border-2 border-red-400 animate-ping" />
               )}
-            </button>
-            <button
-              onClick={handleSend}
-              disabled={disabled || !message.trim()}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-5 py-2 flex items-center gap-2 text-white"
-            >
-              Ask BG AI
-              <SendHorizontal size={18} />
             </button>
           </div>
         </div>

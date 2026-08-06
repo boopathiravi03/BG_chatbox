@@ -6,6 +6,8 @@ from app.tools.generate_chart import generate_chart
 from app.tools.generate_flowchart import generate_flowchart
 from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
+import json
+import re
 
 
 def _get_followups(user_message: str) -> list[str]:
@@ -53,18 +55,81 @@ def _get_followups(user_message: str) -> list[str]:
     ]
 
 
+def _classify_intent(user_message: str) -> str:
+    prompt = f"""You are an intent classifier for a database assistant.
+
+Classify the user message into ONE category only.
+
+Categories:
+- chat: greetings, general questions, small talk, questions about the assistant itself, or anything not related to database operations
+- sql: direct database queries like "show customers", "list orders", "find products"
+- chart: requests for charts, graphs, visualizations like "revenue chart", "sales graph"
+- dashboard: requests for analytics dashboard, business insights, overview
+- relationship_graph: requests to visualize table relationships, schema connections
+- er_diagram: requests for ER diagram, entity relationship diagram, schema diagram
+- analytics: requests for analytics, metrics, statistics
+
+Return ONLY the category name, nothing else.
+
+User: {user_message}
+"""
+
+    try:
+        response = ask_groq(prompt).strip().lower()
+        valid_intents = ["chat", "sql", "chart", "dashboard", "relationship_graph", "er_diagram", "analytics"]
+        for intent in valid_intents:
+            if intent in response:
+                return intent
+        return "sql"
+    except Exception:
+        return "sql"
+
+
+def _handle_chat(user_message: str) -> dict:
+    prompt = f"""You are BG AI, a friendly AI database assistant.
+
+You are having a conversation with the user. Answer naturally and helpfully.
+
+If the user asks about yourself, explain that you are BG AI, an AI-powered database assistant that can help with SQL queries, data analysis, charts, dashboards, and database visualization.
+
+If the user asks general questions, answer them naturally.
+
+Do NOT generate SQL unless the user explicitly asks for data from the database.
+
+User: {user_message}
+"""
+
+    try:
+        explanation = ask_groq(prompt).strip()
+    except Exception:
+        explanation = "Hello! 👋 I'm BG AI. How can I help you with your database today?"
+
+    return {
+        "generated_sql": "",
+        "result": {
+            "success": True,
+            "columns": [],
+            "rows": [],
+            "execution_time_ms": 0,
+            "rows_returned": 0,
+        },
+        "diagram": None,
+        "analytics": None,
+        "explanation": explanation,
+        "followups": _get_followups(user_message),
+    }
+
+
 def run_agent(user_message: str):
     """
-    Main AI Agent
+    Main AI Agent with Groq-based intent classification
     """
+    intent = _classify_intent(user_message)
 
-    message = user_message.lower()
+    if intent == "chat":
+        return _handle_chat(user_message)
 
-    if any(x in message for x in [
-        "er diagram",
-        "flowchart",
-        "schema diagram",
-    ]):
+    if intent == "er_diagram":
         return {
             "generated_sql": "",
             "result": {
@@ -79,15 +144,7 @@ def run_agent(user_message: str):
             "followups": _get_followups(user_message),
         }
 
-    if any(x in message for x in [
-        "relationship graph",
-        "er graph",
-        "database relationships",
-        "visualize schema",
-        "visualize my database",
-        "show table connections",
-        "table relationship",
-    ]):
+    if intent == "relationship_graph":
         return {
             "generated_sql": "",
             "result": {
@@ -102,14 +159,7 @@ def run_agent(user_message: str):
             "followups": _get_followups(user_message),
         }
 
-    if any(x in message for x in [
-        "open analytics dashboard",
-        "show analytics",
-        "show dashboard",
-        "dashboard",
-        "business insights",
-        "sales dashboard",
-    ]):
+    if intent == "dashboard" or intent == "analytics":
         return {
             "generated_sql": "",
             "result": {
@@ -151,7 +201,9 @@ Output must be raw SQL only.
 
     result = execute_query(sql)
 
-    chart = generate_chart(user_message, result)
+    chart = None
+    if intent == "chart":
+        chart = generate_chart(user_message, result)
 
     explanation = explain_data(user_message, result)
 
@@ -160,6 +212,7 @@ Output must be raw SQL only.
         "result": result,
         "chart": chart,
         "diagram": None,
+        "analytics": None,
         "explanation": explanation,
         "followups": _get_followups(user_message),
     }

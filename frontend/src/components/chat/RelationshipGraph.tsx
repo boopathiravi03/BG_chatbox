@@ -1,6 +1,47 @@
-import { ReactFlow } from "@xyflow/react";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  Handle,
+  Position,
+} from "@xyflow/react";
+
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+
+
+const TableNode = ({ data }: any) => {
+  return (
+    <div
+      style={{
+        padding: "10px 20px",
+        border: "1px solid #555",
+        borderRadius: "8px",
+        background: "white",
+        color: "black",
+        fontWeight: "bold",
+      }}
+    >
+      <Handle
+        type="target"
+        position={Position.Top}
+      />
+
+      {data.label}
+
+      <Handle
+        type="source"
+        position={Position.Bottom}
+      />
+    </div>
+  );
+};
+
+
+const nodeTypes = {
+  tableNode: TableNode,
+};
+
 
 interface Props {
   graph: {
@@ -9,38 +50,43 @@ interface Props {
   };
 }
 
-export default function RelationshipGraph({ graph }: Props) {
-  const nodes = useMemo(
-    () =>
-      graph.nodes.map((n, index) => ({
-        id: n.id,
-        data: { label: n.label },
-        position: {
-          x: (index % 3) * 250,
-          y: Math.floor(index / 3) * 150,
-        },
-      })),
-    [graph.nodes]
-  );
 
-  const edges = useMemo(
-    () =>
-      graph.edges.map((e, index) => ({
-        id: String(index),
-        source: e.from,
-        target: e.to,
-        animated: true,
-      })),
-    [graph.edges]
-  );
+export default function RelationshipGraph({ graph }: Props) {
+
+  const nodes = graph.nodes.map((node, index) => ({
+    id: String(node.id),
+    type: "tableNode",
+    position: {
+      x: (index % 2) * 250,
+      y: Math.floor(index / 2) * 150,
+    },
+    data: {
+      label: node.label,
+    },
+  }));
+
+
+  const edges = graph.edges.map((edge, index) => ({
+    id: `edge-${index}`,
+    source: String(edge.from),
+    target: String(edge.to),
+    sourceHandle: null,
+    targetHandle: null,
+  }));
+
 
   return (
-    <div className="h-[500px] rounded-xl overflow-hidden border border-zinc-700 dark:bg-[#111] bg-white">
+    <div style={{ height: "500px", width: "100%" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={nodeTypes}
         fitView
-      />
+      >
+        <Background />
+        <Controls />
+        <MiniMap />
+      </ReactFlow>
     </div>
   );
 }
