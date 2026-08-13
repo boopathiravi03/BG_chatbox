@@ -4,6 +4,7 @@ import {
   Controls,
   Handle,
   Position,
+  MarkerType,
 } from "@xyflow/react";
 
 import "@xyflow/react/dist/style.css";
@@ -85,14 +86,11 @@ export default function RelationshipGraph({ graph }: Props) {
     id: `edge-${index}`,
     source: String(edge.from),
     target: String(edge.to),
-    sourceHandle: null,
-    targetHandle: null,
     type: "smoothstep",
     animated: true,
     style: { stroke: "#3b82f6", strokeWidth: 2 },
     markerEnd: {
-      type: "arrowclosed",
-      color: "#3b82f6",
+      type: MarkerType.ArrowClosed,
       width: 20,
       height: 20,
     },

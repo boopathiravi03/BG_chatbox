@@ -86,7 +86,7 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
   );
 
   const groupedSessions = filteredSessions.reduce<Record<string, ChatSession[]>>((acc, session) => {
-    const label = formatDateLabel(session.createdAt);
+    const label = formatDateLabel(String(session.createdAt));
     if (!acc[label]) acc[label] = [];
     acc[label].push(session);
     return acc;
