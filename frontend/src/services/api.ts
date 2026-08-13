@@ -115,10 +115,14 @@ export async function restoreDatabase(file: File) {
   return response.json();
 }
 
-export async function downloadBackup() {
+export async function downloadBackup(): Promise<Response> {
   const response = await fetch(`${API_BASE}/download-backup`);
-  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-  return response.blob();
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  return response;
 }
 
 export async function optimizeSQL(sql: string) {
