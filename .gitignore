@@ -9,3 +9,5 @@ node_modules/
 dist/
 
 .venv_backup/
+
+backend/venv_backup/
