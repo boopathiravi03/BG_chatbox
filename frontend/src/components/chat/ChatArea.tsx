@@ -133,15 +133,6 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
                   >
                     <X size={20} />
                   </button>
-                  <button
-                    onClick={() => {
-                      setShowSearch(false);
-                      clearSearch();
-                    }}
-                    className="p-2 hover:bg-zinc-800 rounded-lg text-gray-400 hover:text-white"
-                  >
-                    ✕
-                  </button>
                 </div>
               )}
             </div>
@@ -151,7 +142,7 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
             <div className="max-w-4xl mx-auto">
 
               {messages.map((msg, index) => (
-                <div key={index}>
+                <div key={index} className="msg-fade-in">
                   <MessageBubble
                     message={msg}
                     searchTerm={searchQuery}

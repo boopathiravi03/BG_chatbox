@@ -1,4 +1,4 @@
-import { Mic, SendHorizontal, Database, Sparkles } from "lucide-react";
+import { Mic, SendHorizontal, Database, Sparkles, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { QUERY_SUGGESTIONS } from "../../data/suggestions";
 
@@ -10,11 +10,19 @@ interface ChatInputProps {
   loading?: boolean;
 }
 
+const loadingMessages = [
+  "Analyzing database...",
+  "Generating SQL...",
+  "Processing results...",
+  "Fetching data...",
+];
+
 export default function ChatInput({ onSend, disabled, initialMessage, onStop, loading }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [filtered, setFiltered] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [listening, setListening] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState(loadingMessages[0]);
   const inputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,6 +36,16 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
       setMessage("");
     }
   }, [disabled]);
+
+  useEffect(() => {
+    if (loading) {
+      setLoadingMsg(loadingMessages[Math.floor(Math.random() * loadingMessages.length)]);
+      const interval = setInterval(() => {
+        setLoadingMsg(loadingMessages[Math.floor(Math.random() * loadingMessages.length)]);
+      }, 2500);
+      return () => clearInterval(interval);
+    }
+  }, [loading]);
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -116,7 +134,7 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
 
   return (
     <div className="w-full max-w-4xl relative" ref={inputRef}>
-      <div className="rounded-2xl border border-white/10 dark:bg-[#1b1b1f] bg-white shadow-lg p-4">
+      <div className="rounded-2xl border border-white/10 dark:bg-[#1b1b1f] bg-white shadow-lg p-4 transition-all">
         <textarea
           rows={2}
           placeholder="Ask anything about your database..."
@@ -128,7 +146,7 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
               handleSend();
             }
           }}
-          className="w-full resize-none bg-transparent outline-none text-base dark:text-white text-black dark:placeholder:text-gray-500 placeholder:text-gray-400"
+          className="w-full resize-none bg-transparent outline-none text-base dark:text-white text-black dark:placeholder:text-gray-500 placeholder:text-gray-400 transition-all duration-300 focus:shadow-[0_0_12px_rgba(59,130,246,0.5)] rounded-lg px-1"
         />
         {listening && (
           <div className="flex items-center gap-3 mt-3">
@@ -162,8 +180,14 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
                 onClick={onStop}
                 className="bg-red-600 hover:bg-red-700 rounded-xl px-5 py-2 flex items-center gap-2 text-white text-sm"
               >
-                ■ Stop BG AI
+                <Loader2 size={18} className="animate-spin" />
+                Stop BG AI
               </button>
+            ) : loading ? (
+              <span className="text-xs dark:text-gray-400 text-gray-500 flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin text-blue-500" />
+                {loadingMsg}
+              </span>
             ) : (
               <button
                 onClick={handleSend}

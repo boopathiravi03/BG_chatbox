@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Database, Plus, Sun, Moon, Upload, X, Server } from "lucide-react";
+import { Database, Plus, Sun, Moon, Upload, X, Server, MoreHorizontal, Trash2 } from "lucide-react";
 import type { ChatSession } from "../../types";
 import DatabaseUploader from "./DatabaseUploader";
 import DatabasePopup from "./DatabasePopup";
@@ -15,17 +15,32 @@ interface Props {
   onSessionClick?: (session: ChatSession) => void;
   onUploadComplete?: () => void;
   onDatabaseConnected?: () => void;
+  onDeleteSession?: (id: string) => void;
 }
 
 type DbType = "sqlite" | "mysql" | "postgres" | "none";
 
-export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessionId, onSessionClick, onUploadComplete, onDatabaseConnected }: Props) {
+function formatDateLabel(createdAt?: string): string {
+  if (!createdAt) return "";
+  const date = new Date(createdAt);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const sessionDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (sessionDay.getTime() === today.getTime()) return "Today";
+  if (sessionDay.getTime() === yesterday.getTime()) return "Yesterday";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
+}
+
+export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessionId, onSessionClick, onUploadComplete, onDatabaseConnected, onDeleteSession }: Props) {
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
   const [showDatabase, setShowDatabase] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState<"mysql" | "postgres" | null>(null);
   const [dbType, setDbType] = useState<DbType>("none");
   const [loadingDbInfo, setLoadingDbInfo] = useState(true);
+  const [historySearch, setHistorySearch] = useState("");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const { theme, toggleTheme } = useTheme();
 
   const fetchDbInfo = async () => {
@@ -44,6 +59,12 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
     fetchDbInfo();
   }, []);
 
+  useEffect(() => {
+    const handleClickOutside = () => setOpenMenuId(null);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, []);
+
   const getDbStatusLabel = () => {
     if (loadingDbInfo) return "Loading...";
     switch (dbType) {
@@ -59,6 +80,19 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
   };
 
   const isConnected = dbType !== "none";
+
+  const filteredSessions = sessions.filter((s) =>
+    s.title.toLowerCase().includes(historySearch.toLowerCase())
+  );
+
+  const groupedSessions = filteredSessions.reduce<Record<string, ChatSession[]>>((acc, session) => {
+    const label = formatDateLabel(session.createdAt);
+    if (!acc[label]) acc[label] = [];
+    acc[label].push(session);
+    return acc;
+  }, {});
+
+  const groupOrder = ["Today", "Yesterday", ...new Set(Object.keys(groupedSessions).filter((k) => k !== "Today" && k !== "Yesterday"))];
 
   return (
     <aside className="w-72 border-r border-white/10 dark:bg-[#111111] bg-white dark:text-white text-gray-900 flex flex-col">
@@ -137,25 +171,80 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 mt-6">
-        <p className="text-xs dark:text-gray-500 text-gray-500 mb-3 px-2">History</p>
-        <nav className="space-y-1">
-          {sessions.length === 0 ? (
-            <p className="text-xs dark:text-gray-600 text-gray-500 px-2">No history yet</p>
+      <div className="flex-1 overflow-y-auto px-4 mt-4">
+        <p className="text-xs dark:text-gray-500 text-gray-500 mb-2 px-2">History</p>
+        <div className="px-2 mb-3">
+          <input
+            type="text"
+            placeholder="Search chats..."
+            value={historySearch}
+            onChange={(e) => setHistorySearch(e.target.value)}
+            className="w-full px-3 py-1.5 text-xs rounded-lg dark:bg-zinc-800 bg-gray-100 border border-white/10 dark:text-white text-gray-900 placeholder:text-gray-500 outline-none focus:border-blue-500 transition"
+          />
+        </div>
+        <nav className="space-y-2">
+          {filteredSessions.length === 0 ? (
+            <p className="text-xs dark:text-gray-600 text-gray-500 px-2">
+              {historySearch ? "No matching chats" : "No history yet"}
+            </p>
           ) : (
-            sessions.map((session) => (
-              <button
-                key={session.id}
-                onClick={() => onSessionClick?.(session)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate ${
-                  session.id === activeSessionId
-                    ? "bg-white/10 dark:text-white text-gray-900"
-                    : "dark:text-gray-400 text-gray-600 dark:hover:text-white hover:text-black dark:hover:bg-white/5 hover:bg-gray-100"
-                }`}
-              >
-                {session.title}
-              </button>
-            ))
+            groupOrder.map((group) => {
+              const groupSessions = groupedSessions[group];
+              if (!groupSessions) return null;
+              return (
+                <div key={group}>
+                  <p className="text-[10px] uppercase tracking-wider dark:text-gray-500 text-gray-400 mb-1 px-2 font-medium">{group}</p>
+                  <div className="space-y-1">
+                    {groupSessions.map((session) => (
+                      <div
+                        key={session.id}
+                        className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-zinc-800 group relative"
+                      >
+                        <button
+                          onClick={() => onSessionClick?.(session)}
+                          className={`flex-1 text-left truncate text-sm transition-colors ${
+                            session.id === activeSessionId
+                              ? "bg-white/10 dark:text-white text-gray-900"
+                              : "dark:text-gray-400 text-gray-600 dark:hover:text-white hover:text-black"
+                          }`}
+                        >
+                          {session.title}
+                        </button>
+                        {onDeleteSession && (
+                          <div className="relative">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMenuId(openMenuId === session.id ? null : session.id);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 dark:text-gray-400 text-gray-500 hover:text-white transition p-1"
+                              title="More"
+                            >
+                              <MoreHorizontal size={14} />
+                            </button>
+                            {openMenuId === session.id && (
+                              <div className="absolute right-0 top-full mt-1 dark:bg-[#1a1a1a] bg-white border border-white/10 rounded-lg shadow-xl z-50 min-w-[140px] overflow-hidden">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteSession(session.id);
+                                    setOpenMenuId(null);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-sm dark:hover:bg-white/5 hover:bg-gray-100 flex items-center gap-2 dark:text-red-400 text-red-600"
+                                >
+                                  <Trash2 size={14} />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
           )}
         </nav>
       </div>

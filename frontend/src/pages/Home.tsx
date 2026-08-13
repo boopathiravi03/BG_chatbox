@@ -152,6 +152,17 @@ export default function Home() {
     setDbConnected(true);
   };
 
+  const handleDeleteSession = (id: string) => {
+    const updated = sessions.filter((s) => s.id !== id);
+    setSessions(updated);
+    localStorage.setItem("bgai_sessions", JSON.stringify(updated));
+
+    if (activeSessionId === id) {
+      setActiveSessionId(null);
+      setMessages([]);
+    }
+  };
+
   return (
     <MainLayout
       status={status}
@@ -162,6 +173,7 @@ export default function Home() {
       onUploadComplete={handleUploadComplete}
       dbConnected={dbConnected}
       onDatabaseConnected={handleDatabaseConnected}
+      onDeleteSession={handleDeleteSession}
     >
       <ChatArea
         messages={messages}
