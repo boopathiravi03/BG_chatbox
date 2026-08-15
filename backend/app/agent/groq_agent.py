@@ -4,9 +4,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
+api_key = os.getenv("GROQ_API_KEY")
+
+if not api_key:
+    raise RuntimeError("GROQ_API_KEY is not configured")
+
+client = Groq(api_key=api_key)
 
 
 def ask_groq(prompt: str):
