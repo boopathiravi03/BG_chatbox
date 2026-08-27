@@ -12,6 +12,19 @@ from difflib import get_close_matches
 
 conversation_state = {}
 
+
+def clear_pending_insert():
+    """
+    Clear all pending database-operation conversation state.
+
+    Used when:
+    - database is disconnected
+    - a database connection changes
+    - a pending insert/update/delete must be cancelled
+    """
+    conversation_state.clear()
+
+
 WRITE_OPERATIONS = {"insert", "update", "delete"}
 READ_ONLY = {"select", "with", "pragma"}
 
