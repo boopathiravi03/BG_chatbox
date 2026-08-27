@@ -12,6 +12,7 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
+import type { AnalyticsData } from "../../types";
 
 ChartJS.register(
   CategoryScale,
@@ -24,26 +25,6 @@ ChartJS.register(
   Tooltip,
   Legend
 );
-
-interface AnalyticsData {
-  cards: {
-    table_count: number;
-    total_rows: number;
-    tables: Record<string, number>;
-  };
-  bar: {
-    labels: string[];
-    values: number[];
-  };
-  line: {
-    labels: string[];
-    values: number[];
-  };
-  pie: {
-    labels: string[];
-    values: number[];
-  };
-}
 
 interface Props {
   data?: AnalyticsData | null;

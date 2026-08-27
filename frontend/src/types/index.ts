@@ -1,3 +1,23 @@
+export interface AnalyticsData {
+  cards: {
+    table_count: number;
+    total_rows: number;
+    tables: Record<string, number>;
+  };
+  bar: {
+    labels: string[];
+    values: number[];
+  };
+  line: {
+    labels: string[];
+    values: number[];
+  };
+  pie: {
+    labels: string[];
+    values: number[];
+  };
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -27,21 +47,7 @@ export interface Message {
 
   diagram?: string | { nodes: any[]; edges: any[] } | null;
 
-  analytics?: {
-    cards: Record<string, number>;
-    bar: {
-      labels: string[];
-      values: number[];
-    };
-    line: {
-      labels: string[];
-      values: number[];
-    };
-    pie: {
-      labels: string[];
-      values: number[];
-    };
-  } | null;
+  analytics?: AnalyticsData | null;
 
   followups?: string[];
 
