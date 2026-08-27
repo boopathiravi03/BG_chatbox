@@ -1,4 +1,5 @@
-const API_BASE = "https://bg-chatbox.onrender.com";
+export const API_BASE =
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
 export async function sendMessage(message: string, sessionId: string) {
   const response = await fetch(`${API_BASE}/chat`, {

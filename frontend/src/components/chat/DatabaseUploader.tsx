@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Database, Upload, X, Server } from "lucide-react";
-import { connectDatabase } from "../../services/api";
+import { API_BASE, connectDatabase } from "../../services/api";
 
 interface Props {
   onClose: () => void;
@@ -42,7 +42,7 @@ export default function DatabaseUploader({ onClose, onUploadComplete }: Props) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("http://127.0.0.1:8001/upload", {
+      const response = await fetch(`${API_BASE}/upload`, {
         method: "POST",
         body: formData,
       });

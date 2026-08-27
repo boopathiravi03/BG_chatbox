@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Database, Table, FileText, Columns, HardDrive, CheckCircle, XCircle, Unplug } from "lucide-react";
-import { disconnectDatabase } from "../../services/api";
+import { disconnectDatabase, getDatabaseInfo } from "../../services/api";
 
 interface DatabaseInfo {
   database: string;
@@ -24,8 +24,7 @@ export default function DatabaseStats({ onClose, onDisconnected }: Props) {
   useEffect(() => {
     const fetchInfo = async () => {
       try {
-        const response = await fetch("http://127.0.0.1:8001/database-info");
-        const data = await response.json();
+        const data = await getDatabaseInfo();
         setInfo(data);
       } catch (error) {
         setInfo({
