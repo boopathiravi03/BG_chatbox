@@ -1,17 +1,22 @@
-import sqlite3
-from app.database.db import get_database_path
+from sqlalchemy import inspect, text
+from app.database.database_manager import get_engine
 
 
 def get_relationship_graph():
-    db_path = get_database_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    engine = get_engine()
 
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    )
+    if engine is None:
+        return {
+            "nodes": [],
+            "edges": [],
+        }
 
-    tables = [row[0] for row in cursor.fetchall()]
+    inspector = inspect(engine)
+
+    try:
+        tables = inspector.get_table_names()
+    except Exception:
+        tables = []
 
     nodes = []
     edges = []
@@ -22,15 +27,17 @@ def get_relationship_graph():
             "label": table
         })
 
-        cursor.execute(f"PRAGMA foreign_key_list({table})")
-
-        for fk in cursor.fetchall():
-            edges.append({
-                "from": table,
-                "to": fk[2]
-            })
-
-    conn.close()
+        try:
+            foreign_keys = inspector.get_foreign_keys(table)
+            for fk in foreign_keys:
+                referred_table = fk.get("referred_table")
+                if referred_table:
+                    edges.append({
+                        "from": table,
+                        "to": referred_table
+                    })
+        except Exception:
+            pass
 
     return {
         "nodes": nodes,

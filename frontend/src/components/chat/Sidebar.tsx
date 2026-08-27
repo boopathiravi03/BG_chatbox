@@ -16,6 +16,7 @@ interface Props {
   onUploadComplete?: () => void;
   onDatabaseConnected?: () => void;
   onDeleteSession?: (id: string) => void;
+  onDisconnect?: () => void;
 }
 
 type DbType = "sqlite" | "mysql" | "postgres" | "none";
@@ -32,7 +33,7 @@ function formatDateLabel(createdAt?: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
 }
 
-export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessionId, onSessionClick, onUploadComplete, onDatabaseConnected, onDeleteSession }: Props) {
+export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessionId, onSessionClick, onUploadComplete, onDatabaseConnected, onDeleteSession, onDisconnect }: Props) {
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
   const [showDatabase, setShowDatabase] = useState(false);
@@ -287,7 +288,7 @@ export default function Sidebar({ onClose, onNewChat, sessions = [], activeSessi
       )}
 
       {showDatabase && (
-        <DatabasePopup onClose={() => setShowDatabase(false)} />
+        <DatabasePopup onClose={() => setShowDatabase(false)} onDisconnected={onDisconnect} />
       )}
 
       {showConnectModal && (

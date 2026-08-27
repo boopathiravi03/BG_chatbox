@@ -15,12 +15,18 @@ def generate_chart(user_message: str, result: Dict[str, Any]):
     if len(columns) < 2 or len(rows) == 0:
         return None
 
-    labels = [str(r[0]) for r in rows]
+    def row_value(row, index):
+        if isinstance(row, dict):
+            key = columns[index]
+            return row.get(key)
+        return row[index]
+
+    labels = [str(row_value(r, 0)) for r in rows]
 
     values = []
     for col_idx in range(1, len(columns)):
         try:
-            values = [float(r[col_idx]) for r in rows]
+            values = [float(row_value(r, col_idx)) for r in rows]
             if values:
                 break
         except (TypeError, ValueError):

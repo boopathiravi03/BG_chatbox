@@ -19,7 +19,7 @@ export default function ConnectDatabaseModal({ onClose, onConnected, defaultType
   const [form, setForm] = useState({
     host: "localhost",
     port: defaultType === "mysql" ? "3306" : "5432",
-    database: "",
+    database: defaultType === "mysql" ? "" : "postgres",
     username: defaultType === "mysql" ? "root" : "postgres",
     password: "",
   });

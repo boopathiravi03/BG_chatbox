@@ -8,10 +8,12 @@ export interface Message {
   result?: {
     success: boolean;
     columns?: string[];
-    rows?: any[][];
+    rows?: any[];
     error?: string;
     execution_time_ms?: number;
     rows_returned?: number;
+    pending_confirmation?: boolean;
+    operation?: string;
   };
 
   explanation?: string;
@@ -26,12 +28,7 @@ export interface Message {
   diagram?: string | { nodes: any[]; edges: any[] } | null;
 
   analytics?: {
-    cards: {
-      customers: number;
-      orders: number;
-      products: number;
-      revenue: number;
-    };
+    cards: Record<string, number>;
     bar: {
       labels: string[];
       values: number[];
@@ -47,6 +44,21 @@ export interface Message {
   } | null;
 
   followups?: string[];
+
+  requires_confirmation?: boolean;
+
+  input_request?: {
+    type: string;
+    table: string;
+    title: string;
+    message: string;
+    fields: {
+      name: string;
+      label: string;
+      type: string;
+      required: boolean;
+    }[];
+  } | null;
 }
 
 export interface ChatSession {

@@ -5,7 +5,7 @@ interface Props {
   result?: {
     success: boolean;
     columns?: string[];
-    rows?: any[][];
+    rows?: any[];
   };
 }
 
@@ -16,10 +16,12 @@ export default function ResultTable({ result }: Props) {
     if (!result?.rows?.length) return;
 
     const data = result.rows.map((row) => {
+      const values = Array.isArray(row) ? row : Object.values(row);
+
       const obj: Record<string, any> = {};
 
       result.columns?.forEach((column, index) => {
-        obj[column] = row[index];
+        obj[column] = values[index];
       });
 
       return obj;
@@ -65,18 +67,24 @@ export default function ResultTable({ result }: Props) {
         </thead>
 
         <tbody>
-          {result.rows?.map((row, i) => (
-            <tr key={i} className="bg-white dark:bg-zinc-900">
-              {row.map((cell, cellIndex) => (
-                <td
-                  key={`${i}-${cellIndex}`}
-                  className="border border-gray-200 dark:border-zinc-700 px-3 py-2 text-gray-700 dark:text-gray-200"
-                >
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {result.rows?.map((row, i) => {
+            const values = Array.isArray(row)
+              ? row
+              : Object.values(row);
+
+            return (
+              <tr key={i} className="bg-white dark:bg-zinc-900">
+                {values.map((cell, cellIndex) => (
+                  <td
+                    key={`${i}-${cellIndex}`}
+                    className="border border-gray-200 dark:border-zinc-700 px-3 py-2 text-gray-700 dark:text-gray-200"
+                  >
+                    {cell === null || cell === undefined ? "NULL" : String(cell)}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 

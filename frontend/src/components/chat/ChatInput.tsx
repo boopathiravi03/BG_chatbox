@@ -1,6 +1,6 @@
 import { Mic, SendHorizontal, Database, Sparkles, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { QUERY_SUGGESTIONS } from "../../data/suggestions";
+import { getSuggestions } from "../../services/api";
 
 interface ChatInputProps {
   onSend?: (message: string) => void;
@@ -23,6 +23,7 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [listening, setListening] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState(loadingMessages[0]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const inputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -59,6 +60,21 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
     return () => document.removeEventListener("click", close);
   }, []);
 
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      try {
+        const data = await getSuggestions();
+        if (data.suggestions && Array.isArray(data.suggestions)) {
+          setSuggestions(data.suggestions);
+        }
+      } catch (error) {
+        console.error("Failed to fetch suggestions:", error);
+      }
+    };
+
+    fetchSuggestions();
+  }, []);
+
   const handleChange = (value: string) => {
     setMessage(value);
 
@@ -68,7 +84,7 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
       return;
     }
 
-    const results = QUERY_SUGGESTIONS.filter((item) =>
+    const results = suggestions.filter((item) =>
       item.toLowerCase().includes(value.toLowerCase())
     );
 

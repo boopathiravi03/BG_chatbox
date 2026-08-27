@@ -1,24 +1,71 @@
+from sqlalchemy import inspect, text
+from app.database.database_manager import get_engine
+
+
 def get_dashboard_data():
-    return {
-        "cards": {
-            "customers": 50,
-            "orders": 120,
-            "products": 35,
-            "revenue": 78500
-        },
+    try:
+        engine = get_engine()
 
-        "bar": {
-            "labels": ["Jan", "Feb", "Mar", "Apr"],
-            "values": [20, 45, 31, 60]
-        },
+        if engine is None:
+            return {
+                "cards": {
+                    "table_count": 0,
+                    "total_rows": 0,
+                    "tables": {},
+                },
+                "bar": {"labels": [], "values": []},
+                "line": {"labels": [], "values": []},
+                "pie": {"labels": [], "values": []},
+            }
 
-        "line": {
-            "labels": ["Jan", "Feb", "Mar", "Apr"],
-            "values": [20, 40, 70, 110]
-        },
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
 
-        "pie": {
-            "labels": ["Electronics", "Food", "Books"],
-            "values": [40, 30, 30]
+        table_stats = {}
+        with engine.connect() as conn:
+            for table in tables:
+                try:
+                    row_count = conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0
+                except Exception:
+                    row_count = 0
+                table_stats[table] = row_count
+
+        cards = {
+            "table_count": len(tables),
+            "total_rows": sum(table_stats.values()),
+            "tables": table_stats,
         }
-    }
+
+        bar = {
+            "labels": list(table_stats.keys()),
+            "values": list(table_stats.values()),
+        }
+
+        line = {
+            "labels": list(table_stats.keys()),
+            "values": list(table_stats.values()),
+        }
+
+        pie = {
+            "labels": list(table_stats.keys()),
+            "values": list(table_stats.values()),
+        }
+
+        return {
+            "cards": cards,
+            "bar": bar,
+            "line": line,
+            "pie": pie,
+        }
+    except Exception as e:
+        print(f"Dashboard data error: {e}")
+        return {
+            "cards": {
+                "table_count": 0,
+                "total_rows": 0,
+                "tables": {},
+            },
+            "bar": {"labels": [], "values": []},
+            "line": {"labels": [], "values": []},
+            "pie": {"labels": [], "values": []},
+        }

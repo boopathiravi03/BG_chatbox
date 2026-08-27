@@ -1,31 +1,46 @@
-from app.tools.get_schema import get_schema
+from sqlalchemy import inspect, text
+from app.database.database_manager import get_engine
 
 
 def generate_er_diagram():
-    schema = get_schema()
+    engine = get_engine()
+
+    if engine is None:
+        return "erDiagram\n"
+
+    inspector = inspect(engine)
+
+    try:
+        tables = inspector.get_table_names()
+    except Exception:
+        tables = []
 
     mermaid = "erDiagram\n"
 
-    relationships = {
-        "orders": [
-            ("customer_id", "customers"),
-            ("product_id", "products")
-        ],
-        "inventory": [
-            ("product_id", "products")
-        ]
-    }
-
-    for table, columns in schema.items():
+    for table in tables:
         mermaid += f"    {table.upper()} {{\n"
 
-        for column, datatype in columns.items():
-            mermaid += f"        {datatype} {column}\n"
+        try:
+            columns = inspector.get_columns(table)
+            for column in columns:
+                col_name = column.get("name", "")
+                col_type = str(column.get("type", ""))
+                mermaid += f"        {col_type} {col_name}\n"
+        except Exception:
+            pass
 
         mermaid += "    }\n\n"
 
-    for table, refs in relationships.items():
-        for _, ref_table in refs:
-            mermaid += f"    {ref_table.upper()} ||--o{{ {table.upper()} : contains\n"
+    for table in tables:
+        try:
+            foreign_keys = inspector.get_foreign_keys(table)
+            for fk in foreign_keys:
+                referred_table = fk.get("referred_table", "")
+                constrained = fk.get("constrained_columns", [])
+                referred_columns = fk.get("referred_columns", [])
+                if referred_table and constrained:
+                    mermaid += f"    {referred_table.upper()} ||--o{{ {table.upper()} : has\n"
+        except Exception:
+            pass
 
     return mermaid

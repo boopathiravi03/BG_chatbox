@@ -1,22 +1,29 @@
-from groq import Groq
 import os
+from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-api_key = os.getenv("GROQ_API_KEY")
+client = Groq(
+    api_key=os.getenv("GROQ_API_KEY")
+)
 
-if not api_key:
-    raise RuntimeError("GROQ_API_KEY is not configured")
-
-client = Groq(api_key=api_key)
+MODEL = os.getenv(
+    "GROQ_MODEL",
+    "openai/gpt-oss-20b"
+)
 
 
 def ask_groq(prompt: str):
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=MODEL,
         messages=[
-            {"role": "user", "content": prompt}
-        ]
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.1,
     )
+
     return response.choices[0].message.content

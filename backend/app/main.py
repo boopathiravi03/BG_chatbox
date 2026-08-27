@@ -3,15 +3,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
 
-from app.agent.orchestrator import run_agent
+from app.agent.orchestrator import run_agent, clear_pending_insert
+from app.agent.database_profile import DatabaseProfile
 from app.tools.get_schema import get_schema
+from app.tools.execute_query import validate_sql, execute_query
 from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
-from app.database.db import set_database, get_database_info, get_dashboard_data
-from app.database.database_manager import connect_sqlite, connect_mysql, connect_postgres, get_current_db_type
+from app.tools.analyze_database import analyze_database
+from app.database.db import get_database_info, get_dashboard_data
+from app.database.database_manager import connect_sqlite, connect_mysql, connect_postgres, get_current_db_type, get_engine, get_database_connection_info, disconnect_database
+from app.database.database_context import refresh_database_profile, clear_database_profile
 from app.database.backup import create_backup, restore_backup, get_backup_dir
 from app.tools.optimize_sql import optimize_sql
 from fastapi.responses import FileResponse
+from app.agent.orchestrator import generate_suggestions
 
 app = FastAPI(title="BG AI")
 
@@ -23,8 +28,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def startup():
+    """
+    Start BG AI without connecting to any database.
+    The user must explicitly upload or connect a database.
+    """
+    clear_database_profile()
+    set_database_profile(None)
+
+_database_profile: DatabaseProfile | None = None
+
+
+def get_database_profile() -> DatabaseProfile | None:
+    return _database_profile
+
+
+def set_database_profile(profile: DatabaseProfile | None) -> None:
+    global _database_profile
+    _database_profile = profile
+
 class ChatRequest(BaseModel):
-    message: str
+    message: str = ""
+    session_id: str = "default"
+    input_values: dict | None = None
+    pending_insert: bool = False
+
+
+class ConfirmQueryRequest(BaseModel):
+    sql: str
 
 
 class DatabaseConnection(BaseModel):
@@ -48,7 +81,20 @@ def home():
 @app.post("/chat")
 def chat(req: ChatRequest):
     try:
-        return run_agent(req.message)
+        if req.pending_insert and req.input_values:
+            schema = get_schema()
+            table = req.input_values.get("table", "")
+            if table:
+                from app.agent.orchestrator import _handle_insert_followup
+                return _handle_insert_followup(
+                    req.message,
+                    table,
+                    schema,
+                )
+        return run_agent(
+            req.message,
+            req.session_id
+        )
     except Exception as e:
         return {
             "generated_sql": "",
@@ -60,18 +106,70 @@ def chat(req: ChatRequest):
         }
 
 
+@app.post("/confirm-query")
+def confirm_query(request: ConfirmQueryRequest):
+    try:
+        validation = validate_sql(request.sql)
+
+        if not validation["allowed"]:
+            return {
+                "success": False,
+                "error": validation["reason"]
+            }
+
+        if not validation.get("requires_confirmation"):
+            return {
+                "success": False,
+                "error": "This query does not require confirmation."
+            }
+
+        result = execute_query(request.sql)
+
+        if result.get("success"):
+            clear_pending_insert()
+
+        return result
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @app.post("/upload")
 async def upload_database(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        upload_dir = Path(__file__).resolve().parents[2] / "database"
+
+        upload_dir = (
+            Path(__file__).resolve().parents[2]
+            / "database"
+        )
+
         upload_dir.mkdir(exist_ok=True)
-        db_path = upload_dir / "ecommerce.db"
+
+        safe_name = Path(file.filename).name
+        db_path = upload_dir / safe_name
         db_path.write_bytes(contents)
-        set_database(db_path)
-        return {"status": "success", "message": "Database uploaded successfully"}
+
+        # Make uploaded SQLite the ACTIVE database
+        connect_sqlite(str(db_path))
+
+        profile = analyze_database()
+        set_database_profile(profile)
+
+        return {
+            "status": "success",
+            "message": "Database uploaded successfully",
+            "database": db_path.name,
+            "tables": list(get_schema().keys()),
+        }
+
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": str(e),
+        }
 
 
 @app.post("/backup")
@@ -118,8 +216,14 @@ def download_backup():
 
 @app.post("/connect")
 def connect_database(req: DatabaseConnection):
+
     try:
+
+        # Completely remove previous connection
+        disconnect_database()
+
         if req.db_type == "mysql":
+
             connect_mysql(
                 req.host,
                 req.port,
@@ -127,7 +231,9 @@ def connect_database(req: DatabaseConnection):
                 req.username,
                 req.password,
             )
+
         elif req.db_type == "postgres":
+
             connect_postgres(
                 req.host,
                 req.port,
@@ -135,16 +241,92 @@ def connect_database(req: DatabaseConnection):
                 req.username,
                 req.password,
             )
+
         else:
-            return {"status": "error", "message": "Unsupported database type"}
+            return {
+                "status": "error",
+                "message": "Unsupported database type",
+            }
+
+        # Analyze ONLY the newly connected database
+        profile = refresh_database_profile()
+
+        schema = get_schema()
 
         return {
             "status": "success",
             "database": req.db_type,
-            "message": f"Connected to {req.db_type}",
+            "message": f"Connected to {req.db_type} successfully",
+            "database_info": get_database_info(),
+            "schema": schema,
+            "tables": list(schema.keys()),
+            "table_count": len(schema),
+            "analysis": (
+                profile.to_context()
+                if profile
+                else ""
+            ),
         }
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        error_message = str(e)
+        if "1045" in error_message:
+            friendly_message = (
+                "Access denied. Please check your "
+                "username and password."
+            )
+        elif (
+            "does not exist" in error_message
+            and "database" in error_message.lower()
+        ):
+            friendly_message = (
+                "Database does not exist. "
+                "Please create the database first."
+            )
+        elif (
+            "2003" in error_message
+            or "Can't connect to MySQL server"
+            in error_message
+        ):
+            friendly_message = (
+                "Cannot connect to MySQL server. "
+                "Check the server, host and port."
+            )
+        else:
+            friendly_message = (
+                f"Connection failed: {error_message}"
+            )
+        return {
+            "status": "error",
+            "message": friendly_message,
+        }
+
+
+@app.post("/disconnect")
+def disconnect():
+    try:
+        disconnect_database()
+        clear_database_profile()
+
+        # Clear pending AI operations
+        clear_pending_insert()
+
+        # Clear conversation state
+        try:
+            from app.agent.orchestrator import conversation_state
+            conversation_state.clear()
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "message": "Database disconnected successfully",
+            "db_type": "none",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
 
 
 @app.post("/optimize")
@@ -174,7 +356,8 @@ def schema():
 @app.post("/clear-db")
 def clear_db():
     try:
-        db_path = Path(__file__).resolve().parents[2] / "database" / "ecommerce.db"
+        from app.database.db import get_database_path
+        db_path = get_database_path()
         if db_path.exists():
             db_path.unlink()
         return {"status": "success", "message": "Database cleared"}
@@ -196,6 +379,29 @@ def database_type():
         return {"db_type": get_current_db_type()}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/database-connection-info")
+def database_connection_info():
+    try:
+        return get_database_connection_info()
+    except Exception as e:
+        return {
+            "connected": False,
+            "db_type": "none",
+            "error": str(e),
+        }
+
+
+@app.get("/suggestions")
+def suggestions():
+    try:
+        schema = get_schema()
+        profile = get_database_profile()
+        database_context = profile.to_context() if profile and profile.analyzed else ""
+        return {"suggestions": generate_suggestions(schema, database_context)}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "suggestions": []}
 
 
 @app.get("/dashboard")

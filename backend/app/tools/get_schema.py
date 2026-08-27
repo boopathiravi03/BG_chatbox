@@ -1,20 +1,30 @@
 from sqlalchemy import inspect
-from app.database.session import engine
+from app.database.database_manager import get_engine
 
 
 def get_schema():
+    engine = get_engine()
+
+    if engine is None:
+        raise RuntimeError(
+            "No database is currently connected."
+        )
 
     inspector = inspect(engine)
 
     schema = {}
 
-    for table in inspector.get_table_names():
+    for table_name in inspector.get_table_names():
+        columns = inspector.get_columns(table_name)
 
-        cols = {}
+        schema[table_name] = {}
 
-        for c in inspector.get_columns(table):
-            cols[c["name"]] = str(c["type"])
-
-        schema[table] = cols
+        for column in columns:
+            schema[table_name][column["name"]] = {
+                "type": str(column.get("type", "")),
+                "nullable": column.get("nullable", True),
+                "primary_key": column.get("primary_key", False),
+                "default": column.get("default"),
+            }
 
     return schema

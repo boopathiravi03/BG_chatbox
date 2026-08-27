@@ -1,22 +1,24 @@
 import { useState, useEffect } from "react";
-import { Database, X, Table, Download, Upload, Save } from "lucide-react";
-import { getSchema, getDatabaseInfo, createBackup, restoreDatabase, downloadBackup } from "../../services/api";
+import { Database, X, Table, Download, Upload, Save, Unplug } from "lucide-react";
+import { getSchema, getDatabaseInfo, createBackup, restoreDatabase, downloadBackup, disconnectDatabase } from "../../services/api";
 
 interface Props {
   onClose: () => void;
+  onDisconnected?: () => void;
 }
 
 interface SchemaTable {
   table_name: string;
 }
 
-export default function DatabasePopup({ onClose }: Props) {
+export default function DatabasePopup({ onClose, onDisconnected }: Props) {
   const [schema, setSchema] = useState<Record<string, any>>({});
   const [dbInfo, setDbInfo] = useState<{ database?: string; tables?: number; rows?: number; size?: string }>({});
   const [loading, setLoading] = useState(true);
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -98,6 +100,20 @@ export default function DatabasePopup({ onClose }: Props) {
     }
   };
 
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    setMessage("");
+    try {
+      await disconnectDatabase();
+      onDisconnected?.();
+      onClose();
+    } catch (error) {
+      setMessage("❌ Disconnect failed");
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="dark:bg-[#1a1a1a] bg-white border border-white/10 rounded-2xl p-6 w-full max-w-md">
@@ -114,7 +130,7 @@ export default function DatabasePopup({ onClose }: Props) {
         <div className="mb-4">
           <p className="text-sm dark:text-gray-400 text-gray-700 mb-2">Database</p>
           <p className="text-sm font-mono dark:bg-white/5 bg-gray-100 rounded-lg px-3 py-2 dark:text-white text-black">
-            {dbInfo.database || "ecommerce.db"}
+            {dbInfo.database || "Not Connected"}
           </p>
         </div>
 
@@ -154,7 +170,7 @@ export default function DatabasePopup({ onClose }: Props) {
 
         <div className="border-t border-white/10 dark:border-gray-700 pt-4 space-y-2">
           <p className="text-xs dark:text-gray-400 text-gray-500 mb-2">Backup & Restore</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2 mb-3">
             <button
               onClick={handleBackup}
               disabled={backupLoading}
@@ -182,6 +198,15 @@ export default function DatabasePopup({ onClose }: Props) {
               Download
             </button>
           </div>
+
+          <button
+            onClick={handleDisconnect}
+            disabled={disconnecting}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 disabled:opacity-50 text-red-400 text-sm border border-red-500/20"
+          >
+            <Unplug size={14} />
+            {disconnecting ? "Disconnecting..." : "Disconnect Database"}
+          </button>
         </div>
 
         {message && (

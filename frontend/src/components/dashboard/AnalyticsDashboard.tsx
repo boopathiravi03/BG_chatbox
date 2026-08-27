@@ -27,10 +27,9 @@ ChartJS.register(
 
 interface AnalyticsData {
   cards: {
-    customers: number;
-    orders: number;
-    products: number;
-    revenue: number;
+    table_count: number;
+    total_rows: number;
+    tables: Record<string, number>;
   };
   bar: {
     labels: string[];
@@ -99,7 +98,7 @@ export default function AnalyticsDashboard({ data }: Props) {
     labels: analytics.bar.labels,
     datasets: [
       {
-        label: "Sales",
+        label: "Row Count by Table",
         data: analytics.bar.values,
         backgroundColor: "#3B82F6",
         borderRadius: 8,
@@ -174,11 +173,14 @@ export default function AnalyticsDashboard({ data }: Props) {
     },
   };
 
+  const tableEntries = Object.entries(analytics.cards.tables || {});
+  const topTables = tableEntries.slice(0, 4);
+
   const cards = [
-    { label: "Customers", value: analytics.cards.customers },
-    { label: "Orders", value: analytics.cards.orders },
-    { label: "Revenue", value: `₹${(analytics.cards.revenue / 1000).toFixed(1)}K` },
-    { label: "Products", value: analytics.cards.products },
+    { label: "Tables", value: analytics.cards.table_count ?? 0 },
+    { label: "Total Rows", value: analytics.cards.total_rows ?? 0 },
+    ...(topTables.length ? [{ label: topTables[0][0], value: topTables[0][1] }] : []),
+    ...(topTables.length > 1 ? [{ label: topTables[1][0], value: topTables[1][1] }] : []),
   ];
 
   return (

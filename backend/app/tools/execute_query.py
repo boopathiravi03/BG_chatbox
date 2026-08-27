@@ -1,30 +1,233 @@
-import time
+import re
 from sqlalchemy import text
-from app.database.session import engine
+from app.database.database_manager import get_engine
+
+
+DANGEROUS_OPERATIONS = {
+    "drop",
+    "alter",
+    "truncate",
+    "attach",
+    "detach",
+}
+
+READ_ONLY = {
+    "select",
+    "with",
+    "pragma",
+}
+
+WRITE_OPERATIONS = {
+    "insert",
+    "update",
+    "delete",
+}
+
+
+def _extract_first_operation(sql: str) -> str:
+    cleaned = sql.strip().lower()
+
+    cleaned = re.sub(
+        r"/\*.*?\*/",
+        " ",
+        cleaned,
+        flags=re.DOTALL,
+    )
+
+    cleaned = re.sub(
+        r"--[^\n]*",
+        " ",
+        cleaned,
+    )
+
+    cleaned = cleaned.strip().strip(";")
+
+    parts = re.split(r"\s+", cleaned)
+
+    return parts[0] if parts else ""
+
+
+def has_multiple_statements(sql: str) -> bool:
+    """
+    Allow one SQL statement with an optional final semicolon.
+
+    Reject:
+        SELECT ...; SELECT ...
+        INSERT ...; DELETE ...
+    """
+
+    normalized = sql.strip()
+
+    if not normalized:
+        return False
+
+    # Remove one optional final semicolon
+    normalized = normalized.rstrip()
+
+    if normalized.endswith(";"):
+        normalized = normalized[:-1]
+
+    # Any remaining semicolon means multiple statements
+    return ";" in normalized
+
+
+def _has_where_clause(sql: str) -> bool:
+    cleaned = re.sub(
+        r"/\*.*?\*/",
+        " ",
+        sql,
+        flags=re.DOTALL,
+    )
+
+    cleaned = re.sub(
+        r"--[^\n]*",
+        " ",
+        cleaned,
+    )
+
+    return bool(
+        re.search(
+            r"\bwhere\b",
+            cleaned,
+            re.IGNORECASE,
+        )
+    )
+
+
+def validate_sql(sql: str):
+
+    if not sql or not sql.strip():
+        return {
+            "allowed": False,
+            "operation": "",
+            "reason": "SQL query is empty.",
+        }
+
+    operation = _extract_first_operation(sql)
+
+    if has_multiple_statements(sql):
+        return {
+            "allowed": False,
+            "operation": operation,
+            "reason": "Multiple SQL statements are not allowed.",
+        }
+
+    if operation in DANGEROUS_OPERATIONS:
+        return {
+            "allowed": False,
+            "operation": operation,
+            "reason": (
+                f"{operation.upper()} operations are disabled "
+                "for safety."
+            ),
+        }
+
+    if operation in READ_ONLY:
+        return {
+            "allowed": True,
+            "operation": operation,
+            "requires_confirmation": False,
+        }
+
+    if operation in WRITE_OPERATIONS:
+        if operation in {"update", "delete"} and not _has_where_clause(sql):
+            return {
+                "allowed": False,
+                "operation": operation,
+                "reason": (
+                    f"{operation.upper()} requires a WHERE condition. "
+                    "For safety, BG AI will not modify all records."
+                ),
+            }
+
+        return {
+            "allowed": True,
+            "operation": operation,
+            "requires_confirmation": True,
+        }
+
+    return {
+        "allowed": False,
+        "operation": operation,
+        "reason": (
+            f"{operation or 'Unknown'} operations "
+            "are not supported."
+        ),
+    }
 
 
 def execute_query(sql: str):
-    """
-    Execute SQL query and return rows with execution stats.
-    """
 
-    start = time.perf_counter()
+    validation = validate_sql(sql)
 
-    with engine.connect() as conn:
-        result = conn.execute(text(sql))
+    if not validation["allowed"]:
+        return {
+            "success": False,
+            "columns": [],
+            "rows": [],
+            "error": validation["reason"],
+            "operation": validation["operation"],
+        }
 
-        rows = result.fetchall()
+    try:
 
-        columns = result.keys()
+        # IMPORTANT:
+        # Always use the CURRENT connected database.
+        engine = get_engine()
 
-    end = time.perf_counter()
+        if engine is None:
+            return {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "error": (
+                    "No database is currently connected. "
+                    "Please connect a database first."
+                ),
+                "operation": validation["operation"],
+            }
 
-    execution_time_ms = round((end - start) * 1000, 2)
+        with engine.begin() as conn:
 
-    return {
-        "success": True,
-        "columns": list(columns),
-        "rows": [list(r) for r in rows],
-        "execution_time_ms": execution_time_ms,
-        "rows_returned": len(rows),
-    }
+            result = conn.execute(text(sql))
+
+            operation = validation["operation"]
+
+            if operation in READ_ONLY:
+
+                rows = [
+                    dict(row._mapping)
+                    for row in result
+                ]
+
+                columns = list(result.keys())
+
+                return {
+                    "success": True,
+                    "columns": columns,
+                    "rows": rows,
+                    "operation": operation,
+                    "affected_rows": len(rows),
+                }
+
+            return {
+                "success": True,
+                "columns": [],
+                "rows": [],
+                "operation": operation,
+                "affected_rows": (
+                    result.rowcount
+                    if result.rowcount is not None
+                    else 0
+                ),
+            }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "columns": [],
+            "rows": [],
+            "error": str(e),
+            "operation": validation["operation"],
+        }

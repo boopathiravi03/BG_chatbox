@@ -1,8 +1,13 @@
 from sqlalchemy import inspect
-from app.database.db import engine
+from app.database.database_manager import get_engine
 
 
 def get_schema():
+    engine = get_engine()
+
+    if engine is None:
+        return {}
+
     inspector = inspect(engine)
 
     schema = {}

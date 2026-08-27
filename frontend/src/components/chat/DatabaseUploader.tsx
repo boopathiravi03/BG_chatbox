@@ -26,7 +26,7 @@ export default function DatabaseUploader({ onClose, onUploadComplete }: Props) {
   const [postgresForm, setPostgresForm] = useState({
     host: "localhost",
     port: "5432",
-    database: "",
+    database: "postgres",
     username: "postgres",
     password: "",
   });

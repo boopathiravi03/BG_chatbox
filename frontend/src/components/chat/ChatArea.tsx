@@ -6,7 +6,7 @@ import { Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { exportChatPDF } from "../../utils/exportPdf";
 import DatabaseStats from "./DatabaseStats";
-import { getDatabaseInfo } from "../../services/api";
+import { getDatabaseInfo, getSuggestions } from "../../services/api";
 
 interface ChatAreaProps {
   messages: any[];
@@ -14,27 +14,22 @@ interface ChatAreaProps {
   sessions?: any[];
   activeSessionId?: string | null;
   onSend: (message: string) => void;
+  onInsertSubmit?: (values: Record<string, string>, table: string) => void;
   onSessionClick?: (session: any) => void;
   uploadVersion?: number;
   onStop?: () => void;
+  onConfirmQuery?: (sql: string) => void;
+  onCancelQuery?: () => void;
 }
 
-const SUGGESTIONS = [
-  "Show all customers",
-  "Monthly sales",
-  "Revenue chart",
-  "ER Diagram",
-  "Show products",
-  "Top customers",
-];
-
-export default function ChatArea({ messages, loading, sessions = [], activeSessionId, onSend, onSessionClick, uploadVersion = 0, onStop }: ChatAreaProps) {
+export default function ChatArea({ messages, loading, sessions = [], activeSessionId, onSend, onInsertSubmit, onSessionClick, uploadVersion = 0, onStop, onConfirmQuery, onCancelQuery }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [suggestion, setSuggestion] = useState("");
   const [showDbStats, setShowDbStats] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<number>(0);
   const [showSearch, setShowSearch] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
@@ -78,6 +73,29 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
     }
   }, [uploadVersion]);
 
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      try {
+        const data = await getSuggestions();
+        if (data.suggestions && Array.isArray(data.suggestions)) {
+          setSuggestions(data.suggestions);
+        }
+      } catch (error) {
+        console.error("Failed to fetch suggestions:", error);
+      }
+    };
+
+    fetchSuggestions();
+  }, []);
+
+  const handleConfirm = async (sql: string) => {
+    onConfirmQuery?.(sql);
+  };
+
+  const handleCancel = () => {
+    onCancelQuery?.();
+  };
+
   return (
     <main className="flex flex-col h-full">
       {messages.length === 0 ? (
@@ -86,7 +104,7 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
             <div className="flex flex-col items-center justify-center py-20">
               <Hero />
               <div className="flex flex-wrap gap-3 mt-8 justify-center">
-                {SUGGESTIONS.map((item) => (
+                {suggestions.map((item) => (
                   <button
                     key={item}
                     onClick={() => setSuggestion(item)}
@@ -143,12 +161,15 @@ export default function ChatArea({ messages, loading, sessions = [], activeSessi
 
               {messages.map((msg, index) => (
                 <div key={index} className="msg-fade-in">
-                  <MessageBubble
-                    message={msg}
-                    searchTerm={searchQuery}
-                    onSend={onSend}
-                    isTyping={loading && index === messages.length - 1}
-                  />
+                <MessageBubble
+                  message={msg}
+                  searchTerm={searchQuery}
+                  onSend={onSend}
+                  onInsertSubmit={onInsertSubmit}
+                  isTyping={loading && index === messages.length - 1}
+                  onConfirm={handleConfirm}
+                  onCancel={handleCancel}
+                />
                 </div>
               ))}
               {loading && <Thinking />}
