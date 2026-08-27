@@ -49,25 +49,44 @@ def _extract_first_operation(sql: str) -> str:
 
 def has_multiple_statements(sql: str) -> bool:
     """
-    Allow one SQL statement with an optional final semicolon.
+    Allow exactly one SQL statement.
 
-    Reject:
-        SELECT ...; SELECT ...
+    Examples allowed:
+        INSERT INTO customers (...) VALUES (...)
+        INSERT INTO customers (...) VALUES (...);
+        UPDATE customers SET city = 'Chennai' WHERE customer_id = 1
+
+    Examples rejected:
         INSERT ...; DELETE ...
+        UPDATE ...; SELECT ...
     """
+
+    if not sql or not sql.strip():
+        return False
 
     normalized = sql.strip()
 
-    if not normalized:
-        return False
+    # Remove SQL comments
+    normalized = re.sub(
+        r"/\*.*?\*/",
+        " ",
+        normalized,
+        flags=re.DOTALL,
+    )
 
-    # Remove one optional final semicolon
-    normalized = normalized.rstrip()
+    normalized = re.sub(
+        r"--[^\n]*",
+        " ",
+        normalized,
+    )
 
+    normalized = normalized.strip()
+
+    # A single final semicolon is allowed
     if normalized.endswith(";"):
-        normalized = normalized[:-1]
+        normalized = normalized[:-1].rstrip()
 
-    # Any remaining semicolon means multiple statements
+    # Any remaining semicolon means another statement exists
     return ";" in normalized
 
 

@@ -81,58 +81,73 @@ def home():
 @app.post("/chat")
 def chat(req: ChatRequest):
     try:
-        if req.pending_insert and req.input_values:
-            schema = get_schema()
-            table = req.input_values.get("table", "")
-            if table:
-                from app.agent.orchestrator import _handle_insert_followup
-                return _handle_insert_followup(
-                    req.message,
-                    table,
-                    schema,
-                )
         return run_agent(
             req.message,
-            req.session_id
+            req.session_id,
         )
+
     except Exception as e:
         return {
             "generated_sql": "",
             "result": {
                 "success": False,
-                "error": str(e)
+                "error": str(e),
             },
-            "explanation": f"Error: {str(e)}"
+            "explanation": f"Error: {str(e)}",
+            "followups": [],
         }
 
 
 @app.post("/confirm-query")
 def confirm_query(request: ConfirmQueryRequest):
     try:
-        validation = validate_sql(request.sql)
+        sql = request.sql.strip()
+
+        # Remove markdown code fences if frontend/LLM ever sends them
+        if "```" in sql:
+            sql = sql.replace("```sql", "")
+            sql = sql.replace("```SQL", "")
+            sql = sql.replace("```", "")
+            sql = sql.strip()
+
+        # Remove ONE optional final semicolon
+        if sql.endswith(";"):
+            sql = sql[:-1].rstrip()
+
+        validation = validate_sql(sql)
 
         if not validation["allowed"]:
             return {
                 "success": False,
-                "error": validation["reason"]
+                "error": validation["reason"],
+                "operation": validation.get("operation", ""),
             }
 
         if not validation.get("requires_confirmation"):
             return {
                 "success": False,
-                "error": "This query does not require confirmation."
+                "error": "This query does not require confirmation.",
             }
 
-        result = execute_query(request.sql)
+        result = execute_query(sql)
 
         if result.get("success"):
             clear_pending_insert()
 
+            return {
+                **result,
+                "confirmed": True,
+                "message": (
+                    "Database updated successfully."
+                ),
+            }
+
         return result
+
     except Exception as e:
         return {
             "success": False,
-            "error": str(e)
+            "error": str(e),
         }
 
 

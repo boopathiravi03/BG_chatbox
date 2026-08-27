@@ -155,10 +155,7 @@ def _is_insert_action(message: str) -> bool:
         "add",
         "create",
         "insert",
-        "new",
         "register",
-        "save",
-        "make",
     ]
 
     return any(
@@ -880,31 +877,108 @@ Do not use ```sql.
     }
 
 
-def _generate_sql(operation: str, table: str, fields: dict, where: str) -> str:
+def _generate_sql(
+    operation: str,
+    table: str,
+    fields: dict,
+    where: str
+) -> str:
+
     def _quote(value):
-        if isinstance(value, str):
-            return "'" + value.replace("'", "''") + "'"
-        return str(value)
+        if value is None:
+            return "NULL"
+
+        if isinstance(value, bool):
+            return "1" if value else "0"
+
+        if isinstance(value, (int, float)):
+            return str(value)
+
+        value = str(value)
+
+        return "'" + value.replace("'", "''") + "'"
+
+    # Safety: table must be a simple identifier
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", table):
+        raise ValueError("Invalid table name.")
 
     if operation == "insert":
-        columns = list(fields.keys())
-        values = [_quote(v) for v in fields.values()]
-        return f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"
+
+        if not fields:
+            raise ValueError("No values supplied for INSERT.")
+
+        columns = []
+
+        values = []
+
+        for key, value in fields.items():
+
+            if not re.match(
+                r"^[A-Za-z_][A-Za-z0-9_]*$",
+                key
+            ):
+                raise ValueError(
+                    f"Invalid column name: {key}"
+                )
+
+            columns.append(key)
+            values.append(_quote(value))
+
+        sql = (
+            f"INSERT INTO {table} "
+            f"({', '.join(columns)}) "
+            f"VALUES ({', '.join(values)})"
+        )
+
+        return sql
 
     if operation == "update":
-        set_parts = [f"{k} = {_quote(v)}" for k, v in fields.items()]
-        sql = f"UPDATE {table} SET {', '.join(set_parts)}"
-        if where:
-            sql += f" WHERE {where}"
-        return sql
+
+        if not fields:
+            raise ValueError("No fields supplied for UPDATE.")
+
+        if not where:
+            raise ValueError(
+                "UPDATE requires a WHERE condition."
+            )
+
+        set_parts = []
+
+        for key, value in fields.items():
+
+            if not re.match(
+                r"^[A-Za-z_][A-Za-z0-9_]*$",
+                key
+            ):
+                raise ValueError(
+                    f"Invalid column name: {key}"
+                )
+
+            set_parts.append(
+                f"{key} = {_quote(value)}"
+            )
+
+        return (
+            f"UPDATE {table} "
+            f"SET {', '.join(set_parts)} "
+            f"WHERE {where}"
+        )
 
     if operation == "delete":
-        sql = f"DELETE FROM {table}"
-        if where:
-            sql += f" WHERE {where}"
-        return sql
 
-    return ""
+        if not where:
+            raise ValueError(
+                "DELETE requires a WHERE condition."
+            )
+
+        return (
+            f"DELETE FROM {table} "
+            f"WHERE {where}"
+        )
+
+    raise ValueError(
+        f"Unsupported operation: {operation}"
+    )
 
 
 def _parse_form_submission(message: str) -> dict[str, str] | None:
