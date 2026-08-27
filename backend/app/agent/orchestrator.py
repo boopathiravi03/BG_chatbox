@@ -6,14 +6,11 @@ from app.tools.generate_chart import generate_chart
 from app.tools.generate_flowchart import generate_flowchart
 from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
-from app.tools.get_insert_fields import get_insert_fields
 import json
 import re
 from difflib import get_close_matches
 
 conversation_state = {}
-
-_pending_insert = None
 
 WRITE_OPERATIONS = {"insert", "update", "delete"}
 READ_ONLY = {"select", "with", "pragma"}
@@ -131,9 +128,15 @@ def _get_table_columns(table_name: str, schema: dict) -> list[str]:
     return list(schema.get(table_name, {}).keys())
 
 
-def _is_insert_request(message: str) -> bool:
-    text = message.lower().strip()
-    normalized = text.replace("-", " ")
+def _is_insert_action(message: str) -> bool:
+    """
+    Detect whether the user is asking to create/add/insert/register
+    a new database record.
+
+    This intentionally does NOT require the table name to appear.
+    Table detection is handled separately.
+    """
+    normalized = message.lower().strip().replace("-", " ")
 
     action_words = [
         "add",
@@ -142,248 +145,278 @@ def _is_insert_request(message: str) -> bool:
         "new",
         "register",
         "save",
+        "make",
     ]
 
-    has_action = any(
+    return any(
         re.search(rf"\b{re.escape(word)}\b", normalized)
         for word in action_words
     )
 
-    if not has_action:
-        return False
-
-    try:
-        schema = get_schema()
-    except Exception:
-        return False
-
-    tables = list(schema.keys())
-
-    for table in tables:
-        table_lower = table.lower()
-        if re.search(rf"\b{re.escape(table_lower)}\b", normalized):
-            return True
-
-    return False
-
-
-def _is_insert_followup(user_message: str) -> bool:
-    message = user_message.lower().strip()
-
-    field_patterns = [
-        r"\bname\s*[:=-]",
-        r"\bemail\s*[:=-]",
-        r"\bmail\s*[:=-]",
-        r"\bcity\s*[:=-]",
-        r"\bphone\s*[:=-]",
-        r"\baddress\s*[:=-]",
-    ]
-
-    matches = sum(
-        1 for pattern in field_patterns
-        if re.search(pattern, message)
-    )
-
-    return matches >= 2
-
-
-def _parse_insert_values(user_message: str, columns: list[str]) -> dict[str, str]:
-    values: dict[str, str] = {}
-
-    message = user_message.strip()
-    normalized = re.sub(r"\s*,\s*", ", ", message)
-
-    for column in columns:
-        column_lower = column.lower()
-
-        if (
-            column_lower == "id"
-            or column_lower.endswith("_id")
-            or column_lower in {"created_at", "updated_at", "deleted_at"}
-        ):
-            continue
-
-        label = column.replace("_", " ")
-
-        pattern = rf"""
-            \b{re.escape(label)}\b
-            \s*[:=-]\s*
-            (?P<value>
-                [^,\n;]+
-            )
-        """
-
-        match = re.search(pattern, normalized, re.IGNORECASE | re.VERBOSE)
-
-        if match:
-            value = match.group("value").strip()
-            values[column] = value
-
-    return values
-
-
-def _handle_insert_followup(user_message: str, table: str, schema: dict) -> dict:
-    global _pending_insert
-
-    table_schema = schema.get(table, {})
-    if not isinstance(table_schema, dict):
-        table_schema = {}
-
-    columns = _get_table_columns(table, schema)
-    insert_columns = [
-        column
-        for column in columns
-        if not (
-            column.lower() == "id"
-            or column.lower().endswith("_id")
-            or column.lower() in {"created_at", "updated_at", "deleted_at"}
-        )
-    ]
-
-    values = _parse_insert_values(user_message, insert_columns)
-
-    if not values:
-        return {
-            "generated_sql": "",
-            "result": {
-                "success": False,
-                "columns": [],
-                "rows": [],
-                "rows_returned": 0,
-            },
-            "chart": None,
-            "diagram": None,
-            "analytics": None,
-            "explanation": (
-                "I couldn't understand the values you provided. "
-                "Please use the format: field: value, field: value"
-            ),
-            "followups": [],
-        }
-
-    sql = _create_insert_sql(table, insert_columns, values)
-
-    _pending_insert = None
-
-    validation = validate_sql(sql)
-
-    if not validation["allowed"]:
-        return {
-            "generated_sql": sql,
-            "result": {
-                "success": False,
-                "columns": [],
-                "rows": [],
-                "rows_returned": 0,
-                "error": validation["reason"],
-            },
-            "chart": None,
-            "diagram": None,
-            "analytics": None,
-            "explanation": (
-                f"I could not prepare this database change.\n\n"
-                f"{validation['reason']}"
-            ),
-            "followups": [],
-        }
-
-    if validation.get("requires_confirmation"):
-        return {
-            "generated_sql": sql,
-            "result": {
-                "success": True,
-                "columns": [],
-                "rows": [],
-                "execution_time_ms": 0,
-                "rows_returned": 0,
-                "pending_confirmation": True,
-                "operation": validation["operation"],
-            },
-            "chart": None,
-            "diagram": None,
-            "analytics": None,
-            "requires_confirmation": True,
-            "explanation": (
-                "Database change requires confirmation.\n\n"
-                f"Operation: `{validation['operation']}`\n\n"
-                "Please review the generated SQL before "
-                "continuing."
-            ),
-            "followups": [],
-        }
-
-    return {
-        "generated_sql": sql,
-        "result": {
-            "success": True,
-            "columns": [],
-            "rows": [],
-            "execution_time_ms": 0,
-            "rows_returned": 0,
-        },
-        "chart": None,
-        "diagram": None,
-        "analytics": None,
-        "explanation": "The record is ready to be added.",
-        "followups": [],
-    }
-
 
 def _detect_insert_table(user_message: str, schema: dict) -> str:
-    prompt = f"""You are a database assistant. The user wants to add/insert a record.
+    """
+    Detect the table the user wants to insert into.
 
-Database schema (table names only):
-{', '.join(list(schema.keys()))}
+    Uses deterministic matching first, then Groq only when necessary.
+    Never invents a table.
+    """
 
-User request: {user_message}
+    if not schema:
+        return ""
 
-Which table are they referring to? Return ONLY the exact table name from the schema above. If none match, return an empty string."""
+    message = user_message.lower().strip()
+
+    # ---------------------------------------------------------
+    # 1. Exact table name
+    # ---------------------------------------------------------
+    for table in schema.keys():
+        if re.search(
+            rf"\b{re.escape(table.lower())}\b",
+            message
+        ):
+            return table
+
+    # ---------------------------------------------------------
+    # 2. Singular/plural matching
+    # ---------------------------------------------------------
+    for table in schema.keys():
+
+        table_lower = table.lower()
+
+        singular = (
+            table_lower[:-1]
+            if table_lower.endswith("s")
+            else table_lower
+        )
+
+        if singular and re.search(
+            rf"\b{re.escape(singular)}\b",
+            message
+        ):
+            return table
+
+    # ---------------------------------------------------------
+    # 3. Common natural-language variants
+    # ---------------------------------------------------------
+    for table in schema.keys():
+
+        table_lower = table.lower()
+
+        words = {
+            table_lower,
+            table_lower.rstrip("s"),
+            table_lower.replace("_", " "),
+            table_lower.rstrip("s").replace("_", " "),
+        }
+
+        if any(
+            word and re.search(
+                rf"\b{re.escape(word)}\b",
+                message
+            )
+            for word in words
+        ):
+            return table
+
+    # ---------------------------------------------------------
+    # 4. Ask AI only to select from existing tables
+    # ---------------------------------------------------------
+    prompt = f"""
+You are selecting a database table.
+
+IMPORTANT:
+- You may ONLY choose a table from the provided schema.
+- Never invent a table.
+- Return ONLY the exact table name.
+- If no table matches, return an empty string.
+
+Available tables:
+{", ".join(schema.keys())}
+
+User request:
+{user_message}
+"""
 
     try:
-        response = ask_groq(prompt).strip()
+        response = ask_groq(prompt).strip().lower()
+
         for table in schema.keys():
-            if table.lower() in response.lower():
+            if table.lower() == response:
                 return table
+
+        for table in schema.keys():
+            if table.lower() in response:
+                return table
+
     except Exception:
         pass
+
     return ""
 
 
-def _is_auto_generated_column(column: str, metadata: dict) -> bool:
-    column_lower = column.lower()
+def _get_required_insert_fields(table: str, schema: dict) -> list[str]:
+    table_schema = schema.get(table, {})
 
-    if metadata.get("primary_key"):
+    required = []
+
+    for column, metadata in table_schema.items():
+        metadata = metadata or {}
+
+        column_lower = column.lower()
+
+        if column_lower in {
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }:
+            continue
+
+        primary_key = bool(
+            metadata.get("primary_key", False)
+        )
+
+        nullable = metadata.get(
+            "nullable",
+            True
+        )
+
         default = metadata.get("default")
 
-        if default is not None:
-            return True
+        column_type = str(
+            metadata.get("type", "")
+        ).lower()
 
-        if column_lower == "id" or column_lower.endswith("_id"):
-            return True
+        auto_generated = (
+            primary_key
+            and "int" in column_type
+            and default is None
+        )
 
-    if column_lower in {
-        "created_at",
-        "updated_at",
-        "deleted_at",
-    }:
-        return True
+        if auto_generated:
+            continue
 
-    return False
+        if nullable is False and default is None:
+            required.append(column)
+
+    return required
 
 
 def _build_insert_request(table: str, schema: dict) -> dict:
+    """
+    Build a dynamic form request from the LIVE database schema.
+
+    BG AI must ask the user for values.
+    It must NEVER invent values.
+    """
+
     table_schema = schema.get(table, {})
 
     if not isinstance(table_schema, dict):
         table_schema = {}
 
-    columns = [
-        column
-        for column in table_schema.keys()
-        if not _is_auto_generated_column(column, table_schema[column])
-    ]
+    fields = []
 
-    if not columns:
+    for column, metadata in table_schema.items():
+
+        metadata = metadata or {}
+
+        column_lower = column.lower()
+
+        primary_key = bool(
+            metadata.get("primary_key", False)
+        )
+
+        nullable = metadata.get(
+            "nullable",
+            True
+        )
+
+        default = metadata.get("default")
+
+        column_type = str(
+            metadata.get("type", "")
+        ).lower()
+
+        # -----------------------------------------------------
+        # Detect likely database-generated ID
+        # -----------------------------------------------------
+        auto_generated = (
+            primary_key
+            and "int" in column_type
+            and default is None
+        )
+
+        # Skip timestamp fields generated by database
+        if column_lower in {
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }:
+            continue
+
+        # Skip auto-generated primary key
+        if auto_generated:
+            continue
+
+        # -----------------------------------------------------
+        # Determine input type
+        # -----------------------------------------------------
+        if "email" in column_lower:
+            field_type = "email"
+
+        elif any(
+            keyword in column_lower
+            for keyword in [
+                "price",
+                "amount",
+                "quantity",
+                "stock",
+                "salary",
+                "marks",
+                "mark",
+                "cgpa",
+                "age",
+                "year",
+                "count",
+            ]
+        ):
+            field_type = "number"
+
+        elif any(
+            keyword in column_lower
+            for keyword in [
+                "date",
+                "dob",
+                "birth",
+            ]
+        ):
+            field_type = "date"
+
+        else:
+            field_type = "text"
+
+        # -----------------------------------------------------
+        # Required means:
+        #
+        # NOT NULL + no database default
+        # -----------------------------------------------------
+        required = (
+            nullable is False
+            and default is None
+        )
+
+        fields.append({
+            "name": column,
+            "label": column.replace(
+                "_",
+                " "
+            ).title(),
+            "type": field_type,
+            "required": required,
+        })
+
+    if not fields:
         return {
             "generated_sql": "",
             "result": {
@@ -394,55 +427,52 @@ def _build_insert_request(table: str, schema: dict) -> dict:
             },
             "input_request": None,
             "explanation": (
-                f"I couldn't determine which fields can be added to "
-                f"`{table}`."
+                f"I couldn't determine the fields required "
+                f"to create a record in `{table}`."
             ),
             "followups": [],
         }
 
-    fields = []
-    for column in columns:
-        column_lower = column.lower()
-        column_meta = table_schema.get(column, {})
-        column_type = str(column_meta.get("type", "")).lower()
+    table_name = (
+        table.rstrip("s").replace("_", " ").title()
+    )
 
-        if "email" in column_lower:
-            field_type = "email"
-        elif any(word in column_lower for word in ["phone", "mobile", "contact"]):
-            field_type = "tel"
-        elif any(word in column_lower for word in ["date", "dob", "birth"]):
-            field_type = "date"
-        elif any(word in column_lower for word in [
-            "price",
-            "amount",
-            "salary",
-            "cgpa",
-            "mark",
-            "score",
-            "quantity",
-            "stock",
-            "age",
-        ]):
-            field_type = "number"
-        elif any(word in column_type for word in [
-            "int",
-            "float",
-            "double",
-            "decimal",
-            "numeric",
-        ]):
-            field_type = "number"
-        else:
-            field_type = "text"
+    required_fields = [
+        field
+        for field in fields
+        if field["required"]
+    ]
 
-        fields.append({
-            "name": column,
-            "label": column.replace("_", " ").title(),
-            "type": field_type,
-            "required": not column_meta.get("nullable", True),
-        })
+    optional_fields = [
+        field
+        for field in fields
+        if not field["required"]
+    ]
 
-    table_name = table.rstrip("s").title()
+    required_text = ", ".join(
+        field["label"]
+        for field in required_fields
+    )
+
+    optional_text = ", ".join(
+        field["label"]
+        for field in optional_fields
+    )
+
+    message = (
+        f"Please provide the required details "
+        f"for the new {table_name.lower()}."
+    )
+
+    if required_text:
+        message += (
+            f"\n\nRequired: {required_text}"
+        )
+
+    if optional_text:
+        message += (
+            f"\n\nOptional: {optional_text}"
+        )
 
     return {
         "generated_sql": "",
@@ -453,17 +483,21 @@ def _build_insert_request(table: str, schema: dict) -> dict:
             "execution_time_ms": 0,
             "rows_returned": 0,
         },
+
         "input_request": {
             "type": "insert",
             "table": table,
             "title": f"Add New {table_name}",
-            "message": f"Please provide the following details for the new {table_name.lower()}:",
+            "message": message,
             "fields": fields,
         },
+
         "explanation": (
-            f"Sure! Let's add a new {table_name.lower()}. "
-            f"Please provide the required details below."
+            f"Sure! Let's add a new "
+            f"{table_name.lower()}.\n\n"
+            f"{message}"
         ),
+
         "followups": [],
     }
 
@@ -500,31 +534,6 @@ def _get_database_context() -> str:
 def run_agent(user_message: str, session_id: str = "default"):
     schema = get_schema()
     database_context = _get_database_context()
-
-    global _pending_insert
-
-    if _pending_insert is not None:
-        table = _pending_insert.get("table")
-
-        if table:
-            return _handle_insert_followup(
-                user_message,
-                table,
-                schema,
-            )
-
-    if _is_insert_followup(user_message):
-        table = _detect_insert_table(
-            user_message,
-            schema,
-        )
-
-        if table:
-            return _handle_insert_followup(
-                user_message,
-                table,
-                schema,
-            )
 
     intent = _classify_intent(user_message)
 
@@ -582,44 +591,13 @@ def run_agent(user_message: str, session_id: str = "default"):
 
     if intent in ("sql", "chart"):
         is_chart = intent == "chart"
-        form_values = _parse_form_submission(user_message)
-        if form_values:
-            state = conversation_state.get(session_id, {})
-            table = state.get("pending_insert_table")
 
-            if table:
-                insert_fields = get_insert_fields(table)
-                fields = {}
-                for field in insert_fields:
-                    if field["name"] in form_values:
-                        fields[field["name"]] = form_values[field["name"]]
-
-                if fields:
-                    sql = _generate_sql("insert", table, fields, "")
-                    conversation_state.pop(session_id, None)
-
-                    return {
-                        "generated_sql": sql,
-                        "result": {
-                            "success": True,
-                            "columns": [],
-                            "rows": [],
-                            "pending_confirmation": True,
-                            "operation": "insert",
-                        },
-                        "chart": None,
-                        "diagram": None,
-                        "requires_confirmation": True,
-                        "explanation": (
-                            "Database change requires confirmation.\n\n"
-                            f"Operation: `insert`\n\n"
-                            f"```sql\n{sql}\n```\n\n"
-                            "Please review the SQL before continuing."
-                        ),
-                        "followups": [],
-                    }
-
-        if _is_insert_request(user_message):
+        # ---------------------------------------------------------
+        # INSERT: never let the generic SQL generator invent values.
+        # Intercept CREATE/ADD/INSERT requests before the LLM sees
+        # the generic SQL prompt.
+        # ---------------------------------------------------------
+        if _is_insert_action(user_message):
             table = _detect_insert_table(user_message, schema)
             if table:
                 conversation_state[session_id] = {
@@ -627,10 +605,123 @@ def run_agent(user_message: str, session_id: str = "default"):
                 }
                 return _build_insert_request(table, schema)
 
+        # ---------------------------------------------------------
+        # Form submission path: validate required fields before
+        # generating INSERT SQL.
+        # ---------------------------------------------------------
+        form_values = _parse_form_submission(user_message)
+        if form_values:
+            state = conversation_state.get(session_id, {})
+            table = state.get("pending_insert_table")
+
+            if table:
+                required_fields = _get_required_insert_fields(
+                    table,
+                    schema,
+                )
+
+                fields = {}
+                for field in required_fields:
+                    if field in form_values:
+                        fields[field] = form_values[field]
+
+                missing_fields = [
+                    field
+                    for field in required_fields
+                    if field not in fields
+                    or not str(fields[field]).strip()
+                ]
+
+                if missing_fields:
+                    missing_labels = [
+                        field.replace("_", " ").title()
+                        for field in missing_fields
+                    ]
+
+                    return {
+                        "generated_sql": "",
+                        "result": {
+                            "success": True,
+                            "columns": [],
+                            "rows": [],
+                            "execution_time_ms": 0,
+                            "rows_returned": 0,
+                        },
+                        "chart": None,
+                        "diagram": None,
+                        "input_request": {
+                            "type": "insert",
+                            "table": table,
+                            "title": (
+                                f"Complete {table.replace('_', ' ').title()} Details"
+                            ),
+                            "message": (
+                                "I still need the following required details:"
+                            ),
+                            "fields": [
+                                {
+                                    "name": field,
+                                    "label": field.replace(
+                                        "_",
+                                        " "
+                                    ).title(),
+                                    "type": "text",
+                                    "required": True,
+                                }
+                                for field in missing_fields
+                            ],
+                        },
+                        "explanation": (
+                            "I can't create the record yet because "
+                            "some required fields are missing.\n\n"
+                            + "\n".join(
+                                f"• {field.replace('_', ' ').title()}"
+                                for field in missing_fields
+                            )
+                        ),
+                        "followups": [],
+                    }
+
+                sql = _generate_sql(
+                    "insert",
+                    table,
+                    fields,
+                    ""
+                )
+
+                conversation_state.pop(
+                    session_id,
+                    None
+                )
+
+                return {
+                    "generated_sql": sql,
+                    "result": {
+                        "success": True,
+                        "columns": [],
+                        "rows": [],
+                        "pending_confirmation": True,
+                        "operation": "insert",
+                    },
+                    "chart": None,
+                    "diagram": None,
+                    "requires_confirmation": True,
+                    "explanation": (
+                        "I have all the required information.\n\n"
+                        "Please review the generated SQL "
+                        "before modifying the database."
+                    ),
+                    "followups": [],
+                }
+
         write_result = _handle_write_operation(session_id, user_message, schema)
         if write_result is not None:
             return write_result
 
+        # ---------------------------------------------------------
+        # Generic SQL path: only for SELECT / READ operations.
+        # INSERT must be handled above.
+        # ---------------------------------------------------------
         database_context = _get_database_context()
         database_context_section = f"Database Analysis:\n{database_context}" if database_context else ""
 
@@ -776,80 +867,47 @@ Do not use ```sql.
     }
 
 
-def _create_insert_sql(table: str, columns: list[str], values: dict) -> str:
+def _generate_sql(operation: str, table: str, fields: dict, where: str) -> str:
     def _quote(value):
         if isinstance(value, str):
             return "'" + value.replace("'", "''") + "'"
         return str(value)
 
-    cols = [col for col in columns if col in values]
-    vals = [_quote(values[col]) for col in cols]
-    return f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(vals)})"
+    if operation == "insert":
+        columns = list(fields.keys())
+        values = [_quote(v) for v in fields.values()]
+        return f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"
+
+    if operation == "update":
+        set_parts = [f"{k} = {_quote(v)}" for k, v in fields.items()]
+        sql = f"UPDATE {table} SET {', '.join(set_parts)}"
+        if where:
+            sql += f" WHERE {where}"
+        return sql
+
+    if operation == "delete":
+        sql = f"DELETE FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        return sql
+
+    return ""
 
 
-def _normalize_insert_key(raw_key: str, allowed_columns: list[str]) -> str | None:
-    key = raw_key.lower().strip()
+def _parse_form_submission(message: str) -> dict[str, str] | None:
+    if "=" not in message:
+        return None
 
-    if key in allowed_columns:
-        return key
+    values: dict[str, str] = {}
+    parts = message.split(",")
 
-    close = get_close_matches(key, allowed_columns, n=1, cutoff=0.7)
+    for part in parts:
+        part = part.strip()
+        if "=" in part:
+            key, value = part.split("=", 1)
+            values[key.strip()] = value.strip()
 
-    return close[0] if close else None
-
-
-def _extract_insert_fields_from_message(user_message: str, allowed_columns: list[str]) -> dict[str, str]:
-    prompt = f"""You are a data extraction assistant.
-
-Allowed columns:
-{', '.join(allowed_columns)}
-
-User message:
-{user_message}
-
-Extract values from the user message and map them to the allowed columns.
-Use fuzzy matching when the user misspells a column name.
-
-Return ONLY a valid JSON object with column names as keys and extracted values as strings.
-
-IMPORTANT:
-- Return ONLY valid JSON.
-- Do not use markdown.
-- Do not generate SQL.
-- Do not invent missing values.
-- Do not return fields that are not in the allowed columns.
-
-JSON:
-"""
-
-    try:
-        response = ask_groq(prompt).strip()
-
-        if "```" in response:
-            response = response.replace("```json", "")
-            response = response.replace("```", "")
-            response = response.strip()
-
-        extracted = json.loads(response)
-
-        if not isinstance(extracted, dict):
-            return {}
-
-        cleaned = {}
-        for raw_key, value in extracted.items():
-            column = _normalize_insert_key(str(raw_key), allowed_columns)
-            if not column:
-                continue
-            if value is None:
-                continue
-            value = str(value).strip()
-            if not value:
-                continue
-            cleaned[column] = value
-
-        return cleaned
-    except Exception:
-        return {}
+    return values if values else None
 
 
 def _handle_write_operation(session_id: str, user_message: str, schema: dict) -> dict | None:
@@ -967,111 +1025,3 @@ def _handle_write_operation(session_id: str, user_message: str, schema: dict) ->
         }
 
     return None
-
-
-def _handle_sql_intent(session_id: str, user_message: str, schema: dict) -> dict:
-    state = conversation_state.get(session_id, {})
-
-    if state.get("step") == "collecting":
-        write_result = _handle_write_operation(session_id, user_message, schema)
-        if write_result is not None:
-            return write_result
-
-    if not _is_insert_request(user_message):
-        return {
-            "generated_sql": "",
-            "result": {
-                "success": False,
-                "columns": [],
-                "rows": [],
-                "error": "Not an insert request.",
-            },
-            "chart": None,
-            "diagram": None,
-            "explanation": "That doesn't look like an add/create request. If you want to insert data, try saying 'Add a record' or 'Create a new entry'.",
-            "followups": [],
-        }
-
-    table = _detect_insert_table(user_message, schema)
-
-    if not table:
-        return {
-            "generated_sql": "",
-            "result": {
-                "success": False,
-                "columns": [],
-                "rows": [],
-                "error": "Could not determine which table to modify.",
-            },
-            "chart": None,
-            "diagram": None,
-            "explanation": "I couldn't determine which table you're referring to. Please specify the table name.",
-            "followups": [],
-        }
-
-    return _build_insert_request(table, schema)
-
-
-def _parse_form_submission(message: str) -> dict[str, str] | None:
-    if "=" not in message:
-        return None
-
-    values: dict[str, str] = {}
-    parts = message.split(",")
-
-    for part in parts:
-        part = part.strip()
-        if "=" in part:
-            key, value = part.split("=", 1)
-            values[key.strip()] = value.strip()
-
-    return values if values else None
-
-
-def _get_insertable_columns(table: str, schema: dict) -> list[str]:
-    columns = _get_table_columns(table, schema)
-
-    ignored = {
-        "id",
-        "created_at",
-        "updated_at",
-        "deleted_at",
-    }
-
-    return [
-        column
-        for column in columns
-        if column.lower() not in ignored
-    ]
-
-
-def clear_pending_insert():
-    global _pending_insert
-    _pending_insert = None
-
-
-def _generate_sql(operation: str, table: str, fields: dict, where: str) -> str:
-    def _quote(value):
-        if isinstance(value, str):
-            return "'" + value.replace("'", "''") + "'"
-        return str(value)
-
-    if operation == "insert":
-        columns = list(fields.keys())
-        values = [_quote(v) for v in fields.values()]
-        return f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"
-
-    if operation == "update":
-        set_parts = [f"{k} = {_quote(v)}" for k, v in fields.items()]
-        sql = f"UPDATE {table} SET {', '.join(set_parts)}"
-        if where:
-            sql += f" WHERE {where}"
-        return sql
-
-    if operation == "delete":
-        sql = f"DELETE FROM {table}"
-        if where:
-            sql += f" WHERE {where}"
-        return sql
-
-    return ""
