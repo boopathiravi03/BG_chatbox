@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from pathlib import Path
 
 from app.agent.orchestrator import run_agent, clear_pending_insert
-from app.agent.database_profile import DatabaseProfile
 from app.tools.get_schema import get_schema
 from app.tools.execute_query import validate_sql, execute_query
 from app.tools.get_relationship_graph import get_relationship_graph
@@ -12,7 +11,7 @@ from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
 from app.tools.analyze_database import analyze_database
 from app.database.db import get_database_info, get_dashboard_data
 from app.database.database_manager import connect_sqlite, connect_mysql, connect_postgres, get_current_db_type, get_engine, get_database_connection_info, disconnect_database
-from app.database.database_context import refresh_database_profile, clear_database_profile
+from app.database.database_context import refresh_database_profile, get_database_profile, clear_database_profile
 from app.database.backup import create_backup, restore_backup, get_backup_dir
 from app.tools.optimize_sql import optimize_sql
 from fastapi.responses import FileResponse
@@ -36,18 +35,7 @@ def startup():
     The user must explicitly upload or connect a database.
     """
     clear_database_profile()
-    set_database_profile(None)
 
-_database_profile: DatabaseProfile | None = None
-
-
-def get_database_profile() -> DatabaseProfile | None:
-    return _database_profile
-
-
-def set_database_profile(profile: DatabaseProfile | None) -> None:
-    global _database_profile
-    _database_profile = profile
 
 class ChatRequest(BaseModel):
     message: str = ""
@@ -170,8 +158,7 @@ async def upload_database(file: UploadFile = File(...)):
         # Make uploaded SQLite the ACTIVE database
         connect_sqlite(str(db_path))
 
-        profile = analyze_database()
-        set_database_profile(profile)
+        profile = refresh_database_profile()
 
         return {
             "status": "success",

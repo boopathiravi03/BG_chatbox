@@ -77,8 +77,9 @@ def analyze_database() -> DatabaseProfile:
             f"{profile.total_columns} columns, and approximately "
             f"{profile.total_rows} total rows."
         )
-    except Exception:
-        pass
+    except Exception as e:
+        profile.summary = f"Database analysis failed: {str(e)}"
+        profile.analyzed = False
 
     return profile
 

@@ -52,17 +52,22 @@ def _get_followups(user_message: str) -> list[str]:
         return []
 
     profile = None
+
     try:
-        from app.main import get_database_profile
+        from app.database.database_context import get_database_profile
         profile = get_database_profile()
     except Exception:
         pass
 
     database_context = ""
+
     if profile and profile.analyzed:
         database_context = profile.to_context()
 
-    return generate_suggestions(schema, database_context)
+    return generate_suggestions(
+        schema,
+        database_context
+    )
 
 
 def _classify_intent(user_message: str, schema: dict) -> str:
@@ -666,19 +671,48 @@ def _clean_generated_sql(raw_sql: str) -> str:
 
 
 def _get_database_context() -> str:
-    from app.main import get_database_profile
+    try:
+        from app.database.database_context import get_database_profile
 
-    profile = get_database_profile()
-    if profile is None or not profile.analyzed:
+        profile = get_database_profile()
+
+        if profile is None or not profile.analyzed:
+            return ""
+
+        return profile.to_context()
+
+    except Exception:
         return ""
-    return profile.to_context()
 
 
 def run_agent(user_message: str, session_id: str = "default"):
     schema = get_schema()
+
+    if not schema:
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "chart": None,
+            "diagram": None,
+            "analytics": None,
+            "explanation": (
+                "No usable tables were found in the currently "
+                "connected database."
+            ),
+            "followups": [],
+        }
+
     database_context = _get_database_context()
 
-    intent = _classify_intent(user_message, schema)
+    intent = _classify_intent(
+        user_message,
+        schema
+    )
 
     if intent == "chat":
         conversation_state.pop(session_id, None)
