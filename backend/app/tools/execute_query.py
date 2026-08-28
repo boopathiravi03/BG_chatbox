@@ -1,7 +1,7 @@
 import re
 from sqlalchemy import text
 
-from app.database.database_manager import get_engine
+from app.database.database_manager import get_engine, get_current_db_type
 
 
 DANGEROUS_OPERATIONS = {
@@ -49,50 +49,21 @@ def _extract_first_operation(sql: str) -> str:
 
 
 def has_multiple_statements(sql: str) -> bool:
-    normalized = sql.strip()
+    normalized = re.sub(r"\s+", " ", sql.strip())
 
-    if not normalized:
-        return False
-
-    if normalized.endswith(";"):
-        normalized = normalized[:-1]
-
-    return ";" in normalized
-
-
-def _has_where_clause(sql: str) -> bool:
-    cleaned = re.sub(
-        r"/\*.*?\*/",
-        " ",
-        sql,
-        flags=re.DOTALL,
-    )
-
-    cleaned = re.sub(
-        r"--[^\n]*",
-        " ",
-        cleaned,
-    )
-
-    return bool(
-        re.search(
-            r"\bwhere\b",
-            cleaned,
-            re.IGNORECASE,
-        )
-    )
+    return ";" in normalized.rstrip(";")
 
 
 def validate_sql(sql: str):
 
-    if not sql or not sql.strip():
+    operation = _extract_first_operation(sql)
+
+    if not operation:
         return {
             "allowed": False,
             "operation": "",
-            "reason": "SQL query is empty.",
+            "reason": "No SQL operation was detected.",
         }
-
-    operation = _extract_first_operation(sql)
 
     if has_multiple_statements(sql):
         return {
@@ -106,8 +77,7 @@ def validate_sql(sql: str):
             "allowed": False,
             "operation": operation,
             "reason": (
-                f"{operation.upper()} operations are disabled "
-                "for safety."
+                f"{operation.upper()} operations are disabled for safety."
             ),
         }
 
@@ -119,18 +89,6 @@ def validate_sql(sql: str):
         }
 
     if operation in WRITE_OPERATIONS:
-
-        if operation in {"update", "delete"}:
-            if not _has_where_clause(sql):
-                return {
-                    "allowed": False,
-                    "operation": operation,
-                    "reason": (
-                        f"{operation.upper()} requires a WHERE condition. "
-                        "BG AI will not modify all records."
-                    ),
-                }
-
         return {
             "allowed": True,
             "operation": operation,
@@ -141,8 +99,7 @@ def validate_sql(sql: str):
         "allowed": False,
         "operation": operation,
         "reason": (
-            f"{operation or 'Unknown'} operations "
-            "are not supported."
+            f"{operation.upper()} operations are not supported."
         ),
     }
 
@@ -163,7 +120,7 @@ def execute_query(sql: str):
     try:
 
         # IMPORTANT:
-        # Always obtain the CURRENT connected database engine.
+        # Always use the currently connected database.
         engine = get_engine()
 
         if engine is None:
@@ -171,12 +128,26 @@ def execute_query(sql: str):
                 "success": False,
                 "columns": [],
                 "rows": [],
-                "error": (
-                    "No database is currently connected. "
-                    "Please connect a database first."
-                ),
+                "error": "No database is currently connected.",
                 "operation": validation["operation"],
             }
+
+        db_type = get_current_db_type()
+
+        if db_type == "none":
+            return {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "error": "No database is currently connected.",
+                "operation": validation["operation"],
+            }
+
+        print(
+            f"[BG AI] Executing {validation['operation'].upper()} "
+            f"on {db_type.upper()} | "
+            f"URL={engine.url.render_as_string(hide_password=True)}"
+        )
 
         with engine.begin() as conn:
 
@@ -184,6 +155,7 @@ def execute_query(sql: str):
 
             operation = validation["operation"]
 
+            # SELECT / WITH
             if operation in READ_ONLY:
 
                 rows = [
@@ -198,22 +170,26 @@ def execute_query(sql: str):
                     "columns": columns,
                     "rows": rows,
                     "operation": operation,
+                    "database": db_type,
                     "affected_rows": len(rows),
                 }
 
+            # INSERT / UPDATE / DELETE
             return {
                 "success": True,
                 "columns": [],
                 "rows": [],
                 "operation": operation,
-                "affected_rows": (
-                    result.rowcount
-                    if result.rowcount is not None
-                    else 0
-                ),
+                "database": db_type,
+                "affected_rows": result.rowcount,
             }
 
     except Exception as e:
+
+        print(
+            f"[BG AI] Database execution error: "
+            f"{type(e).__name__}: {e}"
+        )
 
         return {
             "success": False,
@@ -221,4 +197,5 @@ def execute_query(sql: str):
             "rows": [],
             "error": str(e),
             "operation": validation["operation"],
+            "database": get_current_db_type(),
         }
