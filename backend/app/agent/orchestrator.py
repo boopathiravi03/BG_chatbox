@@ -219,15 +219,32 @@ def _is_insert_action(message: str) -> bool:
 def _is_delete_action(message: str) -> bool:
     normalized = message.lower().strip()
 
+    normalized = normalized.replace(
+        "delet",
+        "delete",
+    )
+
+    normalized = normalized.replace(
+        "delte",
+        "delete",
+    )
+
+    normalized = normalized.replace(
+        "remve",
+        "remove",
+    )
+
     action_words = [
         "delete",
         "remove",
-        "drop record",
         "erase",
     ]
 
     return any(
-        re.search(rf"\b{re.escape(word)}\b", normalized)
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            normalized,
+        )
         for word in action_words
     )
 
@@ -884,109 +901,272 @@ def _resolve_table_from_message(
 
 
 def _resolve_delete_request(user_message: str, schema: dict) -> dict | None:
+    """
+    Resolve DELETE requests using the LIVE database schema.
+
+    Deterministic matching is performed first so simple requests
+    do not depend on an LLM response.
+
+    Examples:
+        delete student with id 5
+        delete student id 5
+        remove student 5
+        delete customer where id = 10
+        delet student id 5
+    """
 
     if not schema:
         return None
 
-    prompt = f"""
-You are BG AI's DELETE request parser.
+    message = user_message.strip()
 
-CURRENT LIVE DATABASE SCHEMA:
-{schema}
+    # ---------------------------------------------------------
+    # Normalize common spelling mistakes
+    # ---------------------------------------------------------
+    normalized = message.lower()
 
-USER REQUEST:
-{user_message}
+    corrections = {
+        "delet": "delete",
+        "delte": "delete",
+        "deleet": "delete",
+        "remve": "remove",
+        "studnt": "student",
+        "studnts": "students",
+        "custmer": "customer",
+        "custmers": "customers",
+    }
 
-Your job is to understand the user's request.
-
-Return ONLY valid JSON:
-
-{{
-  "table": "exact_existing_table_name",
-  "where": "safe SQL WHERE condition"
-}}
-
-Rules:
-
-1. Use ONLY tables that exist in the schema.
-2. Use ONLY columns that exist in that table.
-3. Correct spelling mistakes and understand natural language.
-4. Never invent a table.
-5. Never invent a column.
-6. DELETE MUST have a WHERE condition.
-7. NEVER return:
-   - DROP TABLE
-   - TRUNCATE
-   - DELETE without WHERE
-8. If the table or condition cannot be determined, return:
-{{
-  "table": "",
-  "where": ""
-}}
-
-Examples:
-
-"delete student with id 5"
-
-=> {{
-  "table": "students",
-  "where": "id = 5"
-}}
-
-"remove customer whose email is abc@gmail.com"
-
-=> {{
-  "table": "customers",
-  "where": "email = 'abc@gmail.com'"
-}}
-
-Return ONLY JSON.
-"""
-
-    try:
-        raw = ask_groq(prompt).strip()
-
-        raw = re.sub(r"```json", "", raw, flags=re.IGNORECASE)
-        raw = raw.replace("```", "").strip()
-
-        data = json.loads(raw)
-
-        table = data.get("table", "")
-        where = data.get("where", "")
-
-        actual_table = None
-
-        for existing_table in schema.keys():
-            if existing_table.lower() == str(table).lower():
-                actual_table = existing_table
-                break
-
-        if not actual_table or not where:
-            return None
-
-        columns = _get_table_columns(actual_table, schema)
-
-        where_lower = where.lower()
-
-        has_known_column = any(
-            re.search(
-                rf"\b{re.escape(column.lower())}\b",
-                where_lower
-            )
-            for column in columns
+    for wrong, correct in corrections.items():
+        normalized = re.sub(
+            rf"\b{re.escape(wrong)}\b",
+            correct,
+            normalized,
         )
 
-        if not has_known_column:
-            return None
+    # ---------------------------------------------------------
+    # Find table deterministically
+    # ---------------------------------------------------------
+    table = None
 
-        return {
-            "table": actual_table,
-            "where": where.strip(),
+    # 1. Exact table name
+    for existing_table in schema.keys():
+        if re.search(
+            rf"\b{re.escape(existing_table.lower())}\b",
+            normalized,
+        ):
+            table = existing_table
+            break
+
+    # 2. Singular/plural matching
+    if table is None:
+        for existing_table in schema.keys():
+
+            table_lower = existing_table.lower()
+
+            singular = (
+                table_lower[:-1]
+                if table_lower.endswith("s")
+                else table_lower
+            )
+
+            if singular and re.search(
+                rf"\b{re.escape(singular)}\b",
+                normalized,
+            ):
+                table = existing_table
+                break
+
+    # 3. Common semantic matching
+    if table is None:
+        semantic_words = {
+            "student": ["student", "students", "learner", "learners"],
+            "customer": ["customer", "customers", "client", "clients"],
+            "employee": ["employee", "employees", "staff", "worker"],
+            "product": ["product", "products", "item", "items"],
+            "order": ["order", "orders", "purchase", "purchases"],
+            "teacher": ["teacher", "teachers", "faculty"],
         }
 
-    except Exception as e:
-        print("DELETE PARSER ERROR:", e)
+        for existing_table in schema.keys():
+
+            table_lower = existing_table.lower()
+            singular = (
+                table_lower[:-1]
+                if table_lower.endswith("s")
+                else table_lower
+            )
+
+            candidates = [table_lower, singular]
+
+            for entity, words in semantic_words.items():
+
+                if any(
+                    re.search(
+                        rf"\b{re.escape(word)}\b",
+                        normalized,
+                    )
+                    for word in words
+                ):
+                    if entity in candidates or any(
+                        entity in candidate
+                        for candidate in candidates
+                    ):
+                        table = existing_table
+                        break
+
+            if table:
+                break
+
+    # ---------------------------------------------------------
+    # If no table was mentioned and only ONE table exists,
+    # safely use that table.
+    #
+    # This allows:
+    #     delete id 8
+    # ---------------------------------------------------------
+    if table is None and len(schema) == 1:
+        table = list(schema.keys())[0]
+
+    if table is None:
         return None
+
+    # ---------------------------------------------------------
+    # Get actual columns from LIVE schema
+    # ---------------------------------------------------------
+    columns = _get_table_columns(
+        table,
+        schema,
+    )
+
+    if not columns:
+        return None
+
+    # ---------------------------------------------------------
+    # Find explicit WHERE condition
+    #
+    # Examples:
+    #   where id = 5
+    #   where id is 5
+    #   with id 5
+    #   id = 5
+    # ---------------------------------------------------------
+
+    # First find a column mentioned by the user.
+    matched_column = None
+
+    # Prefer ID columns
+    for column in columns:
+
+        if column.lower() == "id":
+            if re.search(
+                r"\bid\b",
+                normalized,
+            ):
+                matched_column = column
+                break
+
+    # Otherwise search all columns
+    if matched_column is None:
+
+        for column in columns:
+
+            if re.search(
+                rf"\b{re.escape(column.lower())}\b",
+                normalized,
+            ):
+                matched_column = column
+                break
+
+    if matched_column is None:
+        return None
+
+    # ---------------------------------------------------------
+    # Extract value after the column
+    #
+    # Supports:
+    #   id 5
+    #   id = 5
+    #   id is 5
+    #   id: 5
+    #   id = '5'
+    # ---------------------------------------------------------
+
+    column_pattern = re.escape(
+        matched_column
+    )
+
+    value_match = re.search(
+        rf"\b{column_pattern}\b"
+        rf"\s*(?:=|is|:)?\s*"
+        rf"(?:['\"]([^'\"]+)['\"]|([A-Za-z0-9_.@+\-]+))"
+        rf"\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+
+    value = None
+
+    if value_match:
+        value = (
+            value_match.group(1)
+            or value_match.group(2)
+        )
+
+    # ---------------------------------------------------------
+    # If "delete student 5", extract number after table
+    # ---------------------------------------------------------
+    if value is None:
+
+        table_pattern = re.escape(
+            table.lower()
+        )
+
+        simple_match = re.search(
+            rf"\b{table_pattern}\b"
+            rf"(?:\s+with)?"
+            rf"\s+(\d+)\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        if simple_match and "id" in [
+            c.lower() for c in columns
+        ]:
+            matched_column = next(
+                c for c in columns
+                if c.lower() == "id"
+            )
+            value = simple_match.group(1)
+
+    if value is None:
+        return None
+
+    # ---------------------------------------------------------
+    # Safely quote the value
+    # ---------------------------------------------------------
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", str(value)):
+        formatted_value = str(value)
+    else:
+        formatted_value = (
+            "'"
+            + str(value).replace("'", "''")
+            + "'"
+        )
+
+    where = (
+        f"{matched_column} = {formatted_value}"
+    )
+
+    print("\n========== DELETE RESOLVER ==========")
+    print("USER :", user_message)
+    print("TABLE:", table)
+    print("WHERE:", where)
+    print("=====================================\n")
+
+    return {
+        "table": table,
+        "where": where,
+    }
 
 
 def _resolve_update_request(user_message: str, schema: dict) -> dict | None:
