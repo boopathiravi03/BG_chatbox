@@ -73,14 +73,9 @@ def validate_sql(sql: str):
             "requires_confirmation": False,
         }
 
-    if operation in DANGEROUS_OPERATIONS:
-        return {
-            "allowed": False,
-            "operation": operation,
-            "reason": f"{operation.upper()} operations are disabled for safety.",
-            "requires_confirmation": False,
-        }
-
+    # ---------------------------------------------------------
+    # READ OPERATIONS
+    # ---------------------------------------------------------
     if operation in READ_ONLY:
         return {
             "allowed": True,
@@ -88,6 +83,9 @@ def validate_sql(sql: str):
             "requires_confirmation": False,
         }
 
+    # ---------------------------------------------------------
+    # NORMAL WRITE OPERATIONS
+    # ---------------------------------------------------------
     if operation in WRITE_OPERATIONS:
         return {
             "allowed": True,
@@ -95,10 +93,25 @@ def validate_sql(sql: str):
             "requires_confirmation": True,
         }
 
+    # ---------------------------------------------------------
+    # DANGEROUS DATABASE OPERATIONS
+    #
+    # These are allowed ONLY after explicit confirmation.
+    # ---------------------------------------------------------
+    if operation in DANGEROUS_OPERATIONS:
+        return {
+            "allowed": True,
+            "operation": operation,
+            "requires_confirmation": True,
+            "dangerous": True,
+        }
+
     return {
         "allowed": False,
         "operation": operation,
-        "reason": f"{operation.upper()} operations are not supported.",
+        "reason": (
+            f"{operation.upper()} operations are not supported."
+        ),
         "requires_confirmation": False,
     }
 

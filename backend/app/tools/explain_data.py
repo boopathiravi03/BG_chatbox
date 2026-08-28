@@ -4,74 +4,72 @@ from app.agent.groq_agent import ask_groq
 def explain_data(question, result):
 
     if not result:
-        return "I couldn't get a result from the database."
+        return "No result was returned."
 
     if not result.get("success", False):
-        error = result.get("error", "")
         return (
-            "I couldn't complete that request."
-            + (f" {error}" if error else "")
+            "The database operation could not be completed."
         )
 
     columns = result.get("columns", [])
     rows = result.get("rows", [])
 
-    rows_returned = result.get(
-        "rows_returned",
-        len(rows)
-    )
+    # NEVER send the entire database result to the LLM
+    limited_rows = rows[:20]
 
-    # ---------------------------------------------------------
-    # No results
-    # ---------------------------------------------------------
-
-    if rows_returned == 0:
-
-        return (
-            "I couldn't find any records matching "
-            "your request."
-        )
-
-    # ---------------------------------------------------------
-    # Only send a SMALL preview to Groq
-    # ---------------------------------------------------------
-
-    preview = rows[:5]
+    compact_result = {
+        "columns": columns,
+        "sample_rows": limited_rows,
+        "rows_returned": result.get(
+            "rows_returned",
+            len(rows),
+        ),
+        "affected_rows": result.get(
+            "affected_rows",
+            0,
+        ),
+        "operation": result.get(
+            "operation",
+            "",
+        ),
+    }
 
     prompt = f"""
-You are BG AI, a friendly AI database assistant.
+You are BG AI, a friendly database assistant.
 
 User asked:
 {question}
 
-The database returned:
-Columns: {columns}
-Number of matching records: {rows_returned}
-Preview:
-{preview}
+Database result:
+{compact_result}
 
-Respond naturally to the user.
+Explain the result in simple, natural English.
 
 Rules:
-- Understand the user's original intention.
-- Do not talk about internal system fields.
 - Do not mention SQL.
-- Do not explain "success", "rows_returned",
-  "affected_rows", or database execution internals.
-- Do not repeat the complete table.
-- Mention the important result.
-- If useful, mention the number of records.
+- Do not mention internal implementation.
+- Do not say "the system told you".
+- Do not invent information.
+- If there are no rows, clearly say no matching records were found.
+- If records exist, summarize what was found.
+- Mention the number of records when available.
 - Keep the answer concise.
 - Sound like a real AI assistant.
-- Correct obvious spelling mistakes mentally.
 """
 
     try:
         return ask_groq(prompt).strip()
 
     except Exception:
+        rows_count = result.get(
+            "rows_returned",
+            len(rows),
+        )
+
+        if rows_count == 0:
+            return "I couldn't find any matching records."
 
         return (
-            f"I found {rows_returned} "
-            "record(s) matching your request."
+            f"I found {rows_count} matching "
+            f"record(s) in the database."
         )

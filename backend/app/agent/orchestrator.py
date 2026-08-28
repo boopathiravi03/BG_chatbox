@@ -1600,6 +1600,355 @@ def _get_database_context() -> str:
         return ""
 
 
+def _detect_operation(message: str) -> str:
+    """
+    Detect database modification operation from natural language.
+    """
+
+    message = message.lower().strip()
+
+    if re.search(r"\b(update|modify|change|edit)\b", message):
+        return "update"
+
+    if re.search(r"\b(delete|remove|erase)\b", message):
+        return "delete"
+
+    if re.search(r"\b(drop|remove table|delete table)\b", message):
+        return "drop"
+
+    if re.search(r"\b(truncate|empty table|clear table)\b", message):
+        return "truncate"
+
+    if re.search(
+        r"\b(alter|add column|remove column|rename column|change column)\b",
+        message,
+    ):
+        return "alter"
+
+    return ""
+
+
+def _build_modification_sql(
+    operation: str,
+    user_message: str,
+    schema: dict,
+) -> str:
+
+    table = _extract_table(user_message, schema)
+
+    if not table:
+        return ""
+
+    prompt = f"""
+You are BG AI's database modification assistant.
+
+CURRENT LIVE DATABASE SCHEMA:
+{schema}
+
+USER REQUEST:
+{user_message}
+
+OPERATION:
+{operation}
+
+RULES:
+
+1. Use ONLY tables that exist in the schema.
+2. Use ONLY columns that exist in the schema.
+3. Never invent tables or columns.
+4. Never modify another table.
+5. Return exactly ONE SQL statement.
+6. Return RAW SQL ONLY.
+7. Do not use markdown.
+8. Do not explain anything.
+
+SAFETY:
+
+For UPDATE:
+- WHERE is mandatory.
+- Never generate UPDATE without WHERE.
+
+For DELETE:
+- WHERE is mandatory.
+- Never generate DELETE without WHERE.
+
+For DROP:
+- Generate DROP TABLE only for the identified existing table.
+
+For TRUNCATE:
+- Generate TRUNCATE TABLE only for the identified existing table.
+
+For ALTER:
+- Only perform the specific alteration requested by the user.
+- Use only existing table/column names.
+
+SQL:
+"""
+
+    try:
+        raw_sql = ask_groq(prompt).strip()
+
+        sql = _clean_generated_sql(raw_sql)
+
+        return sql
+
+    except Exception:
+        return ""
+
+
+def _handle_database_modification(
+    user_message: str,
+    schema: dict,
+    session_id: str,
+) -> dict | None:
+
+    operation = _detect_operation(user_message)
+
+    if not operation:
+        return None
+
+    # INSERT already has dedicated flow
+    if operation == "insert":
+        return None
+
+    # ---------------------------------------------------------
+    # Detect table
+    # ---------------------------------------------------------
+
+    table = _extract_table(user_message, schema)
+
+    if not table:
+
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "chart": None,
+            "diagram": None,
+            "requires_confirmation": False,
+            "explanation": (
+                f"I understood that you want to {operation}, "
+                "but I couldn't safely determine which table "
+                "you want to modify.\n\n"
+                "Please specify the table.\n\n"
+                "Examples:\n"
+                "• Update student with id 5\n"
+                "• Delete customer with id 10\n"
+                "• Drop students table\n"
+                "• Add email column to employees"
+            ),
+            "followups": [],
+        }
+
+    # ---------------------------------------------------------
+    # Generate SQL
+    # ---------------------------------------------------------
+
+    sql = _build_modification_sql(
+        operation,
+        user_message,
+        schema,
+    )
+
+    if not sql:
+
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "chart": None,
+            "diagram": None,
+            "requires_confirmation": False,
+            "explanation": (
+                "I couldn't safely generate the database "
+                "operation from your request."
+            ),
+            "followups": [],
+        }
+
+    # ---------------------------------------------------------
+    # Validate generated SQL
+    # ---------------------------------------------------------
+
+    validation = validate_sql(sql)
+
+    if not validation["allowed"]:
+
+        return {
+            "generated_sql": sql,
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+                "error": validation["reason"],
+            },
+            "chart": None,
+            "diagram": None,
+            "requires_confirmation": False,
+            "explanation": validation["reason"],
+            "followups": [],
+        }
+
+    # ---------------------------------------------------------
+    # EXTRA SAFETY
+    # ---------------------------------------------------------
+
+    if operation in {"update", "delete"}:
+
+        if not re.search(
+            r"\bWHERE\b",
+            sql,
+            flags=re.IGNORECASE,
+        ):
+            return {
+                "generated_sql": sql,
+                "result": {
+                    "success": False,
+                    "columns": [],
+                    "rows": [],
+                    "rows_returned": 0,
+                },
+                "chart": None,
+                "diagram": None,
+                "requires_confirmation": False,
+                "explanation": (
+                    f"For safety, {operation.upper()} requires "
+                    "a WHERE condition."
+                ),
+                "followups": [],
+            }
+
+    # ---------------------------------------------------------
+    # Preview DELETE / UPDATE
+    # ---------------------------------------------------------
+
+    preview_rows = []
+    preview_columns = []
+
+    if operation in {"delete", "update"}:
+
+        match = re.search(
+            r"^\s*(DELETE\s+FROM|UPDATE)\s+([A-Za-z_][A-Za-z0-9_]*)",
+            sql,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+
+            preview_table = match.group(2)
+
+            where_match = re.search(
+                r"\bWHERE\b(.+)$",
+                sql,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+
+            if where_match:
+
+                where_clause = where_match.group(1).strip()
+
+                preview_sql = (
+                    f"SELECT * FROM {preview_table} "
+                    f"WHERE {where_clause}"
+                )
+
+                try:
+                    preview = execute_query(preview_sql)
+
+                    if preview["success"]:
+                        preview_rows = preview["rows"]
+                        preview_columns = preview["columns"]
+
+                except Exception:
+                    pass
+
+    # ---------------------------------------------------------
+    # Confirmation message
+    # ---------------------------------------------------------
+
+    dangerous = operation in {
+        "drop",
+        "alter",
+        "truncate",
+    }
+
+    if dangerous:
+
+        warning = {
+            "drop": (
+                f"This will permanently DROP the table "
+                f"`{table}` and its data."
+            ),
+            "truncate": (
+                f"This will permanently remove ALL rows "
+                f"from `{table}`."
+            ),
+            "alter": (
+                f"This will change the structure of "
+                f"`{table}`."
+            ),
+        }.get(operation, "")
+
+    else:
+
+        warning = (
+            f"This operation will modify `{table}`."
+        )
+
+    conversation_state[session_id] = {
+        "pending_operation": operation,
+        "pending_sql": sql,
+        "pending_table": table,
+    }
+
+    return {
+        "generated_sql": sql,
+        "result": {
+            "success": True,
+            "columns": preview_columns,
+            "rows": preview_rows,
+            "rows_returned": len(preview_rows),
+            "pending_confirmation": True,
+            "operation": operation,
+        },
+        "chart": None,
+        "diagram": None,
+        "requires_confirmation": True,
+        "dangerous": dangerous,
+        "explanation": (
+            f"### Confirm {operation.upper()}\n\n"
+            f"{warning}\n\n"
+            f"```sql\n{sql}\n```\n\n"
+            "Please confirm before I apply this change."
+        ),
+        "followups": [],
+    }
+
+
+def _get_database_context() -> str:
+    try:
+        from app.database.database_context import get_database_profile
+
+        profile = get_database_profile()
+
+        if profile is None or not profile.analyzed:
+            return ""
+
+        return profile.to_context()
+
+    except Exception:
+        return ""
+
+
 def run_agent(user_message: str, session_id: str = "default"):
     schema = get_schema()
 
@@ -1886,6 +2235,19 @@ def run_agent(user_message: str, session_id: str = "default"):
         write_result = _handle_write_operation(session_id, user_message, schema)
         if write_result is not None:
             return write_result
+
+        # =========================================================
+        # DATABASE MODIFICATION OPERATIONS
+        # =========================================================
+
+        modification_result = _handle_database_modification(
+            user_message,
+            schema,
+            session_id,
+        )
+
+        if modification_result is not None:
+            return modification_result
 
         # ---------------------------------------------------------
         # Generic SQL path: only for SELECT / READ operations.
