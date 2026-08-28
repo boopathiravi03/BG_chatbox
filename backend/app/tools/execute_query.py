@@ -1,5 +1,6 @@
 import re
 from sqlalchemy import text
+
 from app.database.database_manager import get_engine
 
 
@@ -48,45 +49,14 @@ def _extract_first_operation(sql: str) -> str:
 
 
 def has_multiple_statements(sql: str) -> bool:
-    """
-    Allow exactly one SQL statement.
-
-    Examples allowed:
-        INSERT INTO customers (...) VALUES (...)
-        INSERT INTO customers (...) VALUES (...);
-        UPDATE customers SET city = 'Chennai' WHERE customer_id = 1
-
-    Examples rejected:
-        INSERT ...; DELETE ...
-        UPDATE ...; SELECT ...
-    """
-
-    if not sql or not sql.strip():
-        return False
-
     normalized = sql.strip()
 
-    # Remove SQL comments
-    normalized = re.sub(
-        r"/\*.*?\*/",
-        " ",
-        normalized,
-        flags=re.DOTALL,
-    )
+    if not normalized:
+        return False
 
-    normalized = re.sub(
-        r"--[^\n]*",
-        " ",
-        normalized,
-    )
-
-    normalized = normalized.strip()
-
-    # A single final semicolon is allowed
     if normalized.endswith(";"):
-        normalized = normalized[:-1].rstrip()
+        normalized = normalized[:-1]
 
-    # Any remaining semicolon means another statement exists
     return ";" in normalized
 
 
@@ -149,15 +119,17 @@ def validate_sql(sql: str):
         }
 
     if operation in WRITE_OPERATIONS:
-        if operation in {"update", "delete"} and not _has_where_clause(sql):
-            return {
-                "allowed": False,
-                "operation": operation,
-                "reason": (
-                    f"{operation.upper()} requires a WHERE condition. "
-                    "For safety, BG AI will not modify all records."
-                ),
-            }
+
+        if operation in {"update", "delete"}:
+            if not _has_where_clause(sql):
+                return {
+                    "allowed": False,
+                    "operation": operation,
+                    "reason": (
+                        f"{operation.upper()} requires a WHERE condition. "
+                        "BG AI will not modify all records."
+                    ),
+                }
 
         return {
             "allowed": True,
@@ -191,7 +163,7 @@ def execute_query(sql: str):
     try:
 
         # IMPORTANT:
-        # Always use the CURRENT connected database.
+        # Always obtain the CURRENT connected database engine.
         engine = get_engine()
 
         if engine is None:
