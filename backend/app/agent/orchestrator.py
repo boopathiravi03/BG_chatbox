@@ -72,6 +72,11 @@ def _get_followups(user_message: str) -> list[str]:
 
 def _classify_intent(user_message: str, schema: dict) -> str:
 
+    message = user_message.lower().strip()
+
+    if _looks_like_database_request(message):
+        return "sql"
+
     table_names = list(schema.keys())
 
     prompt = f"""
@@ -670,6 +675,69 @@ def _clean_generated_sql(raw_sql: str) -> str:
     return sql.strip().rstrip(";").strip()
 
 
+def _build_compact_schema(schema: dict) -> str:
+    """
+    Create a small schema description for the LLM.
+
+    Only table names and column names are sent.
+    Detailed metadata is unnecessary for SELECT generation.
+    """
+
+    if not schema:
+        return "No tables found."
+
+    lines = []
+
+    for table_name, columns in schema.items():
+
+        if not isinstance(columns, dict):
+            continue
+
+        column_names = list(columns.keys())
+
+        lines.append(
+            f"{table_name}: {', '.join(column_names)}"
+        )
+
+    return "\n".join(lines)
+
+
+def _looks_like_database_request(user_message: str) -> bool:
+    message = user_message.lower().strip()
+
+    database_words = [
+        "show",
+        "list",
+        "find",
+        "search",
+        "get",
+        "give",
+        "display",
+        "count",
+        "how many",
+        "how much",
+        "total",
+        "average",
+        "sum",
+        "maximum",
+        "minimum",
+        "details",
+        "records",
+        "data",
+        "where",
+        "filter",
+        "compare",
+    ]
+
+    return any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            message
+        )
+        for word in database_words
+    )
+
+
 def _get_database_context() -> str:
     try:
         from app.database.database_context import get_database_profile
@@ -899,75 +967,56 @@ def run_agent(user_message: str, session_id: str = "default"):
         # Generic SQL path: only for SELECT / READ operations.
         # INSERT must be handled above.
         # ---------------------------------------------------------
-        database_context = _get_database_context()
-        database_context_section = f"Database Analysis:\n{database_context}" if database_context else ""
+        compact_schema = _build_compact_schema(schema)
 
         prompt = f"""
 You are BG AI, an intelligent database assistant.
 
-Your job is to understand what the user means in natural language
-and answer using ONLY the CURRENTLY CONNECTED DATABASE.
+Your task is to convert the user's natural-language request
+into ONE SQL query for the CURRENTLY CONNECTED DATABASE.
 
-================ DATABASE SCHEMA ================
-{schema}
+================ CURRENT DATABASE =================
 
-================ DATABASE CONTEXT ================
-{database_context_section}
+{compact_schema}
 
-================ USER REQUEST ================
+================ USER REQUEST =================
+
 {user_message}
 
-================ RULES ================
+================ RULES =================
 
-1. First understand the user's meaning.
+1. Use ONLY tables and columns listed above.
 
-2. Use ONLY tables and columns that actually exist in the
-   database schema above.
+2. NEVER invent tables or columns.
 
-3. NEVER assume a fixed database such as customers,
-   products, students, orders, etc.
+3. Understand natural language semantically.
 
-4. The connected database may contain ANY domain:
-   students, employees, hospital records, products,
+4. The database can belong to ANY domain:
+   students, employees, hospitals, products,
    customers, finance, attendance, etc.
 
-5. Map natural language to the closest matching table
-   and columns from the LIVE schema.
-
-6. Examples:
+5. If the user says:
    "show students"
-   -> SELECT ... FROM the actual student table
+   find the appropriate student-related table
+   from the schema.
 
-   "show student details"
-   -> SELECT ... FROM the actual student-related table
+6. If the user asks for a count, use COUNT(*).
 
-   "show all customers"
-   -> SELECT ... FROM the actual customer table
+7. If the user asks to search/filter data,
+   use an appropriate WHERE condition.
 
-   "how many students are there"
-   -> SELECT COUNT(*) FROM the actual student table
+8. For SELECT requests, generate SELECT.
 
-7. If the requested entity does NOT exist in the schema,
-   do NOT invent a table.
+9. UPDATE and DELETE require a WHERE condition.
 
-8. For SELECT requests, return a SELECT query.
+10. Return ONLY the SQL query.
 
-9. For UPDATE and DELETE, a WHERE condition is mandatory.
-
-10. For INSERT, use only actual columns from the schema.
-
-11. Return ONLY raw SQL.
-
-12. NEVER return:
+11. Do NOT return:
    - explanations
    - markdown
-   - ```sql
-   - ``` 
+   - code fences
    - comments
-   - "Here is the query"
-
-USER REQUEST:
-{user_message}
+   - extra text
 
 RAW SQL ONLY:
 """
