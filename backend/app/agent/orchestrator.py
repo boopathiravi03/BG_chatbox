@@ -216,6 +216,39 @@ def _is_insert_action(message: str) -> bool:
     )
 
 
+def _is_delete_action(message: str) -> bool:
+    normalized = message.lower().strip()
+
+    action_words = [
+        "delete",
+        "remove",
+        "drop record",
+        "erase",
+    ]
+
+    return any(
+        re.search(rf"\b{re.escape(word)}\b", normalized)
+        for word in action_words
+    )
+
+
+def _is_update_action(message: str) -> bool:
+    normalized = message.lower().strip()
+
+    action_words = [
+        "update",
+        "change",
+        "modify",
+        "edit",
+        "set",
+    ]
+
+    return any(
+        re.search(rf"\b{re.escape(word)}\b", normalized)
+        for word in action_words
+    )
+
+
 def _detect_insert_table(user_message: str, schema: dict) -> str:
     """
     Detect the table the user wants to insert into.
@@ -850,6 +883,528 @@ def _resolve_table_from_message(
     return ""
 
 
+def _resolve_delete_request(user_message: str, schema: dict) -> dict | None:
+
+    if not schema:
+        return None
+
+    prompt = f"""
+You are BG AI's DELETE request parser.
+
+CURRENT LIVE DATABASE SCHEMA:
+{schema}
+
+USER REQUEST:
+{user_message}
+
+Your job is to understand the user's request.
+
+Return ONLY valid JSON:
+
+{{
+  "table": "exact_existing_table_name",
+  "where": "safe SQL WHERE condition"
+}}
+
+Rules:
+
+1. Use ONLY tables that exist in the schema.
+2. Use ONLY columns that exist in that table.
+3. Correct spelling mistakes and understand natural language.
+4. Never invent a table.
+5. Never invent a column.
+6. DELETE MUST have a WHERE condition.
+7. NEVER return:
+   - DROP TABLE
+   - TRUNCATE
+   - DELETE without WHERE
+8. If the table or condition cannot be determined, return:
+{{
+  "table": "",
+  "where": ""
+}}
+
+Examples:
+
+"delete student with id 5"
+
+=> {{
+  "table": "students",
+  "where": "id = 5"
+}}
+
+"remove customer whose email is abc@gmail.com"
+
+=> {{
+  "table": "customers",
+  "where": "email = 'abc@gmail.com'"
+}}
+
+Return ONLY JSON.
+"""
+
+    try:
+        raw = ask_groq(prompt).strip()
+
+        raw = re.sub(r"```json", "", raw, flags=re.IGNORECASE)
+        raw = raw.replace("```", "").strip()
+
+        data = json.loads(raw)
+
+        table = data.get("table", "")
+        where = data.get("where", "")
+
+        actual_table = None
+
+        for existing_table in schema.keys():
+            if existing_table.lower() == str(table).lower():
+                actual_table = existing_table
+                break
+
+        if not actual_table or not where:
+            return None
+
+        columns = _get_table_columns(actual_table, schema)
+
+        where_lower = where.lower()
+
+        has_known_column = any(
+            re.search(
+                rf"\b{re.escape(column.lower())}\b",
+                where_lower
+            )
+            for column in columns
+        )
+
+        if not has_known_column:
+            return None
+
+        return {
+            "table": actual_table,
+            "where": where.strip(),
+        }
+
+    except Exception as e:
+        print("DELETE PARSER ERROR:", e)
+        return None
+
+
+def _resolve_update_request(user_message: str, schema: dict) -> dict | None:
+
+    if not schema:
+        return None
+
+    prompt = f"""
+You are BG AI's UPDATE request parser.
+
+CURRENT LIVE DATABASE SCHEMA:
+{schema}
+
+USER REQUEST:
+{user_message}
+
+Understand the user's request.
+
+Return ONLY valid JSON:
+
+{{
+  "table": "exact_existing_table_name",
+  "fields": {{
+    "existing_column": "new_value"
+  }},
+  "where": "safe SQL WHERE condition"
+}}
+
+Rules:
+
+1. Use ONLY tables from the live schema.
+2. Use ONLY columns from that table.
+3. Correct spelling mistakes.
+4. Understand natural language.
+5. Never invent tables or columns.
+6. UPDATE MUST have a WHERE condition.
+7. Never generate an UPDATE affecting every row.
+8. If information is missing, return empty values.
+9. Return ONLY JSON.
+
+Example:
+
+"update student 5 name to Rahul"
+
+=> {{
+  "table": "students",
+  "fields": {{
+    "name": "Rahul"
+  }},
+  "where": "id = 5"
+}}
+
+Example:
+
+"change customer 10 email to test@gmail.com"
+
+=> {{
+  "table": "customers",
+  "fields": {{
+    "email": "test@gmail.com"
+  }},
+  "where": "id = 10"
+}}
+"""
+
+    try:
+        raw = ask_groq(prompt).strip()
+
+        raw = re.sub(r"```json", "", raw, flags=re.IGNORECASE)
+        raw = raw.replace("```", "").strip()
+
+        data = json.loads(raw)
+
+        table = data.get("table", "")
+        fields = data.get("fields", {})
+        where = data.get("where", "")
+
+        actual_table = None
+
+        for existing_table in schema.keys():
+            if existing_table.lower() == str(table).lower():
+                actual_table = existing_table
+                break
+
+        if not actual_table:
+            return None
+
+        if not isinstance(fields, dict) or not fields:
+            return None
+
+        if not where:
+            return None
+
+        columns = _get_table_columns(actual_table, schema)
+
+        validated_fields = {}
+
+        for key, value in fields.items():
+
+            actual_column = None
+
+            for column in columns:
+                if column.lower() == str(key).lower():
+                    actual_column = column
+                    break
+
+            if actual_column:
+                validated_fields[actual_column] = value
+
+        if not validated_fields:
+            return None
+
+        where_lower = where.lower()
+
+        has_known_column = any(
+            re.search(
+                rf"\b{re.escape(column.lower())}\b",
+                where_lower
+            )
+            for column in columns
+        )
+
+        if not has_known_column:
+            return None
+
+        return {
+            "table": actual_table,
+            "fields": validated_fields,
+            "where": where.strip(),
+        }
+
+    except Exception as e:
+        print("UPDATE PARSER ERROR:", e)
+        return None
+
+
+def _handle_delete_operation(
+    session_id: str,
+    user_message: str,
+    schema: dict
+) -> dict | None:
+
+    if not _is_delete_action(user_message):
+        return None
+
+    request = _resolve_delete_request(
+        user_message,
+        schema
+    )
+
+    if not request:
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "chart": None,
+            "diagram": None,
+            "requires_confirmation": False,
+            "explanation": (
+                "I understood that you want to delete a record, "
+                "but I couldn't safely determine the table and "
+                "record to delete.\n\n"
+                "Please specify the record, for example:\n"
+                "• Delete student with id 5\n"
+                "• Remove customer where id is 10"
+            ),
+            "followups": [],
+        }
+
+    table = request["table"]
+    where = request["where"]
+
+    if not where.strip():
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "error": "DELETE requires a WHERE condition.",
+            },
+            "explanation": (
+                "I need to know which record you want to delete."
+            ),
+            "followups": [],
+        }
+
+    sql = _generate_sql(
+        "delete",
+        table,
+        {},
+        where
+    )
+
+    preview_sql = f"SELECT * FROM {table} WHERE {where}"
+
+    try:
+        preview = execute_query(preview_sql)
+
+        if not preview.get("success"):
+            return {
+                "generated_sql": sql,
+                "result": preview,
+                "requires_confirmation": False,
+                "explanation": (
+                    "I couldn't find the records to delete."
+                ),
+                "followups": [],
+            }
+
+        rows = preview.get("rows", [])
+
+        if not rows:
+            return {
+                "generated_sql": sql,
+                "result": {
+                    "success": True,
+                    "columns": preview.get("columns", []),
+                    "rows": [],
+                    "rows_returned": 0,
+                },
+                "requires_confirmation": False,
+                "explanation": (
+                    f"I couldn't find any records in "
+                    f"`{table}` matching that condition. "
+                    "Nothing was deleted."
+                ),
+                "followups": [],
+            }
+
+        conversation_state[session_id] = {
+            "operation": "delete",
+            "table": table,
+            "where": where,
+            "sql": sql,
+        }
+
+        return {
+            "generated_sql": sql,
+            "result": {
+                "success": True,
+                "columns": preview.get("columns", []),
+                "rows": rows,
+                "rows_returned": len(rows),
+                "pending_confirmation": True,
+                "operation": "delete",
+            },
+            "chart": None,
+            "diagram": None,
+            "requires_confirmation": True,
+            "explanation": (
+                f"I found **{len(rows)} matching record(s)** "
+                f"in `{table}`.\n\n"
+                "Please review the records and confirm "
+                "the deletion. The database has NOT been "
+                "changed yet."
+            ),
+            "followups": [],
+        }
+
+    except Exception as e:
+        return {
+            "generated_sql": sql,
+            "result": {
+                "success": False,
+                "error": str(e),
+            },
+            "requires_confirmation": False,
+            "explanation": (
+                f"I couldn't prepare the deletion: {str(e)}"
+            ),
+            "followups": [],
+        }
+
+
+def _handle_update_operation(
+    session_id: str,
+    user_message: str,
+    schema: dict
+) -> dict | None:
+
+    if not _is_update_action(user_message):
+        return None
+
+    request = _resolve_update_request(
+        user_message,
+        schema
+    )
+
+    if not request:
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "requires_confirmation": False,
+            "explanation": (
+                "I understood that you want to update a record, "
+                "but I need enough information to safely determine "
+                "what should change.\n\n"
+                "Example:\n"
+                "• Update student 5 name to Rahul\n"
+                "• Change customer 10 email to test@gmail.com"
+            ),
+            "followups": [],
+        }
+
+    table = request["table"]
+    fields = request["fields"]
+    where = request["where"]
+
+    if not where:
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "error": "UPDATE requires a WHERE condition.",
+            },
+            "requires_confirmation": False,
+            "explanation": (
+                "I need to know which record you want to update."
+            ),
+            "followups": [],
+        }
+
+    sql = _generate_sql(
+        "update",
+        table,
+        fields,
+        where
+    )
+
+    try:
+        preview_sql = f"SELECT * FROM {table} WHERE {where}"
+
+        preview = execute_query(preview_sql)
+
+        if not preview.get("success"):
+            return {
+                "generated_sql": sql,
+                "result": preview,
+                "requires_confirmation": False,
+                "explanation": (
+                    "I couldn't find the record to update."
+                ),
+                "followups": [],
+            }
+
+        rows = preview.get("rows", [])
+
+        if not rows:
+            return {
+                "generated_sql": sql,
+                "result": {
+                    "success": True,
+                    "columns": preview.get("columns", []),
+                    "rows": [],
+                    "rows_returned": 0,
+                },
+                "requires_confirmation": False,
+                "explanation": (
+                    f"No records in `{table}` match "
+                    "the specified condition. "
+                    "Nothing was updated."
+                ),
+                "followups": [],
+            }
+
+        conversation_state[session_id] = {
+            "operation": "update",
+            "table": table,
+            "fields": fields,
+            "where": where,
+            "sql": sql,
+        }
+
+        return {
+            "generated_sql": sql,
+            "result": {
+                "success": True,
+                "columns": preview.get("columns", []),
+                "rows": rows,
+                "rows_returned": len(rows),
+                "pending_confirmation": True,
+                "operation": "update",
+            },
+            "chart": None,
+            "diagram": None,
+            "requires_confirmation": True,
+            "explanation": (
+                f"I found **{len(rows)} matching record(s)** "
+                f"in `{table}`.\n\n"
+                "The following change is ready to be applied. "
+                "Please review it and confirm."
+            ),
+            "followups": [],
+        }
+
+    except Exception as e:
+        return {
+            "generated_sql": sql,
+            "result": {
+                "success": False,
+                "error": str(e),
+            },
+            "requires_confirmation": False,
+            "explanation": (
+                f"I couldn't prepare the update: {str(e)}"
+            ),
+            "followups": [],
+        }
+
+
 def _get_database_context() -> str:
     try:
         from app.database.database_context import get_database_profile
@@ -1123,13 +1678,38 @@ def run_agent(user_message: str, session_id: str = "default"):
                     "followups": [],
                 }
 
+        # =========================================================
+        # DEDICATED WRITE FLOWS
+        # =========================================================
+
+        # DELETE
+        delete_result = _handle_delete_operation(
+            session_id,
+            user_message,
+            schema
+        )
+
+        if delete_result is not None:
+            return delete_result
+
+        # UPDATE
+        update_result = _handle_update_operation(
+            session_id,
+            user_message,
+            schema
+        )
+
+        if update_result is not None:
+            return update_result
+
+        # Existing conversational write flow
         write_result = _handle_write_operation(session_id, user_message, schema)
         if write_result is not None:
             return write_result
 
         # ---------------------------------------------------------
         # Generic SQL path: only for SELECT / READ operations.
-        # INSERT must be handled above.
+        # INSERT / UPDATE / DELETE must be handled above.
         # ---------------------------------------------------------
         compact_schema = _build_compact_schema(schema)
 
