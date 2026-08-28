@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
+import re
 
 from app.agent.orchestrator import run_agent, clear_pending_insert
 from app.tools.get_schema import get_schema
@@ -91,33 +92,58 @@ def confirm_query(request: ConfirmQueryRequest):
     try:
         sql = request.sql.strip()
 
-        # Remove markdown code fences if frontend/LLM ever sends them
-        if "```" in sql:
-            sql = sql.replace("```sql", "")
-            sql = sql.replace("```SQL", "")
-            sql = sql.replace("```", "")
-            sql = sql.strip()
+        if not sql:
+            return {
+                "success": False,
+                "error": "No SQL query was provided."
+            }
 
-        # Remove ONE optional final semicolon
-        if sql.endswith(";"):
-            sql = sql[:-1].rstrip()
+        # Remove markdown code fences
+        sql = re.sub(
+            r"```(?:sql|mysql|postgresql)?",
+            "",
+            sql,
+            flags=re.IGNORECASE
+        )
+        sql = sql.replace("```", "").strip()
+
+        # Remove final semicolon
+        sql = sql.rstrip(";").strip()
+
+        print("\n========== CONFIRM QUERY ==========")
+        print("SQL:", sql)
 
         validation = validate_sql(sql)
 
-        if not validation["allowed"]:
+        print("VALIDATION:", validation)
+
+        if not validation.get("allowed"):
             return {
                 "success": False,
-                "error": validation["reason"],
-                "operation": validation.get("operation", ""),
+                "error": validation.get(
+                    "reason",
+                    "Query is not allowed."
+                ),
+                "operation": validation.get(
+                    "operation",
+                    ""
+                ),
             }
 
         if not validation.get("requires_confirmation"):
             return {
                 "success": False,
-                "error": "This query does not require confirmation.",
+                "error": (
+                    "This query does not require confirmation."
+                ),
             }
 
+        # IMPORTANT:
+        # Actually execute the confirmed DELETE/UPDATE/INSERT
         result = execute_query(sql)
+
+        print("EXECUTION RESULT:", result)
+        print("==================================\n")
 
         if result.get("success"):
             clear_pending_insert()
@@ -125,16 +151,21 @@ def confirm_query(request: ConfirmQueryRequest):
             return {
                 **result,
                 "confirmed": True,
-                "message": (
-                    "Database updated successfully."
-                ),
+                "message": "Database updated successfully.",
             }
 
-        return result
+        return {
+            **result,
+            "confirmed": False,
+        }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+
         return {
             "success": False,
+            "confirmed": False,
             "error": str(e),
         }
 
