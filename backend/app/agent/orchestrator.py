@@ -65,37 +65,78 @@ def _get_followups(user_message: str) -> list[str]:
     return generate_suggestions(schema, database_context)
 
 
-def _classify_intent(user_message: str) -> str:
-    prompt = f"""You are an intent classifier for a database assistant.
+def _classify_intent(user_message: str, schema: dict) -> str:
 
-Classify the user message into ONE category only.
+    table_names = list(schema.keys())
 
-Categories:
-- chat: greetings, general questions, small talk, questions about the assistant itself, or anything not related to database operations
-- sql: direct database queries like "show customers", "list orders", "find products", "highest sales month", "top customers", "how many X"
-- chart: requests for charts, graphs, visualizations like "revenue chart", "sales graph", "plot monthly sales"
-- dashboard: requests for the full analytics dashboard, business insights overview, or complete dashboard view
-- relationship_graph: requests to visualize table relationships, schema connections
-- er_diagram: requests for ER diagram, entity relationship diagram, schema diagram
-- analytics: requests for analytics dashboard, business insights, overview
+    prompt = f"""
+You are the intent classifier for BG AI.
 
-IMPORTANT RULES:
-- If the user asks for a SPECIFIC metric, value, or record ("highest sales month", "top customer", "how many X"), classify as "sql"
-- Only classify as "dashboard" or "analytics" if the user explicitly asks for the full dashboard or overview
-- When in doubt between "sql" and "dashboard", choose "sql"
+BG AI is connected to a LIVE database.
 
-Return ONLY the category name, nothing else.
+CURRENT DATABASE TABLES:
+{table_names}
 
-User: {user_message}
+USER REQUEST:
+{user_message}
+
+Classify the request into exactly ONE category:
+
+chat
+sql
+chart
+dashboard
+relationship_graph
+er_diagram
+analytics
+
+IMPORTANT:
+
+- Any request asking to see, list, find, search, count,
+  compare, filter, calculate, inspect or retrieve database
+  information is SQL.
+
+- Natural language does NOT need to contain the exact
+  table name.
+
+- "show student"
+- "show me students"
+- "student details"
+- "give student records"
+- "list students"
+
+are all database SQL requests if the connected schema
+contains a matching student-related table.
+
+- If the user asks for specific database data, ALWAYS
+  choose sql.
+
+- Only choose chat for genuine conversation unrelated
+  to database data.
+
+Return ONLY the category.
 """
 
     try:
         response = ask_groq(prompt).strip().lower()
-        valid_intents = ["chat", "sql", "chart", "dashboard", "relationship_graph", "er_diagram", "analytics"]
+
+        valid_intents = [
+            "chat",
+            "sql",
+            "chart",
+            "dashboard",
+            "relationship_graph",
+            "er_diagram",
+            "analytics",
+        ]
+
         for intent in valid_intents:
-            if intent in response:
+            if response == intent:
                 return intent
+
+        # Important fallback
         return "sql"
+
     except Exception:
         return "sql"
 
@@ -513,23 +554,115 @@ def _build_insert_request(table: str, schema: dict) -> dict:
 
 
 def _extract_table(user_message: str, schema: dict) -> str:
-    prompt = f"""You are a database assistant. The user wants to perform a database operation.
 
-Database schema (table names only):
-{', '.join(list(schema.keys()))}
+    if not schema:
+        return ""
 
-User request: {user_message}
+    # Deterministic exact match first
+    message = user_message.lower()
 
-Which table are they referring to? Return ONLY the exact table name from the schema above. If none match, return an empty string."""
+    for table in schema.keys():
+        if re.search(
+            rf"\b{re.escape(table.lower())}\b",
+            message
+        ):
+            return table
+
+    # Give AI full schema information
+    schema_description = "\n".join(
+        f"- {table}: {', '.join(columns.keys())}"
+        for table, columns in schema.items()
+        if isinstance(columns, dict)
+    )
+
+    prompt = f"""
+You are a database table resolver.
+
+LIVE DATABASE SCHEMA:
+
+{schema_description}
+
+USER REQUEST:
+{user_message}
+
+Determine which existing table best matches the user's
+meaning.
+
+Rules:
+- Never invent a table.
+- Use semantic meaning, not only exact spelling.
+- "student" can match "students".
+- "employee" can match "employees".
+- "customer details" can match "customers".
+- If no table is reasonably related, return NONE.
+
+Return ONLY the exact existing table name.
+"""
 
     try:
         response = ask_groq(prompt).strip()
+
         for table in schema.keys():
-            if table.lower() in response.lower():
+            if response.lower() == table.lower():
                 return table
+
+        # Fuzzy fallback
+        matches = get_close_matches(
+            response.lower(),
+            [t.lower() for t in schema.keys()],
+            n=1,
+            cutoff=0.65,
+        )
+
+        if matches:
+            for table in schema.keys():
+                if table.lower() == matches[0]:
+                    return table
+
     except Exception:
         pass
+
     return ""
+
+
+def _clean_generated_sql(raw_sql: str) -> str:
+    """
+    Convert an LLM response into clean executable SQL.
+
+    Handles:
+    - ```sql ... ```
+    - ``` ... ```
+    - explanations before/after SQL
+    - trailing semicolons
+    """
+
+    if not raw_sql:
+        return ""
+
+    sql = raw_sql.strip()
+
+    # Remove markdown code fences
+    sql = re.sub(r"```(?:sql|mysql|postgresql)?", "", sql, flags=re.IGNORECASE)
+    sql = sql.replace("```", "").strip()
+
+    # Find the first actual SQL statement
+    match = re.search(
+        r"\b(SELECT|WITH|INSERT|UPDATE|DELETE|PRAGMA)\b",
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+        sql = sql[match.start():]
+
+    # Remove common trailing explanation
+    sql = re.split(
+        r"\n\s*(Explanation|Here is|This query|Note:)\s*:",
+        sql,
+        flags=re.IGNORECASE,
+    )[0]
+
+    return sql.strip().rstrip(";").strip()
 
 
 def _get_database_context() -> str:
@@ -545,7 +678,7 @@ def run_agent(user_message: str, session_id: str = "default"):
     schema = get_schema()
     database_context = _get_database_context()
 
-    intent = _classify_intent(user_message)
+    intent = _classify_intent(user_message, schema)
 
     if intent == "chat":
         conversation_state.pop(session_id, None)
@@ -738,44 +871,84 @@ def run_agent(user_message: str, session_id: str = "default"):
         prompt = f"""
 You are BG AI, an intelligent database assistant.
 
-IMPORTANT DATABASE RULES:
+Your job is to understand what the user means in natural language
+and answer using ONLY the CURRENTLY CONNECTED DATABASE.
 
-1. The database shown below is the CURRENT ACTIVE DATABASE.
-2. Use ONLY this database schema.
-3. Never assume ecommerce.db exists.
-4. Never assume tables such as customers, products, orders, students,
-   employees, etc. exist unless they appear in the schema.
-5. Never invent a table.
-6. Never invent a column.
-7. Analyze the schema before generating SQL.
-8. Use the exact table and column names from the schema.
-9. INSERT, UPDATE and DELETE must operate on the CURRENT ACTIVE DATABASE.
-10. UPDATE and DELETE MUST contain a WHERE clause.
-11. If the user's requested data does not exist in the schema,
-    do not generate fake SQL. Explain that the requested table/column
-    is unavailable.
+================ DATABASE SCHEMA ================
+{schema}
 
-CURRENT DATABASE SCHEMA:
-{json.dumps(schema, indent=2, default=str)}
-
+================ DATABASE CONTEXT ================
 {database_context_section}
+
+================ USER REQUEST ================
+{user_message}
+
+================ RULES ================
+
+1. First understand the user's meaning.
+
+2. Use ONLY tables and columns that actually exist in the
+   database schema above.
+
+3. NEVER assume a fixed database such as customers,
+   products, students, orders, etc.
+
+4. The connected database may contain ANY domain:
+   students, employees, hospital records, products,
+   customers, finance, attendance, etc.
+
+5. Map natural language to the closest matching table
+   and columns from the LIVE schema.
+
+6. Examples:
+   "show students"
+   -> SELECT ... FROM the actual student table
+
+   "show student details"
+   -> SELECT ... FROM the actual student-related table
+
+   "show all customers"
+   -> SELECT ... FROM the actual customer table
+
+   "how many students are there"
+   -> SELECT COUNT(*) FROM the actual student table
+
+7. If the requested entity does NOT exist in the schema,
+   do NOT invent a table.
+
+8. For SELECT requests, return a SELECT query.
+
+9. For UPDATE and DELETE, a WHERE condition is mandatory.
+
+10. For INSERT, use only actual columns from the schema.
+
+11. Return ONLY raw SQL.
+
+12. NEVER return:
+   - explanations
+   - markdown
+   - ```sql
+   - ``` 
+   - comments
+   - "Here is the query"
 
 USER REQUEST:
 {user_message}
 
-Generate ONLY valid SQL.
-Do not use markdown.
-Do not use ```sql.
+RAW SQL ONLY:
 """
 
         try:
             raw_sql = ask_groq(prompt).strip()
 
-            sql = raw_sql
-            if "```" in sql:
-                sql = sql.split("```", 1)[1]
-                sql = sql.split("```", 1)[0]
-                sql = sql.replace("sql", "", 1).strip()
+            print("\n========== BG AI SQL ==========")
+            print("USER:", user_message)
+            print("RAW :", raw_sql)
+
+            sql = _clean_generated_sql(raw_sql)
+
+            print("SQL :", sql)
+            print("================================\n")
         except Exception as e:
             import traceback
 
