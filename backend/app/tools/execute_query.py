@@ -55,14 +55,14 @@ def has_multiple_statements(sql: str) -> bool:
 
 
 def validate_sql(sql: str):
-
     operation = _extract_first_operation(sql)
 
     if not operation:
         return {
             "allowed": False,
             "operation": "",
-            "reason": "No SQL operation was detected.",
+            "reason": "Empty SQL query.",
+            "requires_confirmation": False,
         }
 
     if has_multiple_statements(sql):
@@ -70,15 +70,15 @@ def validate_sql(sql: str):
             "allowed": False,
             "operation": operation,
             "reason": "Multiple SQL statements are not allowed.",
+            "requires_confirmation": False,
         }
 
     if operation in DANGEROUS_OPERATIONS:
         return {
             "allowed": False,
             "operation": operation,
-            "reason": (
-                f"{operation.upper()} operations are disabled for safety."
-            ),
+            "reason": f"{operation.upper()} operations are disabled for safety.",
+            "requires_confirmation": False,
         }
 
     if operation in READ_ONLY:
@@ -98,14 +98,12 @@ def validate_sql(sql: str):
     return {
         "allowed": False,
         "operation": operation,
-        "reason": (
-            f"{operation.upper()} operations are not supported."
-        ),
+        "reason": f"{operation.upper()} operations are not supported.",
+        "requires_confirmation": False,
     }
 
 
 def execute_query(sql: str):
-
     validation = validate_sql(sql)
 
     if not validation["allowed"]:
@@ -115,49 +113,31 @@ def execute_query(sql: str):
             "rows": [],
             "error": validation["reason"],
             "operation": validation["operation"],
+            "database": get_current_db_type(),
+        }
+
+    engine = get_engine()
+
+    if engine is None:
+        return {
+            "success": False,
+            "columns": [],
+            "rows": [],
+            "error": "No database is currently connected.",
+            "operation": validation["operation"],
+            "database": "none",
         }
 
     try:
+        operation = validation["operation"]
 
         # IMPORTANT:
-        # Always use the currently connected database.
-        engine = get_engine()
-
-        if engine is None:
-            return {
-                "success": False,
-                "columns": [],
-                "rows": [],
-                "error": "No database is currently connected.",
-                "operation": validation["operation"],
-            }
-
-        db_type = get_current_db_type()
-
-        if db_type == "none":
-            return {
-                "success": False,
-                "columns": [],
-                "rows": [],
-                "error": "No database is currently connected.",
-                "operation": validation["operation"],
-            }
-
-        print(
-            f"[BG AI] Executing {validation['operation'].upper()} "
-            f"on {db_type.upper()} | "
-            f"URL={engine.url.render_as_string(hide_password=True)}"
-        )
-
+        # Always use the engine created by database_manager.
         with engine.begin() as conn:
 
             result = conn.execute(text(sql))
 
-            operation = validation["operation"]
-
-            # SELECT / WITH
             if operation in READ_ONLY:
-
                 rows = [
                     dict(row._mapping)
                     for row in result
@@ -169,33 +149,33 @@ def execute_query(sql: str):
                     "success": True,
                     "columns": columns,
                     "rows": rows,
+                    "rows_returned": len(rows),
                     "operation": operation,
-                    "database": db_type,
-                    "affected_rows": len(rows),
+                    "database": get_current_db_type(),
+                    "affected_rows": 0,
                 }
 
-            # INSERT / UPDATE / DELETE
+            affected_rows = result.rowcount
+
             return {
                 "success": True,
                 "columns": [],
                 "rows": [],
+                "rows_returned": 0,
                 "operation": operation,
-                "database": db_type,
-                "affected_rows": result.rowcount,
+                "database": get_current_db_type(),
+                "affected_rows": affected_rows,
             }
 
     except Exception as e:
-
-        print(
-            f"[BG AI] Database execution error: "
-            f"{type(e).__name__}: {e}"
-        )
 
         return {
             "success": False,
             "columns": [],
             "rows": [],
-            "error": str(e),
+            "rows_returned": 0,
             "operation": validation["operation"],
             "database": get_current_db_type(),
+            "affected_rows": 0,
+            "error": str(e),
         }

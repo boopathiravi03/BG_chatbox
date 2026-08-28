@@ -247,6 +247,17 @@ def connect_database(req: DatabaseConnection):
                 req.password,
             )
 
+            # Verify the SAME engine used by query execution
+            from app.database.database_manager import get_engine
+
+            engine = get_engine()
+
+            if engine is None:
+                raise RuntimeError("MySQL engine was not created.")
+
+            with engine.connect() as conn:
+                conn.exec_driver_sql("SELECT 1")
+
         elif req.db_type == "postgres":
 
             connect_postgres(
