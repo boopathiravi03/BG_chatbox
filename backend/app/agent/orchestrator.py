@@ -138,6 +138,7 @@ Return ONLY the category.
             "relationship_graph",
             "er_diagram",
             "analytics",
+            "database_schema",
         ]
 
         for intent in valid_intents:
@@ -568,15 +569,14 @@ def _extract_table(user_message: str, schema: dict) -> str:
     if not schema:
         return ""
 
-    # Deterministic exact match first
-    message = user_message.lower()
+    # First try deterministic + typo-tolerant matching
+    resolved = _resolve_table_from_message(
+        user_message,
+        schema
+    )
 
-    for table in schema.keys():
-        if re.search(
-            rf"\b{re.escape(table.lower())}\b",
-            message
-        ):
-            return table
+    if resolved:
+        return resolved
 
     # Give AI full schema information
     schema_description = "\n".join(
@@ -738,6 +738,118 @@ def _looks_like_database_request(user_message: str) -> bool:
     )
 
 
+def _is_schema_request(user_message: str) -> bool:
+    """
+    Detect requests asking for the structure of the currently
+    connected database.
+    """
+
+    message = user_message.lower().strip()
+
+    corrections = {
+        "databse": "database",
+        "databses": "databases",
+        "tabel": "table",
+        "tabels": "tables",
+        "tabl": "table",
+        "scheema": "schema",
+        "schem": "schema",
+        "colum": "column",
+        "colums": "columns",
+        "colmn": "column",
+    }
+
+    words = message.split()
+
+    normalized_words = [
+        corrections.get(word, word)
+        for word in words
+    ]
+
+    message = " ".join(normalized_words)
+
+    patterns = [
+        r"\bshow (me )?(the )?(database|tables|schema)\b",
+        r"\blist (all )?(the )?(tables|databases)\b",
+        r"\bwhat tables\b",
+        r"\bwhich tables\b",
+        r"\bshow table\b",
+        r"\bshow schema\b",
+        r"\bdatabase structure\b",
+        r"\bdatabase details\b",
+        r"\bdatabase information\b",
+        r"\bmy database\b",
+        r"\bconnected database\b",
+        r"\bwhat is in (the )?database\b",
+        r"\bwhat are the tables\b",
+    ]
+
+    return any(
+        re.search(pattern, message)
+        for pattern in patterns
+    )
+
+
+def _resolve_table_from_message(
+    user_message: str,
+    schema: dict
+) -> str:
+
+    if not schema:
+        return ""
+
+    message = user_message.lower()
+
+    table_names = list(schema.keys())
+
+    for table in table_names:
+        if re.search(
+            rf"\b{re.escape(table.lower())}\b",
+            message
+        ):
+            return table
+
+    for table in table_names:
+
+        table_lower = table.lower()
+
+        singular = (
+            table_lower[:-1]
+            if table_lower.endswith("s")
+            else table_lower
+        )
+
+        if re.search(
+            rf"\b{re.escape(singular)}\b",
+            message
+        ):
+            return table
+
+    user_words = re.findall(
+        r"[a-zA-Z_][a-zA-Z0-9_]*",
+        message
+    )
+
+    for word in user_words:
+
+        matches = get_close_matches(
+            word,
+            [table.lower() for table in table_names],
+            n=1,
+            cutoff=0.65,
+        )
+
+        if matches:
+
+            matched = matches[0]
+
+            for table in table_names:
+                if table.lower() == matched:
+                    return table
+
+    return ""
+
+
 def _get_database_context() -> str:
     try:
         from app.database.database_context import get_database_profile
@@ -773,6 +885,58 @@ def run_agent(user_message: str, session_id: str = "default"):
                 "connected database."
             ),
             "followups": [],
+        }
+
+    # ---------------------------------------------------------
+    # DATABASE STRUCTURE REQUEST
+    # ---------------------------------------------------------
+    # Handle locally. Do NOT ask the LLM to generate
+    # information_schema queries.
+    # ---------------------------------------------------------
+
+    if _is_schema_request(user_message):
+
+        conversation_state.pop(session_id, None)
+
+        schema_rows = []
+
+        for table_name, columns in schema.items():
+
+            for column_name, metadata in columns.items():
+
+                schema_rows.append({
+                    "table_name": table_name,
+                    "column_name": column_name,
+                    "data_type": metadata.get("type", ""),
+                    "nullable": metadata.get("nullable", True),
+                    "primary_key": metadata.get(
+                        "primary_key",
+                        False
+                    ),
+                })
+
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": True,
+                "columns": [
+                    "table_name",
+                    "column_name",
+                    "data_type",
+                    "nullable",
+                    "primary_key",
+                ],
+                "rows": schema_rows,
+                "execution_time_ms": 0,
+                "rows_returned": len(schema_rows),
+            },
+            "chart": None,
+            "diagram": None,
+            "analytics": None,
+            "explanation": (
+                "Here is the structure of your connected database."
+            ),
+            "followups": _get_followups(user_message),
         }
 
     database_context = _get_database_context()
@@ -1005,18 +1169,43 @@ into ONE SQL query for the CURRENTLY CONNECTED DATABASE.
 7. If the user asks to search/filter data,
    use an appropriate WHERE condition.
 
-8. For SELECT requests, generate SELECT.
+ 8. For SELECT requests, generate SELECT.
 
-9. UPDATE and DELETE require a WHERE condition.
+ 9. UPDATE and DELETE require a WHERE condition.
 
-10. Return ONLY the SQL query.
+ 10. Return ONLY the SQL query.
 
-11. Do NOT return:
-   - explanations
-   - markdown
-   - code fences
-   - comments
-   - extra text
+ 11. Do NOT return:
+    - explanations
+    - markdown
+    - code fences
+    - comments
+    - extra text
+
+ 12. Correct obvious spelling mistakes and typos before
+     interpreting the request.
+
+ 13. Do NOT require the user to use exact database
+     terminology.
+
+ 14. Examples:
+
+     "shwo students"
+     -> understand as "show students"
+
+     "studnt details"
+     -> understand as "student details"
+
+     "employes"
+     -> match "employees" if that table exists
+
+     "custmers"
+     -> match "customers" if that table exists
+
+ 15. Never invent a table just because the spelling is wrong.
+
+ 16. If a likely table does not exist, clearly report that
+     the requested data could not be found.
 
 RAW SQL ONLY:
 """
