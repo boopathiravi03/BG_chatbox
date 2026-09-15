@@ -112,52 +112,6 @@ def handle_crud_request(
     return None
 
 
-def _handle_read(
-    user_message: str,
-    schema: dict,
-    intent: dict[str, Any],
-) -> dict[str, Any]:
-    table = intent.get("table")
-    if not table:
-        return {
-            "type": "error",
-            "message": "I could not determine which table you want to read from.",
-            "requires_confirmation": False,
-        }
-
-    match = intent.get("match") or {}
-    where_column = match.get("column")
-    where_value = match.get("value")
-
-    where_clause = None
-    if where_column and where_value:
-        where_clause = f"{_quote_identifier(where_column)} = {_quote_value(where_value)}"
-
-    preview = match_records(table, where_clause, schema)
-
-    if not preview.get("success"):
-        return {
-            "type": "error",
-            "message": preview.get("error", "Could not read from the database."),
-            "requires_confirmation": False,
-        }
-
-    rows = preview.get("rows", [])
-    columns = preview.get("columns", [])
-
-    return {
-        "type": "result",
-        "message": f"Found {len(rows)} record(s) in '{table}'.",
-        "result": {
-            "success": True,
-            "columns": columns,
-            "rows": rows,
-            "rows_returned": len(rows),
-        },
-        "requires_confirmation": False,
-    }
-
-
 def _handle_create(
     user_message: str,
     session_id: str,
