@@ -73,9 +73,14 @@ def chat(req: ChatRequest):
         return run_agent(
             req.message,
             req.session_id,
+            input_values=req.input_values,
+            pending_insert=req.pending_insert,
         )
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+
         return {
             "generated_sql": "",
             "result": {
@@ -146,6 +151,13 @@ def confirm_query(request: ConfirmQueryRequest):
         print("==================================\n")
 
         if result.get("success"):
+            # Refresh database intelligence after a write
+            try:
+                from app.database.database_context import refresh_database_profile
+                refresh_database_profile()
+            except Exception:
+                pass
+
             clear_pending_insert()
 
             return {

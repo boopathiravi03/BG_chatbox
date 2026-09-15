@@ -1949,7 +1949,12 @@ def _get_database_context() -> str:
         return ""
 
 
-def run_agent(user_message: str, session_id: str = "default"):
+def run_agent(
+    user_message: str,
+    session_id: str = "default",
+    input_values: dict | None = None,
+    pending_insert: bool = False,
+):
     schema = get_schema()
 
     if not schema:
@@ -2022,6 +2027,107 @@ def run_agent(user_message: str, session_id: str = "default"):
             ),
             "followups": _get_followups(user_message),
         }
+
+    # ---------------------------------------------------------
+    # STRUCTURED INSERT FORM SUBMISSION
+    # ---------------------------------------------------------
+    if pending_insert and input_values:
+        state = conversation_state.get(session_id, {})
+        table = state.get("pending_insert_table")
+
+        if table:
+            table_schema = schema.get(table, {})
+
+            if not isinstance(table_schema, dict):
+                table_schema = {}
+
+            allowed_values = {
+                column: value
+                for column, value in input_values.items()
+                if column in table_schema
+                and value is not None
+                and str(value).strip() != ""
+            }
+
+            if not allowed_values:
+                return {
+                    "generated_sql": "",
+                    "result": {
+                        "success": False,
+                        "columns": [],
+                        "rows": [],
+                    },
+                    "explanation": (
+                        "Please provide at least one valid value "
+                        "for the requested fields."
+                    ),
+                    "followups": [],
+                }
+
+            required_fields = _get_required_insert_fields(
+                table,
+                schema,
+            )
+
+            missing_fields = [
+                field
+                for field in required_fields
+                if field not in allowed_values
+            ]
+
+            if missing_fields:
+                return _build_insert_request(
+                    table,
+                    schema,
+                )
+
+            sql = _generate_sql(
+                "insert",
+                table,
+                allowed_values,
+                ""
+            )
+
+            validation = validate_sql(sql)
+
+            if not validation.get("allowed"):
+                return {
+                    "generated_sql": sql,
+                    "result": {
+                        "success": False,
+                        "columns": [],
+                        "rows": [],
+                    },
+                    "explanation": (
+                        "I could not safely prepare this database change: "
+                        + validation.get(
+                            "reason",
+                            "Invalid SQL operation.",
+                        )
+                    ),
+                    "followups": [],
+                }
+
+            if validation.get("requires_confirmation"):
+                return {
+                    "generated_sql": sql,
+                    "result": {
+                        "success": True,
+                        "columns": [],
+                        "rows": [],
+                        "pending_confirmation": True,
+                        "operation": "insert",
+                    },
+                    "chart": None,
+                    "diagram": None,
+                    "analytics": None,
+                    "requires_confirmation": True,
+                    "explanation": (
+                        "I've prepared the new record. "
+                        "Please confirm before I add it to the database."
+                    ),
+                    "followups": [],
+                }
 
     database_context = _get_database_context()
 
