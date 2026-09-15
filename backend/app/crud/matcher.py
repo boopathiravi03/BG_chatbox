@@ -41,7 +41,7 @@ def match_records(
             "columns": [],
         }
 
-    table_sql = _quote_identifier(table)
+    table_sql = quote_identifier(table)
     sql = f"SELECT * FROM {table_sql}"
 
     if where_clause:

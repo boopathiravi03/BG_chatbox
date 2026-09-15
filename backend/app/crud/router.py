@@ -5,7 +5,7 @@ from typing import Any
 from app.agent.groq_agent import ask_groq
 from app.crud.confirmation import store_pending
 from app.crud.intent import parse_crud_intent
-from app.crud.matcher import match_records
+from app.crud.matcher import match_records, quote_identifier
 from app.crud.planner import (
     preview_delete,
     preview_insert,
@@ -13,10 +13,6 @@ from app.crud.planner import (
 )
 from app.crud.resolver import find_text_columns, resolve_table
 from app.tools.execute_query import validate_sql
-
-
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _quote_value(value) -> str:
@@ -85,11 +81,9 @@ def handle_crud_request(
     table = intent["table"]
 
     if operation == "read":
-        return _handle_read(
-            user_message=message,
-            schema=schema,
-            intent=intent,
-        )
+        # Normal read queries are handled by the
+        # main SQL/chart intelligence pipeline.
+        return None
 
     if operation == "create":
         return _handle_create(
@@ -212,6 +206,12 @@ def _handle_create(
             "type": field_type,
             "required": not metadata.get("nullable", True) and metadata.get("default") is None,
         })
+
+    from app.agent.orchestrator import conversation_state
+
+    conversation_state[session_id] = {
+        "pending_insert_table": table,
+    }
 
     return {
         "type": "input_request",

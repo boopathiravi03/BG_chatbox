@@ -48,26 +48,7 @@ def resolve_table(
         if re.search(rf"\b{re.escape(friendly)}\b", message):
             return table
 
-    aliases = {
-        "customer": ["customer", "customers", "client", "clients"],
-        "student": ["student", "students", "learner", "learners"],
-        "employee": ["employee", "employees", "staff", "worker", "workers"],
-        "product": ["product", "products", "item", "items"],
-        "order": ["order", "orders", "purchase", "purchases"],
-        "course": ["course", "courses", "subject", "subjects"],
-        "faculty": ["faculty", "teacher", "teachers", "instructor", "instructors"],
-        "attendance": ["attendance", "attendances", "presence", "absences"],
-    }
-
     message_words = _word_set(message)
-
-    for table in table_names:
-        table_lower = table.lower()
-        for group, words in aliases.items():
-            if group not in table_lower:
-                continue
-            if any(word in message_words for word in words):
-                return table
 
     candidate_tables: list[str] = []
 

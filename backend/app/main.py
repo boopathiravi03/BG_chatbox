@@ -194,6 +194,17 @@ def connect_database(req: DatabaseConnection):
 
     try:
 
+        # Clear old database state FIRST
+        clear_pending_insert()
+
+        try:
+            from app.agent.orchestrator import conversation_state
+            conversation_state.clear()
+        except Exception:
+            pass
+
+        clear_database_profile()
+
         # Completely remove previous connection
         disconnect_database()
 

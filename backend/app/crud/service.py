@@ -9,6 +9,21 @@ from app.crud.planner import preview_delete, preview_insert, preview_update
 from app.crud.resolver import resolve_table
 from app.tools.execute_query import execute_query, validate_sql
 from app.database.database_context import refresh_database_profile
+from app.database.database_manager import get_engine
+
+
+def _current_database_identity() -> str | None:
+    engine = get_engine()
+
+    if engine is None:
+        return None
+
+    try:
+        return engine.url.render_as_string(
+            hide_password=True
+        )
+    except Exception:
+        return None
 
 
 def execute_confirmed(session_id: str) -> dict[str, Any]:
@@ -31,6 +46,34 @@ def execute_confirmed(session_id: str) -> dict[str, Any]:
             "success": False,
             "confirmed": False,
             "error": "The pending database operation has expired.",
+        }
+
+    current_engine = get_engine()
+
+    if current_engine is None:
+        clear_pending(session_id)
+        return {
+            "success": False,
+            "confirmed": False,
+            "error": "No database is currently connected.",
+        }
+
+    try:
+        current_identity = current_engine.url.render_as_string(
+            hide_password=True
+        )
+    except Exception:
+        current_identity = None
+
+    if pending.get("database_identity") != current_identity:
+        clear_pending(session_id)
+        return {
+            "success": False,
+            "confirmed": False,
+            "error": (
+                "The database connection changed after this "
+                "operation was prepared. Please create the operation again."
+            ),
         }
 
     validation = validate_sql(sql)

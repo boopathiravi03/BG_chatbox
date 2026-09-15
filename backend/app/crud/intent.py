@@ -123,6 +123,12 @@ Rules:
                 if key in valid_columns
             }
 
+        if validated.get("confidence") == "low":
+            return None
+
+        if validated.get("ambiguities"):
+            return None
+
         return validated
 
     except Exception:
