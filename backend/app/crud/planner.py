@@ -6,6 +6,20 @@ from app.crud.matcher import match_records, quote_identifier
 from app.tools.execute_query import validate_sql
 
 
+def _quote_value(value: Any) -> str:
+    if value is None:
+        return "NULL"
+
+    if isinstance(value, bool):
+        return "1" if value else "0"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
 def preview_read(
     table: str,
     where_clause: str | None,
@@ -42,10 +56,8 @@ def preview_insert(
     columns = list(allowed.keys())
     column_sql = ", ".join(quote_identifier(column) for column in columns)
     value_sql = ", ".join(
-        "NULL"
-        if value is None
-        else f"'{str(value).replace(chr(39), chr(39)+chr(39))}'"
-        for value in [allowed[column] for column in columns]
+        _quote_value(allowed[column])
+        for column in columns
     )
 
     sql = f"INSERT INTO {quote_identifier(table)} ({column_sql}) VALUES ({value_sql})"
@@ -87,7 +99,7 @@ def preview_update(
         }
 
     set_parts = [
-        f"{quote_identifier(column)} = \'{str(value).replace(chr(39), chr(39)+chr(39))}\'"
+        f"{quote_identifier(column)} = {_quote_value(value)}"
         for column, value in valid_changes.items()
     ]
 
