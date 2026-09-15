@@ -207,7 +207,7 @@ def _handle_update(
             "requires_confirmation": False,
         }
 
-    where_clause = f"{_quote_identifier(where_column)} = {_quote_value(where_value)}"
+    where_clause = f"{quote_identifier(where_column)} = {_quote_value(where_value)}"
 
     valid_changes = {
         column: value
@@ -334,7 +334,7 @@ def _handle_delete(
             "requires_confirmation": False,
         }
 
-    where_clause = f"{_quote_identifier(where_column)} = {_quote_value(where_value)}"
+    where_clause = f"{quote_identifier(where_column)} = {_quote_value(where_value)}"
 
     preview = match_records(table, where_clause, schema)
 
