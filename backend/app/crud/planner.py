@@ -8,12 +8,12 @@ from app.tools.execute_query import validate_sql
 
 def _quote_value(value: Any) -> str:
     """
-    Convert a Python value into safe SQL literal syntax.
+    Convert a Python value to a SQL literal.
 
-    Numbers remain numbers.
-    Booleans become 1/0.
-    None becomes NULL.
-    Strings are escaped with SQL single-quote escaping.
+    - None   -> NULL
+    - bool   -> 1 / 0
+    - number -> number without quotes
+    - text   -> safely escaped SQL string
     """
 
     if value is None:
@@ -58,7 +58,6 @@ def preview_insert(
             ),
         }
 
-    # Only allow columns that actually exist.
     allowed = {
         column: value
         for column, value in values.items()
@@ -68,10 +67,7 @@ def preview_insert(
     if not allowed:
         return {
             "success": False,
-            "error": (
-                "No valid columns were provided "
-                "for the insert."
-            ),
+            "error": "No valid columns were provided for the insert.",
         }
 
     columns = list(allowed.keys())
@@ -130,10 +126,7 @@ def preview_update(
     if not valid_changes:
         return {
             "success": False,
-            "error": (
-                "No valid columns were provided "
-                "for the update."
-            ),
+            "error": "No valid columns were provided for the update.",
         }
 
     set_parts = [
