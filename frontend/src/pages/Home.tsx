@@ -82,7 +82,7 @@ export default function Home() {
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: data.explanation || "Here are the results.",
+        content: data.message || data.explanation || data.error || "Here are the results.",
         sql: data.generated_sql,
         result: data.result,
         explanation: data.explanation,
@@ -91,6 +91,8 @@ export default function Home() {
         analytics: data.analytics,
         followups: data.followups,
         input_request: data.input_request ?? null,
+        requires_confirmation: data.requires_confirmation ?? data.result?.pending_confirmation ?? false,
+        operation: data.operation ?? data.result?.operation,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
@@ -156,7 +158,7 @@ export default function Home() {
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: data.explanation || "Here are the results.",
+        content: data.message || data.explanation || data.error || "Here are the results.",
         sql: data.generated_sql,
         result: data.result,
         explanation: data.explanation,
@@ -165,6 +167,8 @@ export default function Home() {
         analytics: data.analytics,
         followups: data.followups,
         input_request: data.input_request ?? null,
+        requires_confirmation: data.requires_confirmation ?? data.result?.pending_confirmation ?? false,
+        operation: data.operation ?? data.result?.operation,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
@@ -277,35 +281,73 @@ export default function Home() {
     setMessages((prev) => [...prev, cancelMessage]);
   };
 
-  const handleConfirmQuery = async (sql: string) => {
+  const handleConfirmQuery = async () => {
     setLoading(true);
     setStatus("executing");
 
     try {
-      const data = await confirmQuery(sql);
+      const data = await confirmQuery(sessionId);
 
       const resultMessage: Message = {
         role: "assistant",
-        content: data.explanation || "Query executed successfully.",
-        sql: sql,
+        content:
+          data.message ||
+          data.explanation ||
+          data.error ||
+          "Database operation completed.",
+        sql: data.sql || "",
         result: data,
-        explanation: data.explanation,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        explanation:
+          data.message ||
+          data.explanation ||
+          data.error ||
+          "",
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
 
-      setMessages((prev) => [...prev, resultMessage]);
-      setStatus("done");
+      setMessages((prev) => [
+        ...prev,
+        resultMessage,
+      ]);
+
+      await refreshDbStatus();
+
+      setStatus(
+        data.success
+          ? "done"
+          : "error"
+      );
+
     } catch (error) {
+
       const errorMessage: Message = {
         role: "assistant",
-        content: "Failed to execute the query. Please try again.",
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        content:
+          "The database operation could not be completed.",
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+
+      setMessages((prev) => [
+        ...prev,
+        errorMessage,
+      ]);
+
       setStatus("error");
+
     } finally {
+
       setLoading(false);
-      setTimeout(() => setStatus("ready"), 3000);
+
+      setTimeout(
+        () => setStatus("ready"),
+        3000
+      );
     }
   };
 

@@ -46,7 +46,7 @@ class ChatRequest(BaseModel):
 
 
 class ConfirmQueryRequest(BaseModel):
-    sql: str
+    session_id: str
 
 
 class DatabaseConnection(BaseModel):
@@ -95,81 +95,11 @@ def chat(req: ChatRequest):
 @app.post("/confirm-query")
 def confirm_query(request: ConfirmQueryRequest):
     try:
-        sql = request.sql.strip()
+        from app.crud.service import execute_confirmed
 
-        if not sql:
-            return {
-                "success": False,
-                "error": "No SQL query was provided."
-            }
+        result = execute_confirmed(request.session_id)
 
-        # Remove markdown code fences
-        sql = re.sub(
-            r"```(?:sql|mysql|postgresql)?",
-            "",
-            sql,
-            flags=re.IGNORECASE
-        )
-        sql = sql.replace("```", "").strip()
-
-        # Remove final semicolon
-        sql = sql.rstrip(";").strip()
-
-        print("\n========== CONFIRM QUERY ==========")
-        print("SQL:", sql)
-
-        validation = validate_sql(sql)
-
-        print("VALIDATION:", validation)
-
-        if not validation.get("allowed"):
-            return {
-                "success": False,
-                "error": validation.get(
-                    "reason",
-                    "Query is not allowed."
-                ),
-                "operation": validation.get(
-                    "operation",
-                    ""
-                ),
-            }
-
-        if not validation.get("requires_confirmation"):
-            return {
-                "success": False,
-                "error": (
-                    "This query does not require confirmation."
-                ),
-            }
-
-        # IMPORTANT:
-        # Actually execute the confirmed DELETE/UPDATE/INSERT
-        result = execute_query(sql)
-
-        print("EXECUTION RESULT:", result)
-        print("==================================\n")
-
-        if result.get("success"):
-            # Refresh database intelligence after a write
-            try:
-                from app.database.database_context import refresh_database_profile
-                refresh_database_profile()
-            except Exception:
-                pass
-
-            clear_pending_insert()
-
-            return {
-                **result,
-                "confirmed": True,
-                "message": "Database updated successfully.",
-            }
-
-        return {
-            **result,
-            "confirmed": False,
-        }
+        return result
 
     except Exception as e:
         import traceback

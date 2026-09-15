@@ -1946,94 +1946,18 @@ def _handle_crud_operation(
     input_values: dict | None = None,
     pending_insert: bool = False,
 ) -> dict | None:
+    from app.crud.router import handle_crud_request
+    from app.database.database_manager import get_current_db_type
 
-    message = user_message.strip()
+    return handle_crud_request(
+        user_message=user_message,
+        session_id=session_id,
+        schema=schema,
+        database_type=get_current_db_type(),
+        input_values=input_values,
+        pending_insert=pending_insert,
+    )
 
-    if not message:
-        return None
-
-    # ---------------------------------------------------------
-    # CANCEL CURRENT OPERATION
-    # ---------------------------------------------------------
-
-    if message.lower() in {
-        "cancel",
-        "cancel operation",
-        "never mind",
-        "stop",
-        "abort",
-    }:
-        conversation_state.pop(session_id, None)
-
-        return {
-            "type": "cancelled",
-            "generated_sql": "",
-            "result": {
-                "success": True,
-                "columns": [],
-                "rows": [],
-                "rows_returned": 0,
-            },
-            "explanation": "The database operation was cancelled.",
-            "followups": [],
-        }
-
-    # ---------------------------------------------------------
-    # STRUCTURED INSERT FORM SUBMISSION
-    # ---------------------------------------------------------
-
-    if pending_insert and input_values:
-        return _handle_crud_insert_form(
-            session_id=session_id,
-            schema=schema,
-            input_values=input_values,
-        )
-
-    # ---------------------------------------------------------
-    # CONFIRMATION FOLLOW-UP
-    #
-    # The actual execution happens through /confirm-query.
-    # ---------------------------------------------------------
-
-    operation = _detect_crud_operation(message)
-
-    if operation is None:
-        return None
-
-    # ---------------------------------------------------------
-    # INSERT
-    # ---------------------------------------------------------
-
-    if operation == "insert":
-        return _handle_crud_insert_request(
-            user_message=message,
-            session_id=session_id,
-            schema=schema,
-        )
-
-    # ---------------------------------------------------------
-    # UPDATE
-    # ---------------------------------------------------------
-
-    if operation == "update":
-        return _handle_crud_update_request(
-            user_message=message,
-            session_id=session_id,
-            schema=schema,
-        )
-
-    # ---------------------------------------------------------
-    # DELETE
-    # ---------------------------------------------------------
-
-    if operation == "delete":
-        return _handle_crud_delete_request(
-            user_message=message,
-            session_id=session_id,
-            schema=schema,
-        )
-
-    return None
 
 
 # =============================================================
@@ -2115,13 +2039,13 @@ def _resolve_crud_table(
     if not schema:
         return None
 
-    message = user_message.lower()
+    message = user_message.lower().strip()
 
     table_names = list(schema.keys())
 
-    # ---------------------------------------------------------
-    # Exact table name
-    # ---------------------------------------------------------
+    # =========================================================
+    # 1. Exact table name
+    # =========================================================
 
     for table in table_names:
         if re.search(
@@ -2130,12 +2054,11 @@ def _resolve_crud_table(
         ):
             return table
 
-    # ---------------------------------------------------------
-    # Singular / plural matching
-    # ---------------------------------------------------------
+    # =========================================================
+    # 2. Singular / plural
+    # =========================================================
 
     for table in table_names:
-
         table_lower = table.lower()
 
         singular = (
@@ -2144,45 +2067,132 @@ def _resolve_crud_table(
             else table_lower
         )
 
-        if re.search(
+        if singular and re.search(
             rf"\b{re.escape(singular)}\b",
             message,
         ):
             return table
 
-    # ---------------------------------------------------------
-    # Common natural-language variations
-    # ---------------------------------------------------------
+    # =========================================================
+    # 3. Table with underscores
+    # =========================================================
 
     for table in table_names:
+        friendly = table.lower().replace("_", " ")
 
-        normalized_table = re.sub(
-            r"[^a-z0-9]",
-            " ",
-            table.lower(),
-        )
-
-        words = normalized_table.split()
-
-        if not words:
-            continue
-
-        if all(
-            word in message
-            for word in words
+        if re.search(
+            rf"\b{re.escape(friendly)}\b",
+            message,
         ):
             return table
 
-    # ---------------------------------------------------------
-    # Fuzzy matching
-    # ---------------------------------------------------------
+    # =========================================================
+    # 4. Semantic table aliases
+    # =========================================================
+
+    aliases = {
+        "customer": [
+            "customer",
+            "customers",
+            "client",
+            "clients",
+        ],
+        "student": [
+            "student",
+            "students",
+            "learner",
+            "learners",
+        ],
+        "employee": [
+            "employee",
+            "employees",
+            "staff",
+            "worker",
+            "workers",
+        ],
+        "product": [
+            "product",
+            "products",
+            "item",
+            "items",
+        ],
+        "order": [
+            "order",
+            "orders",
+            "purchase",
+            "purchases",
+        ],
+    }
+
+    for table in table_names:
+
+        table_lower = table.lower()
+
+        for group, words in aliases.items():
+
+            if group not in table_lower:
+                continue
+
+            if any(
+                re.search(
+                    rf"\b{re.escape(word)}\b",
+                    message,
+                )
+                for word in words
+            ):
+                return table
+
+    # =========================================================
+    # 5. IMPORTANT:
+    # Infer table from columns used in the request.
+    #
+    # Example:
+    # "update name of sanjay to sanjay s"
+    #
+    # If only customers contains "name", customers is selected.
+    # =========================================================
+
+    candidate_tables = []
+
+    for table in table_names:
+
+        columns = schema.get(table, {})
+
+        if not isinstance(columns, dict):
+            continue
+
+        for column in columns.keys():
+
+            column_lower = column.lower()
+            friendly = column_lower.replace("_", " ")
+
+            if re.search(
+                rf"\b{re.escape(column_lower)}\b",
+                message,
+            ):
+                candidate_tables.append(table)
+                break
+
+            if re.search(
+                rf"\b{re.escape(friendly)}\b",
+                message,
+            ):
+                candidate_tables.append(table)
+                break
+
+    candidate_tables = list(dict.fromkeys(candidate_tables))
+
+    if len(candidate_tables) == 1:
+        return candidate_tables[0]
+
+    # =========================================================
+    # 6. Fuzzy table matching
+    # =========================================================
 
     words = re.findall(
         r"[a-zA-Z_][a-zA-Z0-9_]*",
         message,
     )
-
-    candidates = []
 
     for word in words:
 
@@ -2194,15 +2204,12 @@ def _resolve_crud_table(
         )
 
         if matches:
-            candidates.append(matches[0])
 
-    if candidates:
-
-        for candidate in candidates:
+            matched = matches[0]
 
             for table in table_names:
 
-                if table.lower() == candidate:
+                if table.lower() == matched:
                     return table
 
     return None
@@ -2694,32 +2701,50 @@ def _crud_extract_where(
 ) -> str | None:
 
     columns = list(
-        schema.get(
-            table,
-            {},
-        ).keys()
+        schema.get(table, {}).keys()
     )
+
+    if not columns:
+        return None
 
     message = user_message.strip()
 
-    # ---------------------------------------------------------
-    # Pattern:
+    # =========================================================
+    # Helper
+    # =========================================================
+
+    def make_condition(column, value):
+
+        value = str(value).strip()
+
+        if not value:
+            return None
+
+        return (
+            f"{_crud_quote_identifier(column)} "
+            f"= "
+            f"{_crud_quote_value(value)}"
+        )
+
+    # =========================================================
+    # 1. column = value
     #
-    # customer id 10
-    # customer with id 10
-    # customer with customer_id 10
-    # ---------------------------------------------------------
+    # id = 10
+    # name = sanjay
+    # =========================================================
 
     for column in columns:
 
-        compact_column = column.replace(
-            "_",
-            " ",
-        )
+        friendly = column.replace("_", " ")
 
         patterns = [
-            rf"\b{re.escape(column)}\s*(?:=|is|equals|equal to)\s*['\"]?([^,'\"]+)['\"]?",
-            rf"\b{re.escape(compact_column)}\s*(?:=|is|equals|equal to)\s*['\"]?([^,'\"]+)['\"]?",
+            rf"\b{re.escape(column)}\s*"
+            rf"(?:=|is|equals|equal to)\s*"
+            rf"['\"]?([^,'\"]+)['\"]?",
+
+            rf"\b{re.escape(friendly)}\s*"
+            rf"(?:=|is|equals|equal to)\s*"
+            rf"['\"]?([^,'\"]+)['\"]?",
         ]
 
         for pattern in patterns:
@@ -2732,39 +2757,93 @@ def _crud_extract_where(
 
             if match:
 
-                value = match.group(
-                    1
-                ).strip()
+                value = match.group(1).strip()
 
-                return (
-                    f"{_crud_quote_identifier(column)} "
-                    f"= "
-                    f"{_crud_quote_value(value)}"
+                condition = make_condition(
+                    column,
+                    value,
                 )
 
-    # ---------------------------------------------------------
-    # Pattern:
+                if condition:
+                    return condition
+
+    # =========================================================
+    # 2. column value
     #
+    # customer id 10
+    # customer_id 10
+    # =========================================================
+
+    for column in columns:
+
+        friendly = column.replace("_", " ")
+
+        patterns = [
+            rf"\b{re.escape(column)}\s+"
+            rf"['\"]?([0-9]+|[^,\s]+)['\"]?",
+
+            rf"\b{re.escape(friendly)}\s+"
+            rf"['\"]?([0-9]+|[^,\s]+)['\"]?",
+        ]
+
+        for pattern in patterns:
+
+            match = re.search(
+                pattern,
+                message,
+                re.IGNORECASE,
+            )
+
+            if match:
+
+                value = match.group(1).strip()
+
+                # Don't treat the update value as WHERE.
+                # Only use this for phrases that clearly
+                # identify a record.
+                prefix = message[:match.start()].lower()
+
+                if any(
+                    word in prefix
+                    for word in [
+                        "delete",
+                        "remove",
+                        "erase",
+                        "where",
+                        "with",
+                        "customer",
+                        "student",
+                        "employee",
+                        "record",
+                    ]
+                ):
+
+                    condition = make_condition(
+                        column,
+                        value,
+                    )
+
+                    if condition:
+                        return condition
+
+    # =========================================================
+    # 3. with id 10
     # with customer_id 10
-    # with id 10
-    # ---------------------------------------------------------
+    # =========================================================
 
     match = re.search(
-        r"\bwith\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+"
-        r"(?:of\s+)?['\"]?([^,'\"]+)['\"]?",
+        r"\bwith\s+"
+        r"([a-zA-Z_][a-zA-Z0-9_]*)"
+        r"\s*(?:=|is|equals|equal to)?\s*"
+        r"['\"]?([^,'\"]+)['\"]?",
         message,
         re.IGNORECASE,
     )
 
     if match:
 
-        requested_column = match.group(
-            1
-        )
-
-        value = match.group(
-            2
-        ).strip()
+        requested_column = match.group(1)
+        value = match.group(2).strip()
 
         column = _resolve_crud_column(
             requested_column,
@@ -2772,11 +2851,77 @@ def _crud_extract_where(
         )
 
         if column:
+            return make_condition(
+                column,
+                value,
+            )
 
-            return (
-                f"{_crud_quote_identifier(column)} "
-                f"= "
-                f"{_crud_quote_value(value)}"
+    # =========================================================
+    # 4. "of sanjay"
+    #
+    # update name of sanjay to sanjay s
+    #
+    # We interpret:
+    #
+    # SET name = sanjay s
+    # WHERE name = sanjay
+    #
+    # only when the same column is clearly involved.
+    # =========================================================
+
+    of_pattern = re.search(
+        r"\b([a-zA-Z_][a-zA-Z0-9_]*)"
+        r"\s+of\s+"
+        r"['\"]?([^'\"]+?)['\"]?"
+        r"\s+(?:to|as|=)\s+",
+        message,
+        re.IGNORECASE,
+    )
+
+    if of_pattern:
+
+        requested_column = of_pattern.group(1)
+        old_value = of_pattern.group(2).strip()
+
+        column = _resolve_crud_column(
+            requested_column,
+            columns,
+        )
+
+        if column and old_value:
+
+            return make_condition(
+                column,
+                old_value,
+            )
+
+    # =========================================================
+    # 5. "where name sanjay"
+    # =========================================================
+
+    where_match = re.search(
+        r"\bwhere\s+"
+        r"([a-zA-Z_][a-zA-Z0-9_]*)"
+        r"\s*(?:=|is|equals|equal to)?\s*"
+        r"['\"]?([^,'\"]+)['\"]?",
+        message,
+        re.IGNORECASE,
+    )
+
+    if where_match:
+
+        requested_column = where_match.group(1)
+        value = where_match.group(2).strip()
+
+        column = _resolve_crud_column(
+            requested_column,
+            columns,
+        )
+
+        if column:
+            return make_condition(
+                column,
+                value,
             )
 
     return None
@@ -2793,33 +2938,33 @@ def _crud_extract_update_values(
 ) -> dict:
 
     columns = list(
-        schema.get(
-            table,
-            {},
-        ).keys()
+        schema.get(table, {}).keys()
     )
 
     values = {}
 
-    # ---------------------------------------------------------
-    # Patterns:
+    # =========================================================
+    # 1. Standard:
     #
     # name to Arun
     # name = Arun
-    # change name to Arun
-    # set name as Arun
-    # ---------------------------------------------------------
+    # name as Arun
+    # =========================================================
 
     for column in columns:
 
-        friendly = column.replace(
-            "_",
-            " ",
-        )
+        friendly = column.replace("_", " ")
 
         patterns = [
-            rf"\b{re.escape(column)}\s*(?:=|to|as)\s*['\"]?([^,]+?)['\"]?(?=\s+and\s+|\s*,|$)",
-            rf"\b{re.escape(friendly)}\s*(?:=|to|as)\s*['\"]?([^,]+?)['\"]?(?=\s+and\s+|\s*,|$)",
+            rf"\b{re.escape(column)}\s*"
+            rf"(?:=|to|as)\s*"
+            rf"['\"]?([^,]+?)['\"]?"
+            rf"(?=\s+and\s+|\s*,|$)",
+
+            rf"\b{re.escape(friendly)}\s*"
+            rf"(?:=|to|as)\s*"
+            rf"['\"]?([^,]+?)['\"]?"
+            rf"(?=\s+and\s+|\s*,|$)",
         ]
 
         for pattern in patterns:
@@ -2832,11 +2977,8 @@ def _crud_extract_update_values(
 
             if match:
 
-                value = match.group(
-                    1
-                ).strip()
+                value = match.group(1).strip()
 
-                # Remove common trailing words
                 value = re.sub(
                     r"\s+(where|for|with)\s*$",
                     "",
@@ -2845,12 +2987,347 @@ def _crud_extract_update_values(
                 )
 
                 if value:
-
                     values[column] = value
-
                     break
 
+    # =========================================================
+    # 2. Special:
+    #
+    # update name of sanjay to sanjay s
+    #
+    # Extract:
+    # name -> sanjay s
+    # =========================================================
+
+    special = re.search(
+        r"\b([a-zA-Z_][a-zA-Z0-9_]*)"
+        r"\s+of\s+"
+        r"['\"]?[^'\"]+?['\"]?"
+        r"\s+(?:to|as|=)\s+"
+        r"['\"]?(.+?)['\"]?"
+        r"\s*$",
+        user_message,
+        re.IGNORECASE,
+    )
+
+    if special:
+
+        requested_column = special.group(1)
+        new_value = special.group(2).strip()
+
+        column = _resolve_crud_column(
+            requested_column,
+            columns,
+        )
+
+        if column and new_value:
+            values[column] = new_value
+
     return values
+
+
+# =============================================================
+# UPDATE REQUEST
+# =============================================================
+
+# =============================================================
+# NATURAL-LANGUAGE UPDATE PARSER
+# =============================================================
+
+def _crud_extract_natural_update(
+    user_message: str,
+    table: str,
+    schema: dict,
+) -> dict | None:
+    """
+    Understand natural-language updates such as:
+
+        update the customer sanjay to sanjays
+        change customer sanjay to sanjays
+        update the student arun to arun kumar
+        change employee john to john smith
+
+    Returns:
+        {
+            "where_column": "name",
+            "where_value": "sanjay",
+            "updates": {
+                "name": "sanjays"
+            }
+        }
+
+    Only works when the table has a suitable text column,
+    normally 'name', 'full_name', etc.
+    """
+
+    columns = list(
+        schema.get(table, {}).keys()
+    )
+
+    if not columns:
+        return None
+
+    message = user_message.strip()
+
+    # ---------------------------------------------------------
+    # Match:
+    #
+    # update the customer sanjay to sanjays
+    #
+    # change customer sanjay to sanjays
+    # ---------------------------------------------------------
+
+    pattern = re.compile(
+        r"^\s*"
+        r"(?:update|change|modify|edit|rename)"
+        r"\s+(?:the\s+)?"
+        r"(?P<table_word>[a-zA-Z_][a-zA-Z0-9_\s-]*)?"
+        r"\s*"
+        r"(?P<old>[^,\s]+)"
+        r"\s+"
+        r"(?:to|as)"
+        r"\s+"
+        r"(?P<new>.+?)"
+        r"\s*$",
+        re.IGNORECASE,
+    )
+
+    match = pattern.match(message)
+
+    if not match:
+        return None
+
+    old_value = match.group("old").strip()
+    new_value = match.group("new").strip()
+
+    if not old_value or not new_value:
+        return None
+
+    # Remove quotes
+    old_value = old_value.strip("'\"")
+    new_value = new_value.strip("'\"")
+
+    # ---------------------------------------------------------
+    # Find a suitable name column
+    # ---------------------------------------------------------
+
+    preferred_columns = [
+        "name",
+        "full_name",
+        "customer_name",
+        "student_name",
+        "employee_name",
+        "product_name",
+        "username",
+        "display_name",
+    ]
+
+    where_column = None
+
+    # Exact preferred column
+    for preferred in preferred_columns:
+        for column in columns:
+            if column.lower() == preferred:
+                where_column = column
+                break
+
+        if where_column:
+            break
+
+    # ---------------------------------------------------------
+    # If there is no standard name column, find a text column.
+    # ---------------------------------------------------------
+
+    if where_column is None:
+
+        for column in columns:
+
+            column_info = schema.get(table, {}).get(
+                column,
+                {},
+            )
+
+            column_type = str(
+                column_info.get("type", "")
+            ).lower()
+
+            if any(
+                text_type in column_type
+                for text_type in [
+                    "char",
+                    "text",
+                    "varchar",
+                    "string",
+                ]
+            ):
+
+                if not column_info.get(
+                    "primary_key",
+                    False,
+                ):
+                    where_column = column
+                    break
+
+    if where_column is None:
+        return None
+
+    return {
+        "where_column": where_column,
+        "where_value": old_value,
+        "updates": {
+            where_column: new_value,
+        },
+    }
+
+
+# =============================================================
+# NATURAL-LANGUAGE UPDATE PARSER
+# =============================================================
+
+def _crud_extract_natural_update(
+    user_message: str,
+    table: str,
+    schema: dict,
+) -> dict | None:
+    """
+    Understand natural-language updates such as:
+
+        update the customer sanjay to sanjays
+        change customer sanjay to sanjays
+        update the student arun to arun kumar
+        change employee john to john smith
+
+    Returns:
+        {
+            "where_column": "name",
+            "where_value": "sanjay",
+            "updates": {
+                "name": "sanjays"
+            }
+        }
+
+    Only works when the table has a suitable text column,
+    normally 'name', 'full_name', etc.
+    """
+
+    columns = list(
+        schema.get(table, {}).keys()
+    )
+
+    if not columns:
+        return None
+
+    message = user_message.strip()
+
+    # ---------------------------------------------------------
+    # Match:
+    #
+    # update the customer sanjay to sanjays
+    #
+    # change customer sanjay to sanjays
+    # ---------------------------------------------------------
+
+    pattern = re.compile(
+        r"^\s*"
+        r"(?:update|change|modify|edit|rename)"
+        r"\s+(?:the\s+)?"
+        r"(?P<table_word>[a-zA-Z_][a-zA-Z0-9_\s-]*)?"
+        r"\s*"
+        r"(?P<old>[^,\s]+)"
+        r"\s+"
+        r"(?:to|as)"
+        r"\s+"
+        r"(?P<new>.+?)"
+        r"\s*$",
+        re.IGNORECASE,
+    )
+
+    match = pattern.match(message)
+
+    if not match:
+        return None
+
+    old_value = match.group("old").strip()
+    new_value = match.group("new").strip()
+
+    if not old_value or not new_value:
+        return None
+
+    # Remove quotes
+    old_value = old_value.strip("'\"")
+    new_value = new_value.strip("'\"")
+
+    # ---------------------------------------------------------
+    # Find a suitable name column
+    # ---------------------------------------------------------
+
+    preferred_columns = [
+        "name",
+        "full_name",
+        "customer_name",
+        "student_name",
+        "employee_name",
+        "product_name",
+        "username",
+        "display_name",
+    ]
+
+    where_column = None
+
+    # Exact preferred column
+    for preferred in preferred_columns:
+        for column in columns:
+            if column.lower() == preferred:
+                where_column = column
+                break
+
+        if where_column:
+            break
+
+    # ---------------------------------------------------------
+    # If there is no standard name column, find a text column.
+    # ---------------------------------------------------------
+
+    if where_column is None:
+
+        for column in columns:
+
+            column_info = schema.get(table, {}).get(
+                column,
+                {},
+            )
+
+            column_type = str(
+                column_info.get("type", "")
+            ).lower()
+
+            if any(
+                text_type in column_type
+                for text_type in [
+                    "char",
+                    "text",
+                    "varchar",
+                    "string",
+                ]
+            ):
+
+                if not column_info.get(
+                    "primary_key",
+                    False,
+                ):
+                    where_column = column
+                    break
+
+    if where_column is None:
+        return None
+
+    return {
+        "where_column": where_column,
+        "where_value": old_value,
+        "updates": {
+            where_column: new_value,
+        },
+    }
 
 
 # =============================================================
@@ -2876,99 +3353,149 @@ def _handle_crud_update_request(
                 "I could not determine which table "
                 "you want to update."
             ),
-        }
-
-    where = _crud_extract_where(
-        user_message,
-        table,
-        schema,
-    )
-
-    if not where:
-
-        return {
-            "type": "error",
-            "message": (
-                "For safety, UPDATE requires a WHERE "
-                "condition identifying the record(s) "
-                "you want to change."
-            ),
-        }
-
-    fields = _crud_extract_update_values(
-        user_message,
-        table,
-        schema,
-    )
-
-    if not fields:
-
-        return {
-            "type": "input_request",
-            "message": (
-                "What would you like me to change?"
-            ),
-            "table": table,
-            "columns": list(
-                schema[table].keys()
-            ),
-        }
-
-    # Do not update primary key
-    safe_fields = {}
-
-    for column, value in fields.items():
-
-        metadata = schema[table].get(
-            column,
-            {},
-        )
-
-        if metadata.get(
-            "primary_key",
-            False,
-        ):
-            continue
-
-        safe_fields[column] = value
-
-    if not safe_fields:
-
-        return {
-            "type": "error",
-            "message": (
-                "I could not find a safe field to update."
-            ),
+            "requires_confirmation": False,
         }
 
     # ---------------------------------------------------------
-    # Preview first
+    # Try natural-language update first
+    # ---------------------------------------------------------
+
+    natural_update = _crud_extract_natural_update(
+        user_message=user_message,
+        table=table,
+        schema=schema,
+    )
+
+    if natural_update:
+
+        where_column = natural_update[
+            "where_column"
+        ]
+
+        where_value = natural_update[
+            "where_value"
+        ]
+
+        update_values = natural_update[
+            "updates"
+        ]
+
+        where_clause = (
+            f"{_crud_quote_identifier(where_column)} "
+            f"= "
+            f"{_crud_quote_value(where_value)}"
+        )
+
+    else:
+
+        # -----------------------------------------------------
+        # Existing explicit WHERE parser
+        # -----------------------------------------------------
+
+        where_clause = _crud_extract_where(
+            user_message=user_message,
+            table=table,
+            schema=schema,
+        )
+
+        if not where_clause:
+
+            return {
+                "type": "error",
+                "message": (
+                    "For safety, UPDATE requires a "
+                    "WHERE condition identifying the "
+                    "record(s) you want to change."
+                ),
+                "requires_confirmation": False,
+            }
+
+        update_values = (
+            _crud_extract_update_values(
+                user_message=user_message,
+                table=table,
+                schema=schema,
+            )
+        )
+
+    # ---------------------------------------------------------
+    # Validate update fields
+    # ---------------------------------------------------------
+
+    real_columns = set(
+        schema.get(table, {}).keys()
+    )
+
+    update_values = {
+        column: value
+        for column, value in update_values.items()
+        if column in real_columns
+    }
+
+    if not update_values:
+
+        return {
+            "type": "error",
+            "message": (
+                "I understood which record you want "
+                "to update, but I could not determine "
+                "which field should be changed."
+            ),
+            "requires_confirmation": False,
+        }
+
+    # ---------------------------------------------------------
+    # Never update primary key
+    # ---------------------------------------------------------
+
+    primary_keys = {
+        column
+        for column, info
+        in schema.get(table, {}).items()
+        if info.get("primary_key")
+    }
+
+    for column in update_values:
+
+        if column in primary_keys:
+
+            return {
+                "type": "error",
+                "message": (
+                    f"I cannot modify the primary key "
+                    f"'{column}' through this operation."
+                ),
+                "requires_confirmation": False,
+            }
+
+    # ---------------------------------------------------------
+    # Preview affected records
     # ---------------------------------------------------------
 
     preview_sql = (
         f"SELECT * FROM "
         f"{_crud_quote_identifier(table)} "
-        f"WHERE {where}"
+        f"WHERE {where_clause}"
     )
 
-    preview = execute_query(
+    preview_result = execute_query(
         preview_sql
     )
 
-    if not preview.get("success"):
+    if not preview_result.get("success"):
 
         return {
             "type": "error",
             "message": (
-                "I could not find the record to update."
+                preview_result.get(
+                    "error"
+                )
+                or "Could not find the matching record."
             ),
-            "technical_details": preview.get(
-                "error",
-                "",
-            ),
+            "requires_confirmation": False,
         }
 
-    rows = preview.get(
+    rows = preview_result.get(
         "rows",
         [],
     )
@@ -2978,27 +3505,36 @@ def _handle_crud_update_request(
         return {
             "type": "error",
             "message": (
-                "No matching record was found. "
-                "Nothing was changed."
+                "I could not find any record in "
+                f"'{table}' matching the specified condition."
             ),
+            "requires_confirmation": False,
         }
 
-    assignments = []
+    # ---------------------------------------------------------
+    # Build UPDATE
+    # ---------------------------------------------------------
 
-    for column, value in safe_fields.items():
+    set_parts = []
 
-        assignments.append(
-            f"{_crud_quote_identifier(column)} "
-            f"= "
+    for column, value in update_values.items():
+
+        set_parts.append(
+            f"{_crud_quote_identifier(column)} = "
             f"{_crud_quote_value(value)}"
         )
 
     sql = (
         f"UPDATE "
         f"{_crud_quote_identifier(table)} "
-        f"SET {', '.join(assignments)} "
-        f"WHERE {where}"
+        f"SET "
+        f"{', '.join(set_parts)} "
+        f"WHERE {where_clause}"
     )
+
+    # ---------------------------------------------------------
+    # Validate SQL
+    # ---------------------------------------------------------
 
     validation = validate_sql(
         sql
@@ -3010,39 +3546,68 @@ def _handle_crud_update_request(
             "type": "error",
             "message": validation.get(
                 "reason",
-                "The UPDATE operation was rejected.",
+                "The update was rejected.",
             ),
+            "requires_confirmation": False,
         }
 
-    conversation_state[session_id] = {
+    # ---------------------------------------------------------
+    # Store pending operation
+    # ---------------------------------------------------------
+
+    conversation_state[
+        session_id
+    ] = {
         "pending_sql": sql,
         "operation": "update",
         "table": table,
+        "preview_rows": rows,
+        "where_column": where_column,
+        "where_value": where_value,
+        "update_values": update_values,
     }
+
+    # ---------------------------------------------------------
+    # Confirmation response
+    # ---------------------------------------------------------
 
     return {
         "type": "confirmation",
+        "operation": "update",
+        "table": table,
+
         "generated_sql": sql,
         "sql": sql,
+
         "result": {
             "success": True,
-            "columns": list(
-                rows[0].keys()
-            ) if rows else [],
+            "columns": (
+                list(rows[0].keys())
+                if rows
+                and isinstance(rows[0], dict)
+                else []
+            ),
             "rows": rows,
             "rows_returned": len(rows),
             "pending_confirmation": True,
             "operation": "update",
         },
+
         "requires_confirmation": True,
-        "operation": "update",
-        "table": table,
+
         "affected_rows_preview": len(rows),
+
         "explanation": (
-            f"I found {len(rows)} matching record(s). "
-            "Review the proposed UPDATE and confirm "
-            "before modifying the database."
+            f"I found {len(rows)} matching "
+            f"record(s) in '{table}'. "
+            "Review the proposed UPDATE and "
+            "confirm before making the change."
         ),
+
+        "before_rows": rows,
+
+        "proposed_changes": update_values,
+
         "followups": [],
     }
 

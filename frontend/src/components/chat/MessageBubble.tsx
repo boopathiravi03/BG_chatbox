@@ -85,27 +85,41 @@ export default function MessageBubble({ message, searchTerm, onSend, onInsertSub
 
         {isUser ? (
           <p className="whitespace-pre-wrap text-[15px]">{message.content}</p>
-        ) : (dataAvailable || message.input_request) ? (
+        ) : (dataAvailable || message.input_request || message.requires_confirmation) ? (
           <div>
-            {message.result?.pending_confirmation && (
+            {message.requires_confirmation && (
               <div className="mb-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
                 <div className="flex items-center gap-2 text-yellow-400 font-semibold">
-                  ⚠️ Database change requires confirmation
+                  ⚠️ Confirm Database Change
                 </div>
                 <p className="mt-2 text-sm text-gray-300">
-                  This operation will modify your database. Review the SQL before continuing.
+                  {message.operation === "delete"
+                    ? "The following record(s) will be permanently deleted."
+                    : message.operation === "update"
+                    ? "The following record(s) will be modified."
+                    : "A new record will be created."}
                 </p>
+                {message.affected_rows_preview !== undefined && (
+                  <div className="mt-3 rounded-lg bg-black/20 p-3">
+                    <span className="text-sm text-gray-300">
+                      Matching records:
+                    </span>
+                    <span className="ml-2 font-bold text-yellow-400">
+                      {message.affected_rows_preview}
+                    </span>
+                  </div>
+                )}
                 {message.sql && (
                   <div className="mt-3">
                     <SQLBlock sql={message.sql} />
                   </div>
                 )}
-                <div className="mt-3 flex gap-2">
+                <div className="mt-4 flex gap-2">
                   <button
-                    onClick={() => onConfirm?.(message.sql || "")}
+                    onClick={() => onConfirm?.()}
                     className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500"
                   >
-                    ✓ Confirm
+                    ✓ Confirm {message.operation}
                   </button>
                   <button
                     onClick={() => onCancel?.()}

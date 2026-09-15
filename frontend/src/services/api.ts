@@ -80,11 +80,11 @@ export async function getDashboardData() {
   return response.json();
 }
 
-export async function confirmQuery(sql: string) {
+export async function confirmQuery(sessionId: string) {
   const response = await fetch(`${API_BASE}/confirm-query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sql }),
+    body: JSON.stringify({ session_id: sessionId }),
   });
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
   return response.json();
