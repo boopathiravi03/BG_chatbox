@@ -84,6 +84,27 @@ def validate_sql(sql: str):
         }
 
     # ---------------------------------------------------------
+    # UPDATE / DELETE must contain a WHERE clause
+    # ---------------------------------------------------------
+    if operation in {"update", "delete"}:
+        normalized_sql = re.sub(
+            r"\s+",
+            " ",
+            sql.strip().lower(),
+        )
+
+        if " where " not in f" {normalized_sql} ":
+            return {
+                "allowed": False,
+                "operation": operation,
+                "requires_confirmation": False,
+                "reason": (
+                    f"{operation.upper()} operations require "
+                    "a WHERE condition."
+                ),
+            }
+
+    # ---------------------------------------------------------
     # NORMAL WRITE OPERATIONS
     # ---------------------------------------------------------
     if operation in WRITE_OPERATIONS:
@@ -96,14 +117,21 @@ def validate_sql(sql: str):
     # ---------------------------------------------------------
     # DANGEROUS DATABASE OPERATIONS
     #
-    # These are allowed ONLY after explicit confirmation.
+    # BG AI must NEVER execute destructive schema/database
+    # operations through the conversational agent.
     # ---------------------------------------------------------
     if operation in DANGEROUS_OPERATIONS:
         return {
-            "allowed": True,
+            "allowed": False,
             "operation": operation,
-            "requires_confirmation": True,
+            "requires_confirmation": False,
             "dangerous": True,
+            "reason": (
+                f"{operation.upper()} operations are blocked "
+                "for safety. BG AI only supports safe database "
+                "read operations and controlled INSERT, UPDATE, "
+                "and DELETE actions."
+            ),
         }
 
     return {

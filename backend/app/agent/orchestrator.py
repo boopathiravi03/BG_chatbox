@@ -6,6 +6,7 @@ from app.tools.generate_chart import generate_chart
 from app.tools.generate_flowchart import generate_flowchart
 from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
+from app.database.database_manager import get_engine
 import json
 import re
 from difflib import get_close_matches
@@ -1585,22 +1586,7 @@ def _handle_update_operation(
         }
 
 
-def _get_database_context() -> str:
-    try:
-        from app.database.database_context import get_database_profile
 
-        profile = get_database_profile()
-
-        if profile is None or not profile.analyzed:
-            return ""
-
-        return profile.to_context()
-
-    except Exception:
-        return ""
-
-
-def _detect_operation(message: str) -> str:
     """
     Detect database modification operation from natural language.
     """
@@ -1949,6 +1935,1256 @@ def _get_database_context() -> str:
         return ""
 
 
+# =============================================================
+# BG AI - UNIFIED CRUD SYSTEM
+# =============================================================
+
+def _handle_crud_operation(
+    user_message: str,
+    session_id: str,
+    schema: dict,
+    input_values: dict | None = None,
+    pending_insert: bool = False,
+) -> dict | None:
+
+    message = user_message.strip()
+
+    if not message:
+        return None
+
+    # ---------------------------------------------------------
+    # CANCEL CURRENT OPERATION
+    # ---------------------------------------------------------
+
+    if message.lower() in {
+        "cancel",
+        "cancel operation",
+        "never mind",
+        "stop",
+        "abort",
+    }:
+        conversation_state.pop(session_id, None)
+
+        return {
+            "type": "cancelled",
+            "generated_sql": "",
+            "result": {
+                "success": True,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "explanation": "The database operation was cancelled.",
+            "followups": [],
+        }
+
+    # ---------------------------------------------------------
+    # STRUCTURED INSERT FORM SUBMISSION
+    # ---------------------------------------------------------
+
+    if pending_insert and input_values:
+        return _handle_crud_insert_form(
+            session_id=session_id,
+            schema=schema,
+            input_values=input_values,
+        )
+
+    # ---------------------------------------------------------
+    # CONFIRMATION FOLLOW-UP
+    #
+    # The actual execution happens through /confirm-query.
+    # ---------------------------------------------------------
+
+    operation = _detect_crud_operation(message)
+
+    if operation is None:
+        return None
+
+    # ---------------------------------------------------------
+    # INSERT
+    # ---------------------------------------------------------
+
+    if operation == "insert":
+        return _handle_crud_insert_request(
+            user_message=message,
+            session_id=session_id,
+            schema=schema,
+        )
+
+    # ---------------------------------------------------------
+    # UPDATE
+    # ---------------------------------------------------------
+
+    if operation == "update":
+        return _handle_crud_update_request(
+            user_message=message,
+            session_id=session_id,
+            schema=schema,
+        )
+
+    # ---------------------------------------------------------
+    # DELETE
+    # ---------------------------------------------------------
+
+    if operation == "delete":
+        return _handle_crud_delete_request(
+            user_message=message,
+            session_id=session_id,
+            schema=schema,
+        )
+
+    return None
+
+
+# =============================================================
+# OPERATION DETECTION
+# =============================================================
+
+def _detect_crud_operation(message: str) -> str | None:
+
+    normalized = message.lower().strip()
+
+    # DELETE
+    delete_words = [
+        "delete",
+        "remove",
+        "erase",
+        "discard",
+        "destroy record",
+    ]
+
+    if any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            normalized
+        )
+        for word in delete_words
+    ):
+        return "delete"
+
+    # UPDATE
+    update_words = [
+        "update",
+        "change",
+        "modify",
+        "edit",
+        "set",
+        "rename",
+    ]
+
+    if any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            normalized
+        )
+        for word in update_words
+    ):
+        return "update"
+
+    # INSERT / CREATE RECORD
+    insert_words = [
+        "insert",
+        "add",
+        "create",
+        "register",
+        "new record",
+        "add record",
+    ]
+
+    if any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            normalized
+        )
+        for word in insert_words
+    ):
+        return "insert"
+
+    return None
+
+
+# =============================================================
+# TABLE RESOLUTION
+# =============================================================
+
+def _resolve_crud_table(
+    user_message: str,
+    schema: dict,
+) -> str | None:
+
+    if not schema:
+        return None
+
+    message = user_message.lower()
+
+    table_names = list(schema.keys())
+
+    # ---------------------------------------------------------
+    # Exact table name
+    # ---------------------------------------------------------
+
+    for table in table_names:
+        if re.search(
+            rf"\b{re.escape(table.lower())}\b",
+            message,
+        ):
+            return table
+
+    # ---------------------------------------------------------
+    # Singular / plural matching
+    # ---------------------------------------------------------
+
+    for table in table_names:
+
+        table_lower = table.lower()
+
+        singular = (
+            table_lower[:-1]
+            if table_lower.endswith("s")
+            else table_lower
+        )
+
+        if re.search(
+            rf"\b{re.escape(singular)}\b",
+            message,
+        ):
+            return table
+
+    # ---------------------------------------------------------
+    # Common natural-language variations
+    # ---------------------------------------------------------
+
+    for table in table_names:
+
+        normalized_table = re.sub(
+            r"[^a-z0-9]",
+            " ",
+            table.lower(),
+        )
+
+        words = normalized_table.split()
+
+        if not words:
+            continue
+
+        if all(
+            word in message
+            for word in words
+        ):
+            return table
+
+    # ---------------------------------------------------------
+    # Fuzzy matching
+    # ---------------------------------------------------------
+
+    words = re.findall(
+        r"[a-zA-Z_][a-zA-Z0-9_]*",
+        message,
+    )
+
+    candidates = []
+
+    for word in words:
+
+        matches = get_close_matches(
+            word.lower(),
+            [t.lower() for t in table_names],
+            n=1,
+            cutoff=0.75,
+        )
+
+        if matches:
+            candidates.append(matches[0])
+
+    if candidates:
+
+        for candidate in candidates:
+
+            for table in table_names:
+
+                if table.lower() == candidate:
+                    return table
+
+    return None
+
+
+# =============================================================
+# COLUMN RESOLUTION
+# =============================================================
+
+def _resolve_crud_column(
+    value: str,
+    columns: list[str],
+) -> str | None:
+
+    normalized = re.sub(
+        r"[^a-z0-9]",
+        "_",
+        value.lower(),
+    ).strip("_")
+
+    if not normalized:
+        return None
+
+    # Exact
+    for column in columns:
+
+        if column.lower() == normalized:
+            return column
+
+    # Remove underscores
+    compact = normalized.replace("_", "")
+
+    for column in columns:
+
+        if column.lower().replace("_", "") == compact:
+            return column
+
+    # Fuzzy
+    matches = get_close_matches(
+        normalized,
+        [column.lower() for column in columns],
+        n=1,
+        cutoff=0.70,
+    )
+
+    if matches:
+
+        for column in columns:
+
+            if column.lower() == matches[0]:
+                return column
+
+    return None
+
+
+# =============================================================
+# IDENTIFIER QUOTING
+# =============================================================
+
+def _crud_quote_identifier(
+    identifier: str,
+) -> str:
+
+    return "`" + identifier.replace(
+        "`",
+        "``",
+    ) + "`"
+
+
+# =============================================================
+# VALUE QUOTING
+# =============================================================
+
+def _crud_quote_value(value) -> str:
+
+    if value is None:
+        return "NULL"
+
+    if isinstance(value, bool):
+        return "1" if value else "0"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    text_value = str(value)
+
+    escaped = text_value.replace(
+        "'",
+        "''",
+    )
+
+    return f"'{escaped}'"
+
+
+# =============================================================
+# REQUIRED INSERT FIELDS
+# =============================================================
+
+def _crud_required_insert_fields(
+    table: str,
+    schema: dict,
+) -> list[str]:
+
+    table_schema = schema.get(
+        table,
+        {},
+    )
+
+    required = []
+
+    for column_name, metadata in table_schema.items():
+
+        name = column_name.lower()
+
+        # Ignore automatically generated fields
+        if name in {
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }:
+            continue
+
+        # Primary key with default/generated value
+        if metadata.get("primary_key"):
+
+            default = metadata.get(
+                "default"
+            )
+
+            if default is not None:
+                continue
+
+            column_type = str(
+                metadata.get(
+                    "type",
+                    "",
+                )
+            ).lower()
+
+            # Common auto-increment IDs
+            if (
+                "int" in column_type
+                and name.endswith("id")
+            ):
+                continue
+
+        nullable = metadata.get(
+            "nullable",
+            True,
+        )
+
+        default = metadata.get(
+            "default"
+        )
+
+        if (
+            not nullable
+            and default is None
+        ):
+            required.append(column_name)
+
+    return required
+
+
+# =============================================================
+# INSERT REQUEST
+# =============================================================
+
+def _handle_crud_insert_request(
+    user_message: str,
+    session_id: str,
+    schema: dict,
+) -> dict:
+
+    table = _resolve_crud_table(
+        user_message,
+        schema,
+    )
+
+    if not table:
+
+        return {
+            "type": "input_request",
+            "generated_sql": "",
+            "result": {
+                "success": True,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+            },
+            "input_request": {
+                "type": "insert",
+                "message": (
+                    "Which table should I add the new record to?"
+                ),
+                "tables": list(schema.keys()),
+            },
+            "explanation": (
+                "I could not determine the target table "
+                "from your request."
+            ),
+            "followups": [],
+        }
+
+    table_schema = schema[table]
+
+    fields = []
+
+    required_fields = _crud_required_insert_fields(
+        table,
+        schema,
+    )
+
+    for column_name, metadata in table_schema.items():
+
+        name = column_name.lower()
+
+        if name in {
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }:
+            continue
+
+        if (
+            metadata.get("primary_key")
+            and metadata.get("default") is not None
+        ):
+            continue
+
+        column_type = str(
+            metadata.get(
+                "type",
+                "",
+            )
+        ).lower()
+
+        field_type = "text"
+
+        if "int" in column_type:
+            field_type = "number"
+
+        elif any(
+            x in column_type
+            for x in [
+                "decimal",
+                "numeric",
+                "float",
+                "double",
+                "real",
+            ]
+        ):
+            field_type = "number"
+
+        elif "bool" in column_type:
+            field_type = "boolean"
+
+        elif any(
+            x in column_type
+            for x in [
+                "date",
+                "time",
+            ]
+        ):
+            field_type = "date"
+
+        if "email" in name:
+            field_type = "email"
+
+        fields.append({
+            "name": column_name,
+            "label": column_name.replace(
+                "_",
+                " ",
+            ).title(),
+            "type": field_type,
+            "required": (
+                column_name in required_fields
+            ),
+        })
+
+    conversation_state[session_id] = {
+        "pending_insert_table": table,
+    }
+
+    return {
+        "type": "input_request",
+        "generated_sql": "",
+        "result": {
+            "success": True,
+            "columns": [],
+            "rows": [],
+            "rows_returned": 0,
+        },
+        "input_request": {
+            "type": "insert",
+            "table": table,
+            "title": (
+                f"Add record to "
+                f"{table.replace('_', ' ').title()}"
+            ),
+            "message": (
+                "Please provide the record details. "
+                "Only fields that exist in the database "
+                "will be accepted."
+            ),
+            "fields": fields,
+        },
+        "explanation": (
+            f"I found the '{table}' table. "
+            "Please provide the requested details."
+        ),
+        "followups": [],
+    }
+
+
+# =============================================================
+# INSERT FORM PROCESSING
+# =============================================================
+
+def _handle_crud_insert_form(
+    session_id: str,
+    schema: dict,
+    input_values: dict,
+) -> dict:
+
+    state = conversation_state.get(
+        session_id,
+        {},
+    )
+
+    table = state.get(
+        "pending_insert_table"
+    )
+
+    if not table or table not in schema:
+
+        conversation_state.pop(
+            session_id,
+            None,
+        )
+
+        return {
+            "type": "error",
+            "message": (
+                "The insert session expired. "
+                "Please start the add-record request again."
+            ),
+        }
+
+    table_schema = schema[table]
+
+    allowed_values = {}
+
+    # ---------------------------------------------------------
+    # Accept ONLY real columns
+    # ---------------------------------------------------------
+
+    for supplied_column, value in input_values.items():
+
+        real_column = _resolve_crud_column(
+            supplied_column,
+            list(table_schema.keys()),
+        )
+
+        if not real_column:
+            continue
+
+        if value is None:
+            continue
+
+        if isinstance(value, str):
+
+            value = value.strip()
+
+            if not value:
+                continue
+
+        allowed_values[real_column] = value
+
+    required_fields = _crud_required_insert_fields(
+        table,
+        schema,
+    )
+
+    missing = [
+        field
+        for field in required_fields
+        if field not in allowed_values
+    ]
+
+    if missing:
+
+        return {
+            "type": "input_request",
+            "message": (
+                "Please provide all required fields."
+            ),
+            "table": table,
+            "missing_fields": missing,
+            "fields": _handle_crud_insert_request(
+                user_message=f"add record to {table}",
+                session_id=session_id,
+                schema=schema,
+            ).get(
+                "input_request",
+                {},
+            ).get(
+                "fields",
+                [],
+            ),
+        }
+
+    columns = list(
+        allowed_values.keys()
+    )
+
+    values = [
+        allowed_values[column]
+        for column in columns
+    ]
+
+    quoted_columns = ", ".join(
+        _crud_quote_identifier(column)
+        for column in columns
+    )
+
+    quoted_values = ", ".join(
+        _crud_quote_value(value)
+        for value in values
+    )
+
+    sql = (
+        f"INSERT INTO "
+        f"{_crud_quote_identifier(table)} "
+        f"({quoted_columns}) "
+        f"VALUES ({quoted_values})"
+    )
+
+    validation = validate_sql(sql)
+
+    if not validation.get("allowed"):
+
+        return {
+            "type": "error",
+            "message": validation.get(
+                "reason",
+                "The INSERT operation was rejected.",
+            ),
+        }
+
+    conversation_state[session_id][
+        "pending_insert_sql"
+    ] = sql
+
+    return {
+        "type": "confirmation",
+        "generated_sql": sql,
+        "sql": sql,
+        "result": {
+            "success": True,
+            "columns": [],
+            "rows": [],
+            "rows_returned": 0,
+            "pending_confirmation": True,
+            "operation": "insert",
+        },
+        "requires_confirmation": True,
+        "operation": "insert",
+        "table": table,
+        "values": allowed_values,
+        "explanation": (
+            "The new record is ready. "
+            "Please review and confirm before "
+            "I modify the database."
+        ),
+        "followups": [],
+    }
+
+
+# =============================================================
+# NATURAL-LANGUAGE WHERE EXTRACTION
+# =============================================================
+
+def _crud_extract_where(
+    user_message: str,
+    table: str,
+    schema: dict,
+) -> str | None:
+
+    columns = list(
+        schema.get(
+            table,
+            {},
+        ).keys()
+    )
+
+    message = user_message.strip()
+
+    # ---------------------------------------------------------
+    # Pattern:
+    #
+    # customer id 10
+    # customer with id 10
+    # customer with customer_id 10
+    # ---------------------------------------------------------
+
+    for column in columns:
+
+        compact_column = column.replace(
+            "_",
+            " ",
+        )
+
+        patterns = [
+            rf"\b{re.escape(column)}\s*(?:=|is|equals|equal to)\s*['\"]?([^,'\"]+)['\"]?",
+            rf"\b{re.escape(compact_column)}\s*(?:=|is|equals|equal to)\s*['\"]?([^,'\"]+)['\"]?",
+        ]
+
+        for pattern in patterns:
+
+            match = re.search(
+                pattern,
+                message,
+                re.IGNORECASE,
+            )
+
+            if match:
+
+                value = match.group(
+                    1
+                ).strip()
+
+                return (
+                    f"{_crud_quote_identifier(column)} "
+                    f"= "
+                    f"{_crud_quote_value(value)}"
+                )
+
+    # ---------------------------------------------------------
+    # Pattern:
+    #
+    # with customer_id 10
+    # with id 10
+    # ---------------------------------------------------------
+
+    match = re.search(
+        r"\bwith\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+"
+        r"(?:of\s+)?['\"]?([^,'\"]+)['\"]?",
+        message,
+        re.IGNORECASE,
+    )
+
+    if match:
+
+        requested_column = match.group(
+            1
+        )
+
+        value = match.group(
+            2
+        ).strip()
+
+        column = _resolve_crud_column(
+            requested_column,
+            columns,
+        )
+
+        if column:
+
+            return (
+                f"{_crud_quote_identifier(column)} "
+                f"= "
+                f"{_crud_quote_value(value)}"
+            )
+
+    return None
+
+
+# =============================================================
+# UPDATE FIELD EXTRACTION
+# =============================================================
+
+def _crud_extract_update_values(
+    user_message: str,
+    table: str,
+    schema: dict,
+) -> dict:
+
+    columns = list(
+        schema.get(
+            table,
+            {},
+        ).keys()
+    )
+
+    values = {}
+
+    # ---------------------------------------------------------
+    # Patterns:
+    #
+    # name to Arun
+    # name = Arun
+    # change name to Arun
+    # set name as Arun
+    # ---------------------------------------------------------
+
+    for column in columns:
+
+        friendly = column.replace(
+            "_",
+            " ",
+        )
+
+        patterns = [
+            rf"\b{re.escape(column)}\s*(?:=|to|as)\s*['\"]?([^,]+?)['\"]?(?=\s+and\s+|\s*,|$)",
+            rf"\b{re.escape(friendly)}\s*(?:=|to|as)\s*['\"]?([^,]+?)['\"]?(?=\s+and\s+|\s*,|$)",
+        ]
+
+        for pattern in patterns:
+
+            match = re.search(
+                pattern,
+                user_message,
+                re.IGNORECASE,
+            )
+
+            if match:
+
+                value = match.group(
+                    1
+                ).strip()
+
+                # Remove common trailing words
+                value = re.sub(
+                    r"\s+(where|for|with)\s*$",
+                    "",
+                    value,
+                    flags=re.IGNORECASE,
+                )
+
+                if value:
+
+                    values[column] = value
+
+                    break
+
+    return values
+
+
+# =============================================================
+# UPDATE REQUEST
+# =============================================================
+
+def _handle_crud_update_request(
+    user_message: str,
+    session_id: str,
+    schema: dict,
+) -> dict:
+
+    table = _resolve_crud_table(
+        user_message,
+        schema,
+    )
+
+    if not table:
+
+        return {
+            "type": "error",
+            "message": (
+                "I could not determine which table "
+                "you want to update."
+            ),
+        }
+
+    where = _crud_extract_where(
+        user_message,
+        table,
+        schema,
+    )
+
+    if not where:
+
+        return {
+            "type": "error",
+            "message": (
+                "For safety, UPDATE requires a WHERE "
+                "condition identifying the record(s) "
+                "you want to change."
+            ),
+        }
+
+    fields = _crud_extract_update_values(
+        user_message,
+        table,
+        schema,
+    )
+
+    if not fields:
+
+        return {
+            "type": "input_request",
+            "message": (
+                "What would you like me to change?"
+            ),
+            "table": table,
+            "columns": list(
+                schema[table].keys()
+            ),
+        }
+
+    # Do not update primary key
+    safe_fields = {}
+
+    for column, value in fields.items():
+
+        metadata = schema[table].get(
+            column,
+            {},
+        )
+
+        if metadata.get(
+            "primary_key",
+            False,
+        ):
+            continue
+
+        safe_fields[column] = value
+
+    if not safe_fields:
+
+        return {
+            "type": "error",
+            "message": (
+                "I could not find a safe field to update."
+            ),
+        }
+
+    # ---------------------------------------------------------
+    # Preview first
+    # ---------------------------------------------------------
+
+    preview_sql = (
+        f"SELECT * FROM "
+        f"{_crud_quote_identifier(table)} "
+        f"WHERE {where}"
+    )
+
+    preview = execute_query(
+        preview_sql
+    )
+
+    if not preview.get("success"):
+
+        return {
+            "type": "error",
+            "message": (
+                "I could not find the record to update."
+            ),
+            "technical_details": preview.get(
+                "error",
+                "",
+            ),
+        }
+
+    rows = preview.get(
+        "rows",
+        [],
+    )
+
+    if not rows:
+
+        return {
+            "type": "error",
+            "message": (
+                "No matching record was found. "
+                "Nothing was changed."
+            ),
+        }
+
+    assignments = []
+
+    for column, value in safe_fields.items():
+
+        assignments.append(
+            f"{_crud_quote_identifier(column)} "
+            f"= "
+            f"{_crud_quote_value(value)}"
+        )
+
+    sql = (
+        f"UPDATE "
+        f"{_crud_quote_identifier(table)} "
+        f"SET {', '.join(assignments)} "
+        f"WHERE {where}"
+    )
+
+    validation = validate_sql(
+        sql
+    )
+
+    if not validation.get("allowed"):
+
+        return {
+            "type": "error",
+            "message": validation.get(
+                "reason",
+                "The UPDATE operation was rejected.",
+            ),
+        }
+
+    conversation_state[session_id] = {
+        "pending_sql": sql,
+        "operation": "update",
+        "table": table,
+    }
+
+    return {
+        "type": "confirmation",
+        "generated_sql": sql,
+        "sql": sql,
+        "result": {
+            "success": True,
+            "columns": list(
+                rows[0].keys()
+            ) if rows else [],
+            "rows": rows,
+            "rows_returned": len(rows),
+            "pending_confirmation": True,
+            "operation": "update",
+        },
+        "requires_confirmation": True,
+        "operation": "update",
+        "table": table,
+        "affected_rows_preview": len(rows),
+        "explanation": (
+            f"I found {len(rows)} matching record(s). "
+            "Review the proposed UPDATE and confirm "
+            "before modifying the database."
+        ),
+        "followups": [],
+    }
+
+
+# =============================================================
+# DELETE REQUEST
+# =============================================================
+
+def _handle_crud_delete_request(
+    user_message: str,
+    session_id: str,
+    schema: dict,
+) -> dict:
+
+    table = _resolve_crud_table(
+        user_message,
+        schema,
+    )
+
+    if not table:
+
+        return {
+            "type": "error",
+            "message": (
+                "I could not determine which table "
+                "you want to delete from."
+            ),
+        }
+
+    where = _crud_extract_where(
+        user_message,
+        table,
+        schema,
+    )
+
+    if not where:
+
+        return {
+            "type": "error",
+            "message": (
+                "For safety, DELETE requires a WHERE "
+                "condition identifying the record(s) "
+                "you want to remove."
+            ),
+        }
+
+    # ---------------------------------------------------------
+    # Preview record
+    # ---------------------------------------------------------
+
+    preview_sql = (
+        f"SELECT * FROM "
+        f"{_crud_quote_identifier(table)} "
+        f"WHERE {where}"
+    )
+
+    preview = execute_query(
+        preview_sql
+    )
+
+    if not preview.get("success"):
+
+        return {
+            "type": "error",
+            "message": (
+                "I could not check the record "
+                "before deletion."
+            ),
+            "technical_details": preview.get(
+                "error",
+                "",
+            ),
+        }
+
+    rows = preview.get(
+        "rows",
+        [],
+    )
+
+    if not rows:
+
+        return {
+            "type": "error",
+            "message": (
+                "No matching record was found. "
+                "Nothing was deleted."
+            ),
+        }
+
+    sql = (
+        f"DELETE FROM "
+        f"{_crud_quote_identifier(table)} "
+        f"WHERE {where}"
+    )
+
+    validation = validate_sql(
+        sql
+    )
+
+    if not validation.get("allowed"):
+
+        return {
+            "type": "error",
+            "message": validation.get(
+                "reason",
+                "The DELETE operation was rejected.",
+            ),
+        }
+
+    conversation_state[session_id] = {
+        "pending_sql": sql,
+        "operation": "delete",
+        "table": table,
+    }
+
+    return {
+        "type": "confirmation",
+        "generated_sql": sql,
+        "sql": sql,
+        "result": {
+            "success": True,
+            "columns": list(
+                rows[0].keys()
+            ) if rows else [],
+            "rows": rows,
+            "rows_returned": len(rows),
+            "pending_confirmation": True,
+            "operation": "delete",
+        },
+        "requires_confirmation": True,
+        "operation": "delete",
+        "table": table,
+        "affected_rows_preview": len(rows),
+        "explanation": (
+            f"I found {len(rows)} matching record(s). "
+            "Review the proposed DELETE and confirm "
+            "before removing anything."
+        ),
+        "followups": [],
+    }
+
+
 def run_agent(
     user_message: str,
     session_id: str = "default",
@@ -2032,102 +3268,147 @@ def run_agent(
     # STRUCTURED INSERT FORM SUBMISSION
     # ---------------------------------------------------------
     if pending_insert and input_values:
+
         state = conversation_state.get(session_id, {})
+
         table = state.get("pending_insert_table")
 
-        if table:
-            table_schema = schema.get(table, {})
-
-            if not isinstance(table_schema, dict):
-                table_schema = {}
-
-            allowed_values = {
-                column: value
-                for column, value in input_values.items()
-                if column in table_schema
-                and value is not None
-                and str(value).strip() != ""
+        if not table:
+            return {
+                "type": "error",
+                "message": (
+                    "I could not determine which table "
+                    "you want to insert into. "
+                    "Please start the insert request again."
+                ),
             }
 
-            if not allowed_values:
-                return {
-                    "generated_sql": "",
-                    "result": {
-                        "success": False,
-                        "columns": [],
-                        "rows": [],
-                    },
-                    "explanation": (
-                        "Please provide at least one valid value "
-                        "for the requested fields."
-                    ),
-                    "followups": [],
-                }
+        # Get the LIVE schema again.
+        schema = get_schema()
 
-            required_fields = _get_required_insert_fields(
-                table,
-                schema,
-            )
+        if table not in schema:
+            conversation_state.pop(session_id, None)
 
-            missing_fields = [
-                field
-                for field in required_fields
-                if field not in allowed_values
-            ]
+            return {
+                "type": "error",
+                "message": (
+                    f"The table '{table}' is no longer "
+                    "available in the connected database."
+                ),
+            }
 
-            if missing_fields:
-                return _build_insert_request(
+        table_schema = schema[table]
+
+        # Accept only columns that actually exist.
+        allowed_values = {}
+
+        for column_name, value in input_values.items():
+
+            if column_name not in table_schema:
+                continue
+
+            # Ignore empty optional values.
+            if value is None:
+                continue
+
+            if isinstance(value, str):
+                value = value.strip()
+
+                if value == "":
+                    continue
+
+            allowed_values[column_name] = value
+
+        # Determine required fields from LIVE schema.
+        required_fields = _get_required_insert_fields(
+            table,
+            schema,
+        )
+
+        missing_fields = [
+            field
+            for field in required_fields
+            if field not in allowed_values
+            or allowed_values[field] in ("", None)
+        ]
+
+        if missing_fields:
+            return {
+                "type": "input_request",
+                "message": (
+                    "Please provide all required fields "
+                    "before I create the database change."
+                ),
+                "table": table,
+                "fields": _build_insert_request(
                     table,
                     schema,
-                )
+                ).get("fields", []),
+                "missing_fields": missing_fields,
+            }
 
-            sql = _generate_sql(
-                "insert",
-                table,
-                allowed_values,
-                ""
-            )
+        # Generate INSERT SQL using ONLY real columns.
+        columns = list(allowed_values.keys())
 
-            validation = validate_sql(sql)
+        values = [
+            allowed_values[column]
+            for column in columns
+        ]
 
-            if not validation.get("allowed"):
-                return {
-                    "generated_sql": sql,
-                    "result": {
-                        "success": False,
-                        "columns": [],
-                        "rows": [],
-                    },
-                    "explanation": (
-                        "I could not safely prepare this database change: "
-                        + validation.get(
-                            "reason",
-                            "Invalid SQL operation.",
-                        )
-                    ),
-                    "followups": [],
-                }
+        raw_sql = _build_insert_sql(
+            table,
+            columns,
+            values,
+        )
 
-            if validation.get("requires_confirmation"):
-                return {
-                    "generated_sql": sql,
-                    "result": {
-                        "success": True,
-                        "columns": [],
-                        "rows": [],
-                        "pending_confirmation": True,
-                        "operation": "insert",
-                    },
-                    "chart": None,
-                    "diagram": None,
-                    "analytics": None,
-                    "requires_confirmation": True,
-                    "explanation": (
-                        "I've prepared the new record. "
-                        "Please confirm before I add it to the database."
-                    ),
-                    "followups": [],
-                }
+        validation = validate_sql(raw_sql)
+
+        if not validation.get("allowed"):
+            return {
+                "type": "error",
+                "message": validation.get(
+                    "message",
+                    "The generated INSERT was rejected.",
+                ),
+            }
+
+        conversation_state[session_id][
+            "pending_insert_sql"
+        ] = raw_sql
+
+        return {
+            "type": "confirmation",
+            "message": (
+                f"I found the '{table}' table and prepared "
+                "the following database change. "
+                "Please confirm before I modify the database."
+            ),
+            "sql": raw_sql,
+            "requires_confirmation": True,
+            "operation": "insert",
+            "table": table,
+            "values": allowed_values,
+        }
+
+    # =========================================================
+    # BG AI CRUD ROUTER
+    #
+    # IMPORTANT:
+    # CRUD requests are handled BEFORE AI intent
+    # classification. Otherwise the LLM may classify a
+    # DELETE/UPDATE/INSERT request as normal chat.
+    # =========================================================
+
+    crud_result = _handle_crud_operation(
+        user_message=user_message,
+        session_id=session_id,
+        schema=schema,
+        input_values=input_values,
+        pending_insert=pending_insert,
+    )
+
+    if crud_result is not None:
+        return crud_result
 
     database_context = _get_database_context()
 
@@ -2192,250 +3473,52 @@ def run_agent(
         is_chart = intent == "chart"
 
         # ---------------------------------------------------------
-        # INSERT: never let the generic SQL generator invent values.
-        # Intercept CREATE/ADD/INSERT requests before the LLM sees
-        # the generic SQL prompt.
-        # ---------------------------------------------------------
-        if _is_insert_action(user_message):
-            table = _detect_insert_table(user_message, schema)
-            if table:
-                conversation_state[session_id] = {
-                    "pending_insert_table": table,
-                }
-                return _build_insert_request(table, schema)
-
-        # ---------------------------------------------------------
-        # Form submission path: validate required fields before
-        # generating INSERT SQL.
-        # ---------------------------------------------------------
-        form_values = _parse_form_submission(user_message)
-        if form_values:
-            state = conversation_state.get(session_id, {})
-            table = state.get("pending_insert_table")
-
-            if table:
-                required_fields = _get_required_insert_fields(
-                    table,
-                    schema,
-                )
-
-                fields = {}
-                for field in required_fields:
-                    if field in form_values:
-                        fields[field] = form_values[field]
-
-                missing_fields = [
-                    field
-                    for field in required_fields
-                    if field not in fields
-                    or not str(fields[field]).strip()
-                ]
-
-                if missing_fields:
-                    missing_labels = [
-                        field.replace("_", " ").title()
-                        for field in missing_fields
-                    ]
-
-                    return {
-                        "generated_sql": "",
-                        "result": {
-                            "success": True,
-                            "columns": [],
-                            "rows": [],
-                            "execution_time_ms": 0,
-                            "rows_returned": 0,
-                        },
-                        "chart": None,
-                        "diagram": None,
-                        "input_request": {
-                            "type": "insert",
-                            "table": table,
-                            "title": (
-                                f"Complete {table.replace('_', ' ').title()} Details"
-                            ),
-                            "message": (
-                                "I still need the following required details:"
-                            ),
-                            "fields": [
-                                {
-                                    "name": field,
-                                    "label": field.replace(
-                                        "_",
-                                        " "
-                                    ).title(),
-                                    "type": "text",
-                                    "required": True,
-                                }
-                                for field in missing_fields
-                            ],
-                        },
-                        "explanation": (
-                            "I can't create the record yet because "
-                            "some required fields are missing.\n\n"
-                            + "\n".join(
-                                f"• {field.replace('_', ' ').title()}"
-                                for field in missing_fields
-                            )
-                        ),
-                        "followups": [],
-                    }
-
-                sql = _generate_sql(
-                    "insert",
-                    table,
-                    fields,
-                    ""
-                )
-
-                conversation_state.pop(
-                    session_id,
-                    None
-                )
-
-                return {
-                    "generated_sql": sql,
-                    "result": {
-                        "success": True,
-                        "columns": [],
-                        "rows": [],
-                        "pending_confirmation": True,
-                        "operation": "insert",
-                    },
-                    "chart": None,
-                    "diagram": None,
-                    "requires_confirmation": True,
-                    "explanation": (
-                        "I have all the required information.\n\n"
-                        "Please review the generated SQL "
-                        "before modifying the database."
-                    ),
-                    "followups": [],
-                }
-
-        # =========================================================
-        # DEDICATED WRITE FLOWS
-        # =========================================================
-
-        # DELETE
-        delete_result = _handle_delete_operation(
-            session_id,
-            user_message,
-            schema
-        )
-
-        if delete_result is not None:
-            return delete_result
-
-        # UPDATE
-        update_result = _handle_update_operation(
-            session_id,
-            user_message,
-            schema
-        )
-
-        if update_result is not None:
-            return update_result
-
-        # Existing conversational write flow
-        write_result = _handle_write_operation(session_id, user_message, schema)
-        if write_result is not None:
-            return write_result
-
-        # =========================================================
-        # DATABASE MODIFICATION OPERATIONS
-        # =========================================================
-
-        modification_result = _handle_database_modification(
-            user_message,
-            schema,
-            session_id,
-        )
-
-        if modification_result is not None:
-            return modification_result
-
-        # ---------------------------------------------------------
         # Generic SQL path: only for SELECT / READ operations.
         # INSERT / UPDATE / DELETE must be handled above.
         # ---------------------------------------------------------
         compact_schema = _build_compact_schema(schema)
 
+        database_context = _get_database_context()
+
+        if not database_context:
+            database_context = "No additional database profile is available."
+
         prompt = f"""
 You are BG AI, an intelligent database assistant.
 
-Your task is to convert the user's natural-language request
-into ONE SQL query for the CURRENTLY CONNECTED DATABASE.
+Your job is to understand the user's natural-language request
+and generate SQL ONLY when the request requires database data.
 
-================ CURRENT DATABASE =================
+IMPORTANT:
+- The connected database may belong to ANY domain.
+- Never assume the database is ecommerce.
+- Never assume tables such as customers, products, orders, students,
+  employees, patients, etc.
+- Use ONLY tables and columns that exist in the LIVE DATABASE SCHEMA.
+- Correct obvious spelling mistakes in the user's request.
+- Match natural-language terms to the closest real table/column.
+- Never invent a table.
+- Never invent a column.
+- Never invent a value.
+- If the request is ambiguous, ask for clarification instead of guessing.
 
+LIVE DATABASE SCHEMA:
 {compact_schema}
 
-================ USER REQUEST =================
+DATABASE INTELLIGENCE PROFILE:
+{database_context}
 
+USER REQUEST:
 {user_message}
 
-================ RULES =================
-
-1. Use ONLY tables and columns listed above.
-
-2. NEVER invent tables or columns.
-
-3. Understand natural language semantically.
-
-4. The database can belong to ANY domain:
-   students, employees, hospitals, products,
-   customers, finance, attendance, etc.
-
-5. If the user says:
-   "show students"
-   find the appropriate student-related table
-   from the schema.
-
-6. If the user asks for a count, use COUNT(*).
-
-7. If the user asks to search/filter data,
-   use an appropriate WHERE condition.
-
- 8. For SELECT requests, generate SELECT.
-
- 9. UPDATE and DELETE require a WHERE condition.
-
- 10. Return ONLY the SQL query.
-
- 11. Do NOT return:
-    - explanations
-    - markdown
-    - code fences
-    - comments
-    - extra text
-
- 12. Correct obvious spelling mistakes and typos before
-     interpreting the request.
-
- 13. Do NOT require the user to use exact database
-     terminology.
-
- 14. Examples:
-
-     "shwo students"
-     -> understand as "show students"
-
-     "studnt details"
-     -> understand as "student details"
-
-     "employes"
-     -> match "employees" if that table exists
-
-     "custmers"
-     -> match "customers" if that table exists
-
- 15. Never invent a table just because the spelling is wrong.
-
- 16. If a likely table does not exist, clearly report that
-     the requested data could not be found.
-
-RAW SQL ONLY:
+SQL RULES:
+1. Generate one SQL statement only.
+2. For read requests, generate SELECT SQL.
+3. Never use INSERT, UPDATE, or DELETE here.
+4. Use the actual table and column names from the live schema.
+5. Respect relationships between tables when joins are required.
+6. Do not use columns that do not exist.
+7. Return SQL only.
 """
 
         try:
@@ -2548,6 +3631,54 @@ RAW SQL ONLY:
         "explanation": "I'm not sure how to handle that request. Could you rephrase it?",
         "followups": _get_followups(user_message),
     }
+
+
+def _build_insert_sql(
+    table: str,
+    columns: list[str],
+    values: list,
+) -> str:
+    """
+    Build a single INSERT statement using only
+    schema-validated identifiers and values.
+    """
+
+    def quote_identifier(value: str) -> str:
+        return f"`{value.replace('`', '``')}`"
+
+    def quote_value(value) -> str:
+
+        if value is None:
+            return "NULL"
+
+        if isinstance(value, bool):
+            return "1" if value else "0"
+
+        if isinstance(value, (int, float)):
+            return str(value)
+
+        escaped = str(value).replace(
+            "'",
+            "''",
+        )
+
+        return f"'{escaped}'"
+
+    quoted_columns = ", ".join(
+        quote_identifier(column)
+        for column in columns
+    )
+
+    quoted_values = ", ".join(
+        quote_value(value)
+        for value in values
+    )
+
+    return (
+        f"INSERT INTO {quote_identifier(table)} "
+        f"({quoted_columns}) "
+        f"VALUES ({quoted_values})"
+    )
 
 
 def _generate_sql(
