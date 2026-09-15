@@ -7,6 +7,15 @@ from app.tools.execute_query import validate_sql
 
 
 def _quote_value(value: Any) -> str:
+    """
+    Convert a Python value into safe SQL literal syntax.
+
+    Numbers remain numbers.
+    Booleans become 1/0.
+    None becomes NULL.
+    Strings are escaped with SQL single-quote escaping.
+    """
+
     if value is None:
         return "NULL"
 
@@ -25,7 +34,11 @@ def preview_read(
     where_clause: str | None,
     schema: dict,
 ) -> dict[str, Any]:
-    return match_records(table, where_clause, schema)
+    return match_records(
+        table,
+        where_clause,
+        schema,
+    )
 
 
 def preview_insert(
@@ -33,14 +46,19 @@ def preview_insert(
     values: dict[str, Any],
     schema: dict,
 ) -> dict[str, Any]:
+
     table_schema = schema.get(table, {})
 
     if not table_schema:
         return {
             "success": False,
-            "error": f"Table '{table}' does not exist in the current schema.",
+            "error": (
+                f"Table '{table}' does not exist "
+                "in the current schema."
+            ),
         }
 
+    # Only allow columns that actually exist.
     allowed = {
         column: value
         for column, value in values.items()
@@ -50,17 +68,30 @@ def preview_insert(
     if not allowed:
         return {
             "success": False,
-            "error": "No valid columns were provided for the insert.",
+            "error": (
+                "No valid columns were provided "
+                "for the insert."
+            ),
         }
 
     columns = list(allowed.keys())
-    column_sql = ", ".join(quote_identifier(column) for column in columns)
+
+    column_sql = ", ".join(
+        quote_identifier(column)
+        for column in columns
+    )
+
     value_sql = ", ".join(
         _quote_value(allowed[column])
         for column in columns
     )
 
-    sql = f"INSERT INTO {quote_identifier(table)} ({column_sql}) VALUES ({value_sql})"
+    sql = (
+        f"INSERT INTO {quote_identifier(table)} "
+        f"({column_sql}) "
+        f"VALUES ({value_sql})"
+    )
+
     validation = validate_sql(sql)
 
     return {
@@ -78,12 +109,16 @@ def preview_update(
     changes: dict[str, Any],
     schema: dict,
 ) -> dict[str, Any]:
+
     table_schema = schema.get(table, {})
 
     if not table_schema:
         return {
             "success": False,
-            "error": f"Table '{table}' does not exist in the current schema.",
+            "error": (
+                f"Table '{table}' does not exist "
+                "in the current schema."
+            ),
         }
 
     valid_changes = {
@@ -95,11 +130,17 @@ def preview_update(
     if not valid_changes:
         return {
             "success": False,
-            "error": "No valid columns were provided for the update.",
+            "error": (
+                "No valid columns were provided "
+                "for the update."
+            ),
         }
 
     set_parts = [
-        f"{quote_identifier(column)} = {_quote_value(value)}"
+        (
+            f"{quote_identifier(column)} = "
+            f"{_quote_value(value)}"
+        )
         for column, value in valid_changes.items()
     ]
 
@@ -124,15 +165,23 @@ def preview_delete(
     where_clause: str,
     schema: dict,
 ) -> dict[str, Any]:
+
     table_schema = schema.get(table, {})
 
     if not table_schema:
         return {
             "success": False,
-            "error": f"Table '{table}' does not exist in the current schema.",
+            "error": (
+                f"Table '{table}' does not exist "
+                "in the current schema."
+            ),
         }
 
-    sql = f"DELETE FROM {quote_identifier(table)} WHERE {where_clause}"
+    sql = (
+        f"DELETE FROM {quote_identifier(table)} "
+        f"WHERE {where_clause}"
+    )
+
     validation = validate_sql(sql)
 
     return {

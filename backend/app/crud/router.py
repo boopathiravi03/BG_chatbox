@@ -138,8 +138,17 @@ def _handle_create(
         name = column_name.lower()
         if name in {"created_at", "updated_at", "deleted_at"}:
             continue
-        if metadata.get("primary_key") and metadata.get("default") is not None:
-            continue
+        if metadata.get("primary_key"):
+            autoincrement = metadata.get("autoincrement")
+            default_value = metadata.get("default")
+            server_default = metadata.get("server_default")
+
+            if (
+                autoincrement is True
+                or default_value is not None
+                or server_default is not None
+            ):
+                continue
 
         column_type = str(metadata.get("type", "")).lower()
         field_type = "text"
@@ -158,7 +167,12 @@ def _handle_create(
             "name": column_name,
             "label": column_name.replace("_", " ").title(),
             "type": field_type,
-            "required": not metadata.get("nullable", True) and metadata.get("default") is None,
+            "required": (
+                not metadata.get("nullable", True)
+                and metadata.get("default") is None
+                and metadata.get("server_default") is None
+                and not metadata.get("primary_key")
+            ),
         })
 
     from app.agent.orchestrator import conversation_state
@@ -200,7 +214,7 @@ def _handle_update(
     where_value = match.get("value")
     changes = intent.get("changes") or {}
 
-    if not where_column or not where_value:
+    if not where_column or where_value is None:
         return {
             "type": "error",
             "message": "For safety, UPDATE requires a WHERE condition identifying the record(s) you want to change.",
@@ -327,7 +341,7 @@ def _handle_delete(
     where_column = match.get("column")
     where_value = match.get("value")
 
-    if not where_column or not where_value:
+    if not where_column or where_value is None:
         return {
             "type": "error",
             "message": "For safety, DELETE requires a WHERE condition identifying the record(s) you want to remove.",
@@ -439,13 +453,37 @@ def _handle_insert_form(
                 continue
         allowed_values[supplied_column] = value
 
-    required_fields = [
-        column
-        for column, metadata in table_schema.items()
-        if not metadata.get("nullable", True)
-        and metadata.get("default") is None
-        and column.lower() not in {"created_at", "updated_at", "deleted_at"}
-    ]
+    required_fields = []
+
+    for column, metadata in table_schema.items():
+
+        column_lower = column.lower()
+
+        if column_lower in {
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }:
+            continue
+
+        if metadata.get("primary_key"):
+            if (
+                metadata.get("autoincrement") is True
+                or metadata.get("default") is not None
+                or metadata.get("server_default") is not None
+            ):
+                continue
+
+        if metadata.get("nullable", True):
+            continue
+
+        if metadata.get("default") is not None:
+            continue
+
+        if metadata.get("server_default") is not None:
+            continue
+
+        required_fields.append(column)
 
     missing = [field for field in required_fields if field not in allowed_values]
 
