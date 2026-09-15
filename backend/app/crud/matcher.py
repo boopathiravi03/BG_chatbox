@@ -7,8 +7,17 @@ from sqlalchemy import text
 from app.database.database_manager import get_engine
 
 
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
+def quote_identifier(identifier: str) -> str:
+    engine = get_engine()
+
+    if engine is None:
+        raise RuntimeError(
+            "No database is currently connected."
+        )
+
+    return engine.dialect.identifier_preparer.quote(
+        identifier
+    )
 
 
 def match_records(

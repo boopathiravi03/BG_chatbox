@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.crud.matcher import match_records
+from app.crud.matcher import match_records, quote_identifier
 from app.tools.execute_query import validate_sql
 
 
@@ -40,7 +40,7 @@ def preview_insert(
         }
 
     columns = list(allowed.keys())
-    column_sql = ", ".join(f'"{column}"' for column in columns)
+    column_sql = ", ".join(quote_identifier(column) for column in columns)
     value_sql = ", ".join(
         "NULL"
         if value is None
@@ -48,7 +48,7 @@ def preview_insert(
         for value in [allowed[column] for column in columns]
     )
 
-    sql = f"INSERT INTO \"{table}\" ({column_sql}) VALUES ({value_sql})"
+    sql = f"INSERT INTO {quote_identifier(table)} ({column_sql}) VALUES ({value_sql})"
     validation = validate_sql(sql)
 
     return {
@@ -87,12 +87,12 @@ def preview_update(
         }
 
     set_parts = [
-        f'"{column}" = \'{str(value).replace(chr(39), chr(39)+chr(39))}\''
+        f"{quote_identifier(column)} = \'{str(value).replace(chr(39), chr(39)+chr(39))}\'"
         for column, value in valid_changes.items()
     ]
 
     sql = (
-        f"UPDATE \"{table}\" "
+        f"UPDATE {quote_identifier(table)} "
         f"SET {', '.join(set_parts)} "
         f"WHERE {where_clause}"
     )
@@ -120,7 +120,7 @@ def preview_delete(
             "error": f"Table '{table}' does not exist in the current schema.",
         }
 
-    sql = f"DELETE FROM \"{table}\" WHERE {where_clause}"
+    sql = f"DELETE FROM {quote_identifier(table)} WHERE {where_clause}"
     validation = validate_sql(sql)
 
     return {

@@ -6,7 +6,10 @@ from app.tools.generate_chart import generate_chart
 from app.tools.generate_flowchart import generate_flowchart
 from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
-from app.database.database_manager import get_engine
+from app.database.database_manager import (
+    get_engine,
+    get_current_db_type,
+)
 import json
 import re
 from difflib import get_close_matches
@@ -726,6 +729,69 @@ def _clean_generated_sql(raw_sql: str) -> str:
     return sql.strip().rstrip(";").strip()
 
 
+def _normalize_sql_for_active_database(
+    sql: str,
+) -> str:
+    """
+    Normalize common identifier quoting mistakes
+    produced by the LLM.
+
+    This is a compatibility layer.
+    The LIVE SQLAlchemy dialect remains the source of truth.
+    """
+
+    if not sql:
+        return sql
+
+    db_type = get_current_db_type()
+
+    # ---------------------------------------------------------
+    # MySQL
+    # ---------------------------------------------------------
+
+    if db_type == "mysql":
+
+        # Convert:
+        # "customers"
+        # "customer_id"
+        #
+        # into:
+        # `customers`
+        # `customer_id`
+        #
+        # Only convert quoted identifier-like tokens.
+        sql = re.sub(
+            r'"([A-Za-z_][A-Za-z0-9_]*)"',
+            r'`\1`',
+            sql,
+        )
+
+    # ---------------------------------------------------------
+    # PostgreSQL / SQLite
+    # ---------------------------------------------------------
+
+    elif db_type in {
+        "postgres",
+        "sqlite",
+    }:
+
+        # Convert MySQL-style identifiers:
+        #
+        # `customers`
+        #
+        # to:
+        #
+        # "customers"
+        #
+        sql = re.sub(
+            r'`([A-Za-z_][A-Za-z0-9_]*)`',
+            r'"\1"',
+            sql,
+        )
+
+    return sql
+
+
 def _build_compact_schema(schema: dict) -> str:
     """
     Create a small schema description for the LLM.
@@ -1364,7 +1430,11 @@ def _handle_delete_operation(
         where
     )
 
-    preview_sql = f"SELECT * FROM {table} WHERE {where}"
+    preview_sql = (
+        f"SELECT * FROM "
+        f"{_crud_quote_identifier(table)} "
+        f"WHERE {where}"
+    )
 
     try:
         preview = execute_query(preview_sql)
@@ -1506,7 +1576,11 @@ def _handle_update_operation(
     )
 
     try:
-        preview_sql = f"SELECT * FROM {table} WHERE {where}"
+        preview_sql = (
+        f"SELECT * FROM "
+        f"{_crud_quote_identifier(table)} "
+        f"WHERE {where}"
+    )
 
         preview = execute_query(preview_sql)
 
@@ -1675,6 +1749,10 @@ SQL:
         raw_sql = ask_groq(prompt).strip()
 
         sql = _clean_generated_sql(raw_sql)
+
+        sql = _normalize_sql_for_active_database(
+            sql
+        )
 
         return sql
 
@@ -2272,11 +2350,24 @@ def _resolve_crud_column(
 def _crud_quote_identifier(
     identifier: str,
 ) -> str:
+    """
+    Quote a database identifier using the ACTIVE SQLAlchemy dialect.
 
-    return "`" + identifier.replace(
-        "`",
-        "``",
-    ) + "`"
+    MySQL      -> `table`
+    PostgreSQL -> "table"
+    SQLite     -> "table"
+    """
+
+    engine = get_engine()
+
+    if engine is None:
+        raise RuntimeError(
+            "No database is currently connected."
+        )
+
+    return engine.dialect.identifier_preparer.quote(
+        identifier
+    )
 
 
 # =============================================================
@@ -4048,6 +4139,32 @@ def run_agent(
         if not database_context:
             database_context = "No additional database profile is available."
 
+        db_type = get_current_db_type()
+
+        dialect_instructions = {
+            "mysql": """
+- Generate MySQL-compatible SQL.
+- Use backticks for table and column identifiers when quoting is needed.
+- Example: SELECT * FROM `customers` LIMIT 100
+- NEVER use double quotes around MySQL identifiers.
+""",
+            "postgres": """
+- Generate PostgreSQL-compatible SQL.
+- Use double quotes for identifiers when quoting is needed.
+- Example: SELECT * FROM "customers" LIMIT 100
+""",
+            "sqlite": """
+- Generate SQLite-compatible SQL.
+- Use double quotes for identifiers when quoting is needed.
+- Example: SELECT * FROM "customers" LIMIT 100
+""",
+        }.get(
+            db_type,
+            """
+- Generate SQL compatible with the currently connected database.
+""",
+        )
+
         prompt = f"""
 You are BG AI, an intelligent database assistant.
 
@@ -4073,6 +4190,12 @@ LIVE DATABASE SCHEMA:
 DATABASE INTELLIGENCE PROFILE:
 {database_context}
 
+DATABASE DIALECT:
+{db_type}
+
+DIALECT RULES:
+{dialect_instructions}
+
 USER REQUEST:
 {user_message}
 
@@ -4083,7 +4206,8 @@ SQL RULES:
 4. Use the actual table and column names from the live schema.
 5. Respect relationships between tables when joins are required.
 6. Do not use columns that do not exist.
-7. Return SQL only.
+7. Use the SQL syntax of the active database dialect.
+8. Return SQL only.
 """
 
         try:
@@ -4094,6 +4218,10 @@ SQL RULES:
             print("RAW :", raw_sql)
 
             sql = _clean_generated_sql(raw_sql)
+
+            sql = _normalize_sql_for_active_database(
+                sql
+            )
 
             print("SQL :", sql)
             print("================================\n")
@@ -4294,7 +4422,8 @@ def _generate_sql(
             values.append(_quote(value))
 
         sql = (
-            f"INSERT INTO {table} "
+            f"INSERT INTO "
+            f"{_crud_quote_identifier(table)} "
             f"({', '.join(columns)}) "
             f"VALUES ({', '.join(values)})"
         )
@@ -4324,11 +4453,12 @@ def _generate_sql(
                 )
 
             set_parts.append(
-                f"{key} = {_quote(value)}"
+                f"{_crud_quote_identifier(key)} = {_quote(value)}"
             )
 
         return (
-            f"UPDATE {table} "
+            f"UPDATE "
+            f"{_crud_quote_identifier(table)} "
             f"SET {', '.join(set_parts)} "
             f"WHERE {where}"
         )
@@ -4341,7 +4471,8 @@ def _generate_sql(
             )
 
         return (
-            f"DELETE FROM {table} "
+            f"DELETE FROM "
+            f"{_crud_quote_identifier(table)} "
             f"WHERE {where}"
         )
 
