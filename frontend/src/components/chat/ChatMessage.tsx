@@ -1,5 +1,6 @@
 import React from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import SQLBlock from "./SQLBlock";
 import ResultTable from "./ResultTable";
@@ -16,19 +17,13 @@ export default function ChatMessage({ message }: Props) {
   const isUser = message.role === "user";
 
   return (
-    <div
-      className={`mb-6 flex ${
-        isUser ? "justify-end" : "justify-start"
-      }`}
-    >
+    <div className={`mb-6 flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-5xl rounded-xl p-4 ${
-          isUser
-            ? "bg-blue-600 text-white"
-            : "bg-zinc-900 text-zinc-100"
+          isUser ? "bg-blue-600 text-white" : "bg-zinc-900 text-zinc-100"
         }`}
       >
-        <ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
           {message.content}
         </ReactMarkdown>
 
@@ -40,9 +35,7 @@ export default function ChatMessage({ message }: Props) {
 
             <ChartRenderer chart={message.chart} />
 
-            <MermaidDiagram
-              diagram={(message as any).diagram}
-            />
+            <MermaidDiagram diagram={(message as any).diagram} />
           </>
         )}
       </div>

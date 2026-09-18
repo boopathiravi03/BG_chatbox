@@ -1,63 +1,50 @@
-import { Mic, SendHorizontal, Database, Sparkles, Loader2 } from "lucide-react";
+import { Mic, Square, Sparkles, ArrowUp } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { getSuggestions } from "../../services/api";
+import { dropdownVariants } from "../../lib/motion";
+import ClickSpark from "../reactbits/ClickSpark";
 
 interface ChatInputProps {
   onSend?: (message: string) => void;
   disabled?: boolean;
-  initialMessage?: string;
   onStop?: () => void;
   loading?: boolean;
+  variant?: "hero" | "bottom";
+  dbConnected?: boolean;
+  dbType?: string | null;
 }
 
-const loadingMessages = [
-  "Analyzing database...",
-  "Generating SQL...",
-  "Processing results...",
-  "Fetching data...",
-];
-
-export default function ChatInput({ onSend, disabled, initialMessage, onStop, loading }: ChatInputProps) {
+export default function ChatInput({
+  onSend,
+  disabled,
+  onStop,
+  loading,
+  variant = "bottom",
+  dbConnected,
+  dbType,
+}: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [filtered, setFiltered] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [listening, setListening] = useState(false);
-  const [loadingMsg, setLoadingMsg] = useState(loadingMessages[0]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const inputRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const isHero = variant === "hero";
 
   useEffect(() => {
-    if (initialMessage) {
-      setMessage(initialMessage);
-    }
-  }, [initialMessage]);
-
-  useEffect(() => {
-    if (disabled) {
-      setMessage("");
-    }
-  }, [disabled]);
-
-  useEffect(() => {
-    if (loading) {
-      setLoadingMsg(loadingMessages[Math.floor(Math.random() * loadingMessages.length)]);
-      const interval = setInterval(() => {
-        setLoadingMsg(loadingMessages[Math.floor(Math.random() * loadingMessages.length)]);
-      }, 2500);
-      return () => clearInterval(interval);
-    }
-  }, [loading]);
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (inputRef.current && !inputRef.current.contains(e.target as Node)) {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setShowSuggestions(false);
       }
     };
-
-    document.addEventListener("click", close);
-
-    return () => document.removeEventListener("click", close);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
   }, []);
 
   useEffect(() => {
@@ -68,15 +55,21 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
           setSuggestions(data.suggestions);
         }
       } catch (error) {
-        console.error("Failed to fetch suggestions:", error);
+        // silent fail
       }
     };
-
     fetchSuggestions();
   }, []);
 
   const handleChange = (value: string) => {
     setMessage(value);
+
+    // Auto-adjust textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      const maxHeight = isHero ? 220 : 160;
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, maxHeight)}px`;
+    }
 
     if (!value.trim()) {
       setFiltered([]);
@@ -85,11 +78,27 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
     }
 
     const results = suggestions.filter((item) =>
-      item.toLowerCase().includes(value.toLowerCase())
+      item.toLowerCase().includes(value.toLowerCase()),
     );
-
-    setFiltered(results.slice(0, 6));
+    setFiltered(results.slice(0, 5));
     setShowSuggestions(results.length > 0);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  const handleSubmit = () => {
+    if (!message.trim() || disabled || loading) return;
+    onSend?.(message.trim());
+    setMessage("");
+    setShowSuggestions(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
   };
 
   const startListening = () => {
@@ -97,157 +106,162 @@ export default function ChatInput({ onSend, disabled, initialMessage, onStop, lo
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
 
-    console.log("Speech API:", SpeechRecognition);
-
     if (!SpeechRecognition) {
-      alert("Speech Recognition is not supported.");
+      alert("Speech recognition is not supported in your browser.");
       return;
     }
 
     const recognition = new SpeechRecognition();
-
     recognition.lang = "en-US";
     recognition.continuous = false;
     recognition.interimResults = false;
 
-    console.log("Starting...");
-
-    recognition.start();
-
-    recognition.onstart = () => {
-      console.log("Listening...");
-      setListening(true);
-    };
+    setListening(true);
 
     recognition.onresult = (event: any) => {
-      console.log("Result:", event.results);
-
       const text = event.results[0][0].transcript;
-
-      console.log("Transcript:", text);
-
-      setMessage(text);
+      setMessage((prev) => (prev ? `${prev} ${text}` : text));
+      setListening(false);
     };
 
-    recognition.onerror = (e: any) => {
-      console.log("Speech Error:", e);
+    recognition.onerror = () => {
       setListening(false);
     };
 
     recognition.onend = () => {
-      console.log("Speech End");
       setListening(false);
     };
-  };
 
-  const handleSend = () => {
-    if (!message.trim() || !onSend || disabled) return;
-    onSend(message.trim());
-    setMessage("");
-    setShowSuggestions(false);
-    setFiltered([]);
+    recognition.start();
   };
 
   return (
-    <div className="w-full max-w-4xl relative" ref={inputRef}>
-      <div className="rounded-2xl border border-white/10 dark:bg-[#1b1b1f] bg-white shadow-lg p-4 transition-all">
+    <div
+      className={`relative w-full ${isHero ? "max-w-4xl lg:max-w-5xl" : "w-full"} mx-auto`}
+      ref={containerRef}
+    >
+      {/* Autocomplete suggestions popover */}
+      <AnimatePresence>
+        {showSuggestions && filtered.length > 0 && (
+          <motion.div
+            variants={dropdownVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            className="absolute bottom-full left-0 right-0 mb-2.5 p-2 rounded-2xl bg-[#141418] border border-white/10 shadow-2xl shadow-black/80 z-40 overflow-hidden"
+          >
+            <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+              <Sparkles size={13} className="text-indigo-400" />
+              <span>Suggested Queries</span>
+            </div>
+            {filtered.map((item) => (
+              <button
+                key={item}
+                onClick={() => {
+                  setMessage(item);
+                  setShowSuggestions(false);
+                  onSend?.(item);
+                }}
+                className="flex items-center gap-2.5 w-full px-3.5 py-2.5 text-left text-sm font-medium rounded-xl text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors truncate"
+              >
+                <span>{item}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main Composer Box */}
+      <div
+        className={`relative flex flex-col rounded-2xl bg-[#121215] border transition-all ${
+          isHero
+            ? "border-white/[0.12] hover:border-white/[0.18] focus-within:border-indigo-500/60 focus-within:ring-2 focus-within:ring-indigo-500/20 shadow-2xl shadow-black/60"
+            : "border-white/[0.08] hover:border-white/[0.14] focus-within:border-indigo-500/60 focus-within:ring-2 focus-within:ring-indigo-500/20 shadow-xl shadow-black/40"
+        }`}
+      >
         <textarea
-          rows={2}
-          placeholder="Ask anything about your database..."
+          ref={textareaRef}
           value={message}
           onChange={(e) => handleChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          className="w-full resize-none bg-transparent outline-none text-base dark:text-white text-black dark:placeholder:text-gray-500 placeholder:text-gray-400 transition-all duration-300 focus:shadow-[0_0_12px_rgba(59,130,246,0.5)] rounded-lg px-1"
+          onKeyDown={handleKeyDown}
+          autoFocus={isHero}
+          placeholder={
+            isHero
+              ? "Ask a question about your database, generate SQL, or analyze metrics..."
+              : "Ask a follow-up question or request changes..."
+          }
+          disabled={disabled}
+          rows={isHero ? 3 : 1}
+          className={`w-full bg-transparent text-zinc-100 placeholder:text-zinc-400 outline-none resize-none leading-relaxed ${
+            isHero
+              ? "px-5 pt-4 pb-3 text-base sm:text-[16px] min-h-[105px] sm:min-h-[120px]"
+              : "px-5 pt-4 pb-3 text-base sm:text-[16px] min-h-[56px] sm:min-h-[62px]"
+          }`}
         />
-        {listening && (
-          <div className="flex items-center gap-3 mt-3">
-            <span className="text-red-400 font-medium">
-              🎤 Listening...
+
+        {/* Toolbar & Controls */}
+        <div
+          className={`flex items-center justify-between border-t border-white/[0.04] ${
+            isHero ? "px-5 py-3" : "px-4 pb-3 pt-1.5"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={startListening}
+              className={`p-2 rounded-xl text-sm transition-colors ${
+                listening
+                  ? "bg-rose-500/20 text-rose-400 animate-pulse"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]"
+              }`}
+              title="Voice Input"
+            >
+              <Mic size={isHero ? 19 : 18} />
+            </button>
+
+            <span className="text-xs text-zinc-500 hidden sm:inline px-1 font-medium select-none">
+              Enter to send, Shift+Enter for new line
             </span>
 
-            <div className="flex items-end gap-1 h-6">
-              <span className="wave" />
-              <span className="wave" />
-              <span className="wave" />
-              <span className="wave" />
-              <span className="wave" />
-            </div>
-          </div>
-        )}
-        <div className="flex justify-between items-center mt-4">
-          <div className="flex gap-3">
-            <button className="px-4 py-2 rounded-full dark:bg-white/5 bg-gray-200 dark:hover:bg-white/10 hover:bg-gray-300 flex items-center gap-2 dark:text-white text-gray-900">
-              <Database size={16} />
-              SQLite
-            </button>
-            <button className="px-4 py-2 rounded-full dark:bg-white/5 bg-gray-200 dark:hover:bg-white/10 hover:bg-gray-300 flex items-center gap-2 dark:text-white text-gray-900">
-              <Sparkles size={16} />
-              BG AI
-            </button>
-          </div>
-          <div className="flex items-center gap-3">
-            {loading && onStop ? (
-              <button
-                onClick={onStop}
-                className="bg-red-600 hover:bg-red-700 rounded-xl px-5 py-2 flex items-center gap-2 text-white text-sm"
-              >
-                <Loader2 size={18} className="animate-spin" />
-                Stop BG AI
-              </button>
-            ) : loading ? (
-              <span className="text-xs dark:text-gray-400 text-gray-500 flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin text-blue-500" />
-                {loadingMsg}
+            {isHero && dbConnected && dbType && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[11px] font-medium text-teal-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-teal-400" />
+                {dbType}
               </span>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={disabled || !message.trim()}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-5 py-2 flex items-center gap-2 text-white"
-              >
-                Ask BG AI
-                <SendHorizontal size={18} />
-              </button>
             )}
-            <button
-              onClick={startListening}
-              className={`relative flex items-center justify-center w-12 h-12 rounded-full transition-all duration-300 ${
-                listening
-                  ? "bg-red-600 animate-pulse shadow-lg shadow-red-500/50"
-                  : "dark:bg-zinc-700 bg-gray-300 dark:hover:bg-zinc-600 hover:bg-gray-400"
-              }`}
-            >
-              <Mic size={20} className="text-white" />
+          </div>
 
-              {listening && (
-                <span className="absolute inset-0 rounded-full border-2 border-red-400 animate-ping" />
-              )}
-            </button>
+          <div className="flex items-center gap-2">
+            {loading ? (
+              <button
+                type="button"
+                onClick={onStop}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+                title="Stop execution"
+              >
+                <Square size={13} className="fill-current" />
+                <span>Stop</span>
+              </button>
+            ) : (
+              <ClickSpark sparkColor="#a5b4fc" sparkCount={6} sparkRadius={16}>
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!message.trim() || disabled}
+                  className={`flex items-center justify-center rounded-xl text-white transition-all cursor-pointer ${
+                    isHero
+                      ? "h-11 w-11 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 shadow-md shadow-indigo-600/30"
+                      : "h-10 w-10 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600 shadow-md shadow-indigo-600/20"
+                  }`}
+                  title="Send query"
+                >
+                  <ArrowUp size={isHero ? 19 : 18} />
+                </button>
+              </ClickSpark>
+            )}
           </div>
         </div>
       </div>
-
-      {showSuggestions && (
-        <div className="absolute left-0 right-0 bottom-16 dark:bg-[#18181b] bg-white border dark:border-zinc-700 border-gray-200 rounded-xl shadow-xl overflow-hidden z-50">
-          {filtered.map((item) => (
-            <button
-              key={item}
-              onClick={() => {
-                setMessage(item);
-                setShowSuggestions(false);
-              }}
-              className="w-full text-left px-4 py-3 dark:hover:bg-zinc-800 hover:bg-gray-100 transition text-sm dark:text-gray-300 text-gray-700"
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

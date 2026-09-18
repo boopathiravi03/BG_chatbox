@@ -2,14 +2,38 @@ import { useState, useEffect, useRef } from "react";
 import MainLayout from "../layouts/MainLayout";
 import ChatArea from "../components/chat/ChatArea";
 import type { Message, ChatSession } from "../types/index";
-import { sendMessage, confirmQuery, sendInsert, disconnectDatabase, getDatabaseInfo, getDatabaseType } from "../services/api";
+import {
+  sendMessage,
+  confirmQuery,
+  sendInsert,
+  disconnectDatabase,
+  getDatabaseInfo,
+  getDatabaseType,
+} from "../services/api";
+import DatabasePopup from "../components/chat/DatabasePopup";
+import AboutModal from "../components/ui/AboutModal";
+import ConnectDatabaseModal from "../components/chat/ConnectDatabaseModal";
+import DisconnectConfirmationModal from "../components/chat/DisconnectConfirmationModal";
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<"ready" | "thinking" | "executing" | "done" | "error">("ready");
+  const [status, setStatus] = useState<
+    "ready" | "thinking" | "executing" | "done" | "error"
+  >("ready");
+  const [showAbout, setShowAbout] = useState(false);
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [connectModalType, setConnectModalType] = useState<
+    "sqlite" | "mysql" | "postgres"
+  >("sqlite");
+  const [canReturnBack, setCanReturnBack] = useState(false);
+  const previousStateRef = useRef<{
+    messages: Message[];
+    activeSessionId: string | null;
+  } | null>(null);
   const loadedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -51,6 +75,9 @@ export default function Home() {
     setMessages([]);
     setActiveSessionId(null);
     setStatus("ready");
+    setShowAbout(false);
+    setCanReturnBack(false);
+    previousStateRef.current = null;
   };
 
   const [sessionId] = useState(() => {
@@ -66,7 +93,10 @@ export default function Home() {
     const userMessage: Message = {
       role: "user",
       content,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
     };
 
     const nextMessages = [...messages, userMessage];
@@ -82,7 +112,11 @@ export default function Home() {
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: data.message || data.explanation || data.error || "Here are the results.",
+        content:
+          data.message ||
+          data.explanation ||
+          data.error ||
+          "Here are the results.",
         sql: data.generated_sql,
         result: data.result,
         explanation: data.explanation,
@@ -91,9 +125,15 @@ export default function Home() {
         analytics: data.analytics,
         followups: data.followups,
         input_request: data.input_request ?? null,
-        requires_confirmation: data.requires_confirmation ?? data.result?.pending_confirmation ?? false,
+        requires_confirmation:
+          data.requires_confirmation ??
+          data.result?.pending_confirmation ??
+          false,
         operation: data.operation ?? data.result?.operation,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
 
       const completedMessages = [...nextMessages, assistantMessage];
@@ -114,15 +154,18 @@ export default function Home() {
           prev.map((s) =>
             s.id === activeSessionId
               ? { ...s, messages: completedMessages }
-              : s
-          )
+              : s,
+          ),
         );
       }
     } catch (error) {
       const errorMessage: Message = {
         role: "assistant",
         content: "Sorry, something went wrong. Please try again.",
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
       setMessages((prev) => [...prev, errorMessage]);
       setStatus("error");
@@ -138,13 +181,19 @@ export default function Home() {
     setStatus("ready");
   };
 
-  const handleInsertSubmit = async (values: Record<string, string>, table: string) => {
+  const handleInsertSubmit = async (
+    values: Record<string, string>,
+    table: string,
+  ) => {
     const userMessage: Message = {
       role: "user",
       content: Object.entries(values)
         .map(([key, value]) => `${key}: ${value}`)
         .join(", "),
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
     };
 
     const nextMessages = [...messages, userMessage];
@@ -158,7 +207,11 @@ export default function Home() {
 
       const assistantMessage: Message = {
         role: "assistant",
-        content: data.message || data.explanation || data.error || "Here are the results.",
+        content:
+          data.message ||
+          data.explanation ||
+          data.error ||
+          "Here are the results.",
         sql: data.generated_sql,
         result: data.result,
         explanation: data.explanation,
@@ -167,9 +220,15 @@ export default function Home() {
         analytics: data.analytics,
         followups: data.followups,
         input_request: data.input_request ?? null,
-        requires_confirmation: data.requires_confirmation ?? data.result?.pending_confirmation ?? false,
+        requires_confirmation:
+          data.requires_confirmation ??
+          data.result?.pending_confirmation ??
+          false,
         operation: data.operation ?? data.result?.operation,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
 
       const completedMessages = [...nextMessages, assistantMessage];
@@ -190,15 +249,18 @@ export default function Home() {
           prev.map((s) =>
             s.id === activeSessionId
               ? { ...s, messages: completedMessages }
-              : s
-          )
+              : s,
+          ),
         );
       }
     } catch (error) {
       const errorMessage: Message = {
         role: "assistant",
         content: "Failed to submit the record. Please try again.",
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
       setMessages((prev) => [...prev, errorMessage]);
       setStatus("error");
@@ -209,13 +271,36 @@ export default function Home() {
   };
 
   const handleHistoryClick = (session: ChatSession) => {
+    previousStateRef.current = {
+      messages,
+      activeSessionId,
+    };
     setActiveSessionId(session.id);
     setMessages(session.messages);
+    setShowAbout(false);
+    setCanReturnBack(true);
+  };
+
+  const handleReturnBack = () => {
+    if (showAbout) {
+      setShowAbout(false);
+      return;
+    }
+    if (previousStateRef.current) {
+      setMessages(previousStateRef.current.messages);
+      setActiveSessionId(previousStateRef.current.activeSessionId);
+      previousStateRef.current = null;
+      setCanReturnBack(false);
+    } else if (activeSessionId) {
+      handleNewChat();
+      setCanReturnBack(false);
+    }
   };
 
   const [uploadVersion, setUploadVersion] = useState(0);
   const [dbConnected, setDbConnected] = useState(false);
   const [dbType, setDbType] = useState<string | null>(null);
+  const [showDatabase, setShowDatabase] = useState(false);
 
   const refreshDbStatus = async () => {
     try {
@@ -228,7 +313,6 @@ export default function Home() {
 
       setDbType(type);
       setDbConnected(type !== "none");
-
     } catch {
       setDbConnected(false);
       setDbType(null);
@@ -256,6 +340,7 @@ export default function Home() {
       setSessions([]);
       localStorage.removeItem("bgai_sessions");
       localStorage.removeItem("bg_ai_session_id");
+      setShowDatabase(false);
     } catch (error) {
       console.error("Failed to disconnect:", error);
     }
@@ -276,7 +361,10 @@ export default function Home() {
     const cancelMessage: Message = {
       role: "assistant",
       content: "Operation cancelled. The query was not executed.",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
     };
     setMessages((prev) => [...prev, cancelMessage]);
   };
@@ -297,57 +385,35 @@ export default function Home() {
           "Database operation completed.",
         sql: data.sql || "",
         result: data,
-        explanation:
-          data.message ||
-          data.explanation ||
-          data.error ||
-          "",
+        explanation: data.message || data.explanation || data.error || "",
         timestamp: new Date().toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
         }),
       };
 
-      setMessages((prev) => [
-        ...prev,
-        resultMessage,
-      ]);
+      setMessages((prev) => [...prev, resultMessage]);
 
       await refreshDbStatus();
 
-      setStatus(
-        data.success
-          ? "done"
-          : "error"
-      );
-
+      setStatus(data.success ? "done" : "error");
     } catch (error) {
-
       const errorMessage: Message = {
         role: "assistant",
-        content:
-          "The database operation could not be completed.",
+        content: "The database operation could not be completed.",
         timestamp: new Date().toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
         }),
       };
 
-      setMessages((prev) => [
-        ...prev,
-        errorMessage,
-      ]);
+      setMessages((prev) => [...prev, errorMessage]);
 
       setStatus("error");
-
     } finally {
-
       setLoading(false);
 
-      setTimeout(
-        () => setStatus("ready"),
-        3000
-      );
+      setTimeout(() => setStatus("ready"), 3000);
     }
   };
 
@@ -363,20 +429,68 @@ export default function Home() {
       dbType={dbType}
       onDatabaseConnected={handleDatabaseConnected}
       onDeleteSession={handleDeleteSession}
-      onDisconnect={handleDisconnect}
+      onDisconnect={() => setShowDisconnectModal(true)}
+      onConnectDatabase={() => {
+        setConnectModalType("sqlite");
+        setShowConnectModal(true);
+      }}
+      onOpenDatabase={() => setShowDatabase(true)}
+      onOpenAbout={() => setShowAbout(true)}
+      isAboutView={showAbout}
+      onReturnBack={
+        showAbout || canReturnBack || activeSessionId
+          ? handleReturnBack
+          : undefined
+      }
     >
-      <ChatArea
-        messages={messages}
-        loading={loading}
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onSend={handleSend}
-        onInsertSubmit={handleInsertSubmit}
-        onSessionClick={handleHistoryClick}
-        uploadVersion={uploadVersion}
-        onStop={handleStop}
-        onConfirmQuery={handleConfirmQuery}
-        onCancelQuery={handleCancelQuery}
+      {showAbout ? (
+        <AboutModal isEmbedded={true} onClose={() => setShowAbout(false)} />
+      ) : (
+        <ChatArea
+          messages={messages}
+          loading={loading}
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSend={handleSend}
+          onInsertSubmit={handleInsertSubmit}
+          onSessionClick={handleHistoryClick}
+          uploadVersion={uploadVersion}
+          onStop={handleStop}
+          onConfirmQuery={handleConfirmQuery}
+          onCancelQuery={handleCancelQuery}
+          dbConnected={dbConnected}
+          dbType={dbType}
+          onOpenDatabase={() => setShowDatabase(true)}
+          onConnectDatabase={(type?: "sqlite" | "mysql" | "postgres") => {
+            setConnectModalType(type || "sqlite");
+            setShowConnectModal(true);
+          }}
+        />
+      )}
+
+      {showDatabase && (
+        <DatabasePopup
+          onClose={() => setShowDatabase(false)}
+          onDisconnected={handleDisconnect}
+        />
+      )}
+
+      {showConnectModal && (
+        <ConnectDatabaseModal
+          defaultType={connectModalType}
+          onClose={() => setShowConnectModal(false)}
+          onConnected={() => {
+            handleUploadComplete();
+            setShowConnectModal(false);
+          }}
+        />
+      )}
+
+      <DisconnectConfirmationModal
+        isOpen={showDisconnectModal}
+        onClose={() => setShowDisconnectModal(false)}
+        onConfirm={handleDisconnect}
+        dbType={dbType}
       />
     </MainLayout>
   );

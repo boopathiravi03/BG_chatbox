@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Sparkles } from "lucide-react";
 
 interface Props {
   explanation: string;
@@ -7,47 +8,102 @@ interface Props {
 
 export default function ExplanationCard({ explanation }: Props) {
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
-      <div className="px-4 py-2 border-b border-gray-200 dark:border-zinc-700 flex items-center gap-2">
-        <span className="text-sm">🧠</span>
-        <h3 className="text-sm font-semibold text-blue-600 dark:text-blue-400">
-          AI Explanation
+    <div className="rounded-2xl border border-white/[0.08] bg-[#0e0e11] overflow-hidden shadow-md">
+      <div className="px-5 py-3 border-b border-white/[0.06] flex items-center gap-2 bg-white/[0.02]">
+        <Sparkles size={16} className="text-indigo-400" />
+        <h3 className="text-sm font-semibold text-white">
+          Analysis & Explanation
         </h3>
       </div>
 
-      <div className="p-4 text-gray-700 dark:text-zinc-300 leading-7 prose prose-sm dark:prose-invert max-w-none">
+      <div className="p-5 text-zinc-200 leading-relaxed text-sm sm:text-[15px] prose prose-invert max-w-none">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            h1: ({ children }) => <h1 className="text-xl font-bold mt-4 mb-2 text-gray-900 dark:text-white">{children}</h1>,
-            h2: ({ children }) => <h2 className="text-lg font-semibold mt-3 mb-2 text-gray-900 dark:text-gray-100">{children}</h2>,
-            h3: ({ children }) => <h3 className="text-base font-semibold mt-2 mb-1 text-gray-900 dark:text-gray-200">{children}</h3>,
-            p: ({ children }) => <p className="mb-3 text-gray-800 dark:text-gray-200 leading-relaxed">{children}</p>,
-            strong: ({ children }) => <strong className="font-semibold text-gray-900 dark:text-white">{children}</strong>,
-            em: ({ children }) => <em className="italic text-gray-800 dark:text-gray-300">{children}</em>,
-            ul: ({ children }) => <ul className="list-disc list-inside mb-3 text-gray-800 dark:text-gray-200 space-y-1 pl-2">{children}</ul>,
-            ol: ({ children }) => <ol className="list-decimal list-inside mb-3 text-gray-800 dark:text-gray-200 space-y-1 pl-2">{children}</ol>,
-            li: ({ children }) => <li className="mb-1">{children}</li>,
+            h1: ({ children }) => (
+              <h1 className="text-xl font-bold mt-4 mb-2 text-white">
+                {children}
+              </h1>
+            ),
+            h2: ({ children }) => (
+              <h2 className="text-lg font-bold mt-3 mb-2 text-zinc-100">
+                {children}
+              </h2>
+            ),
+            h3: ({ children }) => (
+              <h3 className="text-base font-semibold mt-2 mb-1 text-zinc-200">
+                {children}
+              </h3>
+            ),
+            p: ({ children }) => (
+              <p className="mb-3 leading-relaxed text-zinc-200">{children}</p>
+            ),
+            strong: ({ children }) => (
+              <strong className="font-semibold text-white">{children}</strong>
+            ),
+            em: ({ children }) => (
+              <em className="italic text-zinc-200">{children}</em>
+            ),
+            ul: ({ children }) => (
+              <ul className="list-disc list-inside mb-3 text-zinc-200 space-y-1.5 pl-1">
+                {children}
+              </ul>
+            ),
+            ol: ({ children }) => (
+              <ol className="list-decimal list-inside mb-3 text-zinc-200 space-y-1.5 pl-1">
+                {children}
+              </ol>
+            ),
+            li: ({ children }) => <li className="mb-0.5">{children}</li>,
             table: ({ children }) => (
-              <div className="overflow-auto mb-4 rounded-xl border border-gray-200 dark:border-gray-700">
-                <table className="min-w-full">{children}</table>
+              <div className="overflow-x-auto mb-3.5 rounded-xl border border-white/[0.08]">
+                <table className="min-w-full text-sm">{children}</table>
               </div>
             ),
-            thead: ({ children }) => <thead className="bg-blue-600 text-white">{children}</thead>,
-            tbody: ({ children }) => <tbody className="divide-y divide-gray-200 dark:divide-gray-700">{children}</tbody>,
-            tr: ({ children }) => <tr className="hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">{children}</tr>,
-            th: ({ children }) => <th className="px-4 py-3 text-left text-sm font-semibold border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white">{children}</th>,
-            td: ({ children }) => <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700">{children}</td>,
-            hr: () => <hr className="border-gray-200 dark:border-gray-700 my-6" />,
+            thead: ({ children }) => (
+              <thead className="bg-white/[0.05] text-zinc-200 border-b border-white/[0.08]">
+                {children}
+              </thead>
+            ),
+            tbody: ({ children }) => (
+              <tbody className="divide-y divide-white/[0.04]">{children}</tbody>
+            ),
+            tr: ({ children }) => (
+              <tr className="hover:bg-white/[0.02] transition-colors">
+                {children}
+              </tr>
+            ),
+            th: ({ children }) => (
+              <th className="px-3.5 py-2.5 text-left font-semibold text-zinc-200">
+                {children}
+              </th>
+            ),
+            td: ({ children }) => (
+              <td className="px-3.5 py-2.5 text-zinc-200 font-mono text-xs sm:text-sm">
+                {children}
+              </td>
+            ),
+            hr: () => <hr className="border-white/[0.08] my-4" />,
             a: ({ children, href }) => (
-              <a href={href} className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 underline transition-colors">
+              <a
+                href={href}
+                className="text-indigo-400 hover:text-indigo-300 underline transition-colors font-medium"
+              >
                 {children}
               </a>
             ),
-            code: ({ children }) => <code className="text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800/60 px-1.5 py-0.5 rounded text-sm">{children}</code>,
-            pre: ({ children }) => <pre className="bg-[#111827] text-gray-100 p-4 rounded-xl overflow-x-auto mb-4 text-sm leading-relaxed">{children}</pre>,
+            code: ({ children }) => (
+              <code className="text-indigo-300 bg-white/[0.06] px-1.5 py-0.5 rounded font-mono text-xs sm:text-sm">
+                {children}
+              </code>
+            ),
+            pre: ({ children }) => (
+              <pre className="bg-black/50 text-zinc-200 p-3.5 rounded-xl overflow-x-auto mb-3 font-mono text-xs sm:text-sm border border-white/[0.06]">
+                {children}
+              </pre>
+            ),
             blockquote: ({ children }) => (
-              <blockquote className="pl-4 pr-3 py-3 rounded-r-lg my-3 italic text-gray-800 dark:text-gray-200 border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-950/40">
+              <blockquote className="pl-4 pr-3 py-2.5 rounded-r-lg my-2.5 italic text-zinc-200 border-l-2 border-indigo-500 bg-indigo-500/[0.06] text-sm">
                 {children}
               </blockquote>
             ),

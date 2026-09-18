@@ -1,42 +1,42 @@
-import { useState } from "react";
-import { Database, Upload, X, Server } from "lucide-react";
-import { API_BASE, connectDatabase } from "../../services/api";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Database, Upload, X, FileUp, Loader2 } from "lucide-react";
+import { API_BASE } from "../../services/api";
+import {
+  modalBackdropVariants,
+  modalContainerVariants,
+} from "../../lib/motion";
+import { useToast } from "../../context/ToastContext";
 
 interface Props {
   onClose: () => void;
   onUploadComplete?: () => void;
 }
 
-type DbType = "sqlite" | "mysql" | "postgres";
-
 export default function DatabaseUploader({ onClose, onUploadComplete }: Props) {
-  const [dbType, setDbType] = useState<DbType>("sqlite");
   const [uploading, setUploading] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [message, setMessage] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const toast = useToast();
 
-  const [mysqlForm, setMysqlForm] = useState({
-    host: "localhost",
-    port: "3306",
-    database: "",
-    username: "root",
-    password: "",
-  });
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
-  const [postgresForm, setPostgresForm] = useState({
-    host: "localhost",
-    port: "5432",
-    database: "postgres",
-    username: "postgres",
-    password: "",
-  });
-
-  const handleSqliteUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadFile = async (file: File) => {
+    if (
+      !file.name.endsWith(".db") &&
+      !file.name.endsWith(".sqlite") &&
+      !file.name.endsWith(".sqlite3")
+    ) {
+      toast.error("Please select a valid SQLite database file (.db, .sqlite)");
+      return;
+    }
 
     setUploading(true);
-    setMessage("");
 
     try {
       const formData = new FormData();
@@ -49,177 +49,124 @@ export default function DatabaseUploader({ onClose, onUploadComplete }: Props) {
 
       const data = await response.json();
 
-      if (response.ok) {
-        setMessage("✅ SQLite Connected");
+      if (response.ok && data.status === "success") {
+        toast.success("SQLite database attached successfully!");
         setTimeout(() => {
           onClose();
           onUploadComplete?.();
-        }, 1500);
+        }, 800);
       } else {
-        setMessage(`❌ Error: ${data.message || "Upload failed"}`);
+        toast.error(data.message || "Upload failed. Please check the file.");
       }
-    } catch (error) {
-      setMessage("❌ Error uploading database");
+    } catch {
+      toast.error("Network error uploading database.");
     } finally {
       setUploading(false);
     }
   };
 
-  const handleConnect = async () => {
-    setConnecting(true);
-    setMessage("");
-
-    try {
-      const form = dbType === "mysql" ? mysqlForm : postgresForm;
-      const data = await connectDatabase({
-        db_type: dbType === "mysql" ? "mysql" : "postgres",
-        host: form.host,
-        port: parseInt(form.port),
-        database: form.database,
-        username: form.username,
-        password: form.password,
-      });
-
-      if (data.status === "success") {
-        setMessage(`✅ Connected to ${dbType === "mysql" ? "MySQL" : "PostgreSQL"}`);
-        setTimeout(() => {
-          onClose();
-          onUploadComplete?.();
-        }, 1500);
-      } else {
-        setMessage(`❌ Error: ${data.message || "Connection failed"}`);
-      }
-    } catch (error) {
-      setMessage("❌ Error connecting to database");
-    } finally {
-      setConnecting(false);
-    }
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) uploadFile(file);
   };
 
-  const updateForm = (form: typeof mysqlForm | typeof postgresForm, field: string, value: string) => {
-    if (dbType === "mysql") {
-      setMysqlForm((prev) => ({ ...prev, [field]: value }));
-    } else {
-      setPostgresForm((prev) => ({ ...prev, [field]: value }));
-    }
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) uploadFile(file);
   };
-
-  const currentForm = dbType === "mysql" ? mysqlForm : postgresForm;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-md">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Database size={20} />
-            Connect Database
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
-            <X size={20} />
-          </button>
-        </div>
+    <AnimatePresence>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <motion.div
+          key="uploader-backdrop"
+          variants={modalBackdropVariants}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          onClick={onClose}
+          className="fixed inset-0 bg-black/75 backdrop-blur-sm"
+        />
 
-        <div className="flex gap-2 mb-4">
-          {[
-            { key: "sqlite", label: "SQLite (.db)" },
-            { key: "mysql", label: "MySQL" },
-            { key: "postgres", label: "PostgreSQL" },
-          ].map((tab) => (
+        <motion.div
+          key="uploader-container"
+          variants={modalContainerVariants}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          className="relative w-full max-w-lg rounded-2xl bg-[#121215] border border-white/10 shadow-2xl shadow-black/90 overflow-hidden z-10"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-5 border-b border-white/[0.08]">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                <Database size={20} />
+              </div>
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                  Upload SQLite Database
+                </h2>
+                <p className="text-xs text-zinc-400">
+                  Attach local .db, .sqlite, or .sqlite3 file
+                </p>
+              </div>
+            </div>
             <button
-              key={tab.key}
-              onClick={() => setDbType(tab.key as DbType)}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                dbType === tab.key
-                  ? "bg-blue-600 text-white"
-                  : "bg-white/5 text-gray-400 hover:bg-white/10"
+              onClick={onClose}
+              className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Dropzone */}
+          <div className="p-6">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragOver(true);
+              }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={handleDrop}
+              className={`relative border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center text-center transition-all ${
+                isDragOver
+                  ? "border-indigo-500 bg-indigo-500/10 scale-[1.01]"
+                  : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
               }`}
             >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+              <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center mb-3.5 text-zinc-200 shadow-sm">
+                {uploading ? (
+                  <Loader2 size={26} className="animate-spin text-indigo-400" />
+                ) : (
+                  <FileUp size={26} className="text-indigo-400" />
+                )}
+              </div>
 
-        {dbType === "sqlite" ? (
-          <div className="border-2 border-dashed border-white/10 rounded-xl p-8 text-center hover:border-white/20 transition-colors">
-            <Upload size={48} className="mx-auto mb-4 text-gray-400" />
-            <p className="text-sm text-gray-400 mb-4">
-              Drop your SQLite file here or click to browse
-            </p>
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept=".db,.sqlite,.sqlite3"
-                onChange={handleSqliteUpload}
-                className="hidden"
-                disabled={uploading}
-              />
-              <span className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors">
-                {uploading ? "Uploading..." : "Choose File"}
-              </span>
-            </label>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Host</label>
-              <input
-                type="text"
-                value={currentForm.host}
-                onChange={(e) => updateForm(currentForm, "host", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Port</label>
-              <input
-                type="text"
-                value={currentForm.port}
-                onChange={(e) => updateForm(currentForm, "port", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Database</label>
-              <input
-                type="text"
-                value={currentForm.database}
-                onChange={(e) => updateForm(currentForm, "database", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Username</label>
-              <input
-                type="text"
-                value={currentForm.username}
-                onChange={(e) => updateForm(currentForm, "username", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Password</label>
-              <input
-                type="password"
-                value={currentForm.password}
-                onChange={(e) => updateForm(currentForm, "password", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-blue-500"
-              />
-            </div>
-            <button
-              onClick={handleConnect}
-              disabled={connecting || !currentForm.database}
-              className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-            >
-              <Server size={16} />
-              {connecting ? "Connecting..." : "Connect"}
-            </button>
-          </div>
-        )}
+              <h3 className="text-sm sm:text-base font-semibold text-zinc-100 mb-1.5">
+                {uploading
+                  ? "Parsing schema and catalog..."
+                  : "Drop your SQLite file here"}
+              </h3>
+              <p className="text-xs sm:text-sm text-zinc-400 max-w-xs mb-5 leading-normal">
+                Supported formats: .db, .sqlite, and .sqlite3
+              </p>
 
-        {message && (
-          <p className="mt-4 text-sm text-center">{message}</p>
-        )}
+              <label className="relative inline-flex items-center justify-center px-5 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.12] text-sm font-semibold text-white transition-colors cursor-pointer border border-white/10 shadow-sm">
+                <span>Browse Files</span>
+                <input
+                  type="file"
+                  accept=".db,.sqlite,.sqlite3"
+                  onChange={handleFileInput}
+                  disabled={uploading}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+        </motion.div>
       </div>
-    </div>
+    </AnimatePresence>
   );
 }

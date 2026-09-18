@@ -9,9 +9,10 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-
 import { Bar, Line } from "react-chartjs-2";
 import { useRef } from "react";
+import { Download, BarChart2 } from "lucide-react";
+import { useToast } from "../../context/ToastContext";
 
 ChartJS.register(
   CategoryScale,
@@ -21,7 +22,7 @@ ChartJS.register(
   LineElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
 );
 
 interface Props {
@@ -35,20 +36,26 @@ interface Props {
 
 export default function ChartRenderer({ chart }: Props) {
   const chartRef = useRef<any>(null);
+  const toast = useToast();
 
   if (!chart) {
-    return <div>No chart received.</div>;
+    return (
+      <div className="text-xs text-zinc-500 py-2">No chart data available.</div>
+    );
   }
 
   const downloadChart = () => {
     if (!chartRef.current) return;
-
-    const url = chartRef.current.toBase64Image();
-
-    const link = document.createElement("a");
-    link.download = `${chart.title}.png`;
-    link.href = url;
-    link.click();
+    try {
+      const url = chartRef.current.toBase64Image();
+      const link = document.createElement("a");
+      link.download = `${chart.title || "chart"}.png`;
+      link.href = url;
+      link.click();
+      toast.success("Chart exported as PNG");
+    } catch {
+      toast.error("Failed to export chart image");
+    }
   };
 
   const data = {
@@ -57,22 +64,18 @@ export default function ChartRenderer({ chart }: Props) {
       {
         label: chart.title,
         data: chart.values,
-
         backgroundColor: [
-          "#3B82F6",
-          "#10B981",
-          "#F59E0B",
-          "#EF4444",
-          "#8B5CF6",
-          "#06B6D4",
+          "rgba(99, 102, 241, 0.75)",
+          "rgba(20, 184, 166, 0.75)",
+          "rgba(245, 158, 11, 0.75)",
+          "rgba(139, 92, 246, 0.75)",
+          "rgba(244, 63, 94, 0.75)",
+          "rgba(14, 165, 233, 0.75)",
         ],
-
-        borderColor: "#60A5FA",
-        borderWidth: 2,
-        borderRadius: 8,
-
-        hoverBackgroundColor: "#2563EB",
-        hoverBorderColor: "#93C5FD",
+        borderColor: "rgba(255, 255, 255, 0.2)",
+        borderWidth: 1,
+        borderRadius: 6,
+        hoverBackgroundColor: "rgba(99, 102, 241, 0.95)",
       },
     ],
   };
@@ -82,66 +85,56 @@ export default function ChartRenderer({ chart }: Props) {
   const options = {
     responsive: true,
     maintainAspectRatio: false,
-
     plugins: {
       legend: {
         labels: {
-          color: "#ffffff",
+          color: "#a1a1aa",
+          font: { size: 11 },
         },
       },
-
-      title: {
-        display: true,
-        text: chart.title,
-        color: "#ffffff",
-        font: {
-          size: 18,
-        },
+      tooltip: {
+        backgroundColor: "#141418",
+        titleColor: "#f4f4f5",
+        bodyColor: "#e4e4e7",
+        borderColor: "rgba(255, 255, 255, 0.1)",
+        borderWidth: 1,
+        padding: 10,
+        cornerRadius: 8,
       },
     },
-
     scales: {
       x: {
-        ticks: {
-          color: "#ffffff",
-        },
-        grid: {
-          color: "rgba(255,255,255,0.15)",
-        },
+        ticks: { color: "#71717a", font: { size: 10 } },
+        grid: { color: "rgba(255, 255, 255, 0.04)" },
       },
-
       y: {
         beginAtZero: true,
-        ticks: {
-          color: "#ffffff",
-        },
-        grid: {
-          color: "rgba(255,255,255,0.15)",
-        },
+        ticks: { color: "#71717a", font: { size: 10 } },
+        grid: { color: "rgba(255, 255, 255, 0.04)" },
       },
     },
   };
 
   return (
-    <div className="mt-6 dark:bg-[#111] bg-white p-4 rounded-xl">
-      <h3 className="text-lg font-semibold mb-3 dark:text-white text-gray-900">
-        {chart.title}
-      </h3>
+    <div className="rounded-xl border border-white/[0.08] bg-[#0e0e11] overflow-hidden shadow-md">
+      <div className="px-4 py-2.5 border-b border-white/[0.06] flex items-center justify-between bg-white/[0.02]">
+        <div className="flex items-center gap-2">
+          <BarChart2 size={14} className="text-indigo-400" />
+          <h3 className="text-xs font-semibold text-zinc-200">{chart.title}</h3>
+        </div>
 
-      <div className="h-[350px]">
-        <ChartComponent
-          ref={chartRef}
-          data={data}
-          options={options}
-        />
+        <button
+          onClick={downloadChart}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[11px] font-medium text-zinc-300 hover:text-white transition-colors"
+        >
+          <Download size={12} />
+          <span>Save PNG</span>
+        </button>
       </div>
 
-      <button
-        onClick={downloadChart}
-        className="mt-3 px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 text-white text-sm"
-      >
-        Download PNG
-      </button>
+      <div className="p-4 h-[320px]">
+        <ChartComponent ref={chartRef} data={data} options={options} />
+      </div>
     </div>
   );
 }

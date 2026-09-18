@@ -1,19 +1,27 @@
 export default function Background() {
   return (
     <>
-      <div className="fixed inset-0 -z-20 bg-[#0B1120]" />
+      {/* Base deep obsidian fill */}
+      <div className="fixed inset-0 -z-20 bg-[#09090b]" />
 
+      {/* Subtle top ambient gradient (Linear style) */}
       <div
-        className="fixed inset-0 -z-10"
+        className="fixed inset-0 -z-10 pointer-events-none opacity-60"
         style={{
-          background:
-            "radial-gradient(circle at top, rgba(37,99,235,0.25), transparent 55%)",
+          backgroundImage:
+            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(99, 102, 241, 0.08), transparent 70%), radial-gradient(ellipse 60% 40% at 90% 100%, rgba(30, 27, 75, 0.06), transparent 70%)",
         }}
       />
 
-      <div className="fixed top-40 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-blue-500/20 blur-[140px] -z-10" />
-
-      <div className="fixed bottom-0 left-0 right-0 h-72 bg-gradient-to-t from-[#09090B] to-transparent -z-10" />
+      {/* Subtle micro-dot grid for depth */}
+      <div
+        className="fixed inset-0 -z-10 opacity-[0.025] pointer-events-none"
+        style={{
+          backgroundImage:
+            "radial-gradient(rgba(255, 255, 255, 0.8) 1px, transparent 1px)",
+          backgroundSize: "28px 28px",
+        }}
+      />
     </>
   );
 }

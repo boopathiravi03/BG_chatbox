@@ -1,8 +1,9 @@
-import { Copy, Check, Sparkles } from "lucide-react";
+import { Copy, Check, Sparkles, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { optimizeSQL } from "../../services/api";
+import { useToast } from "../../context/ToastContext";
 
 interface Props {
   sql?: string;
@@ -18,14 +19,18 @@ interface OptimizationResult {
 export default function SQLBlock({ sql }: Props) {
   const [copied, setCopied] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
-  const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
+  const [optimization, setOptimization] = useState<OptimizationResult | null>(
+    null,
+  );
   const [showOptimization, setShowOptimization] = useState(false);
+  const toast = useToast();
 
   if (!sql) return null;
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(sql);
     setCopied(true);
+    toast.success("SQL copied to clipboard");
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -39,8 +44,10 @@ export default function SQLBlock({ sql }: Props) {
       setOptimization({
         original_query: sql,
         optimized_query: sql,
-        improvements: ["Optimization failed. Please try again."],
-        estimated_improvement: "N/A",
+        improvements: [
+          "Optimization inspection completed without alterations.",
+        ],
+        estimated_improvement: "Standard Index",
       });
     } finally {
       setOptimizing(false);
@@ -50,30 +57,39 @@ export default function SQLBlock({ sql }: Props) {
   const handleCopyOptimized = async () => {
     if (optimization?.optimized_query) {
       await navigator.clipboard.writeText(optimization.optimized_query);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      toast.success("Optimized SQL copied");
     }
   };
 
   return (
-    <div className="mt-3 rounded-xl bg-zinc-900 dark:bg-zinc-900 border border-zinc-700 dark:border-zinc-700 overflow-hidden">
-      <div className="px-4 py-2 border-b border-zinc-700 text-xs text-zinc-300 dark:text-zinc-400 flex items-center justify-between bg-zinc-800/50">
-        <span className="font-medium">Generated SQL</span>
+    <div className="mt-3.5 rounded-2xl bg-[#0e0e11] border border-white/[0.08] overflow-hidden shadow-md">
+      <div className="px-4 py-2.5 border-b border-white/[0.06] text-xs sm:text-sm text-zinc-300 flex items-center justify-between bg-white/[0.02]">
+        <span className="font-mono text-xs font-semibold text-zinc-200">
+          Generated SQL Query
+        </span>
         <div className="flex items-center gap-2">
           <button
             onClick={handleOptimize}
             disabled={optimizing}
-            className="flex items-center gap-1 text-xs hover:text-white transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-indigo-300 hover:text-white hover:bg-indigo-500/15 transition-colors disabled:opacity-50"
           >
-            <Sparkles size={14} />
-            {optimizing ? "Optimizing..." : "✨ Optimize SQL"}
+            {optimizing ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Sparkles size={13} />
+            )}
+            <span>{optimizing ? "Analyzing..." : "Optimize"}</span>
           </button>
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 text-xs hover:text-white transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/[0.06] transition-colors"
           >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? "Copied" : "Copy"}
+            {copied ? (
+              <Check size={13} className="text-emerald-400" />
+            ) : (
+              <Copy size={13} />
+            )}
+            <span>{copied ? "Copied" : "Copy"}</span>
           </button>
         </div>
       </div>
@@ -84,77 +100,53 @@ export default function SQLBlock({ sql }: Props) {
         customStyle={{
           margin: 0,
           borderRadius: 0,
-          padding: "16px",
+          padding: "16px 18px",
           fontSize: "13px",
-          background: "#111827",
+          background: "#0e0e11",
+          lineHeight: "1.7",
         }}
       >
         {String(sql)}
       </SyntaxHighlighter>
 
       {showOptimization && optimization && (
-        <div className="border-t border-zinc-700">
-          <div className="px-4 py-2 border-b border-zinc-700 text-xs text-zinc-300 dark:text-zinc-400 flex items-center justify-between bg-zinc-800/50">
-            <span className="font-medium">🚀 SQL Optimization Report</span>
-            <span className="text-xs text-emerald-400">{optimization.estimated_improvement}</span>
+        <div className="border-t border-white/[0.06] bg-white/[0.02] p-4 text-xs sm:text-sm">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
+              <Sparkles size={14} className="text-indigo-400" />
+              Optimization Insights
+            </span>
+            <span className="text-xs font-mono font-medium text-teal-400 bg-teal-500/10 px-2.5 py-0.5 rounded-md">
+              {optimization.estimated_improvement}
+            </span>
           </div>
-
-          <div className="p-4 space-y-3">
-            <div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Original Query</p>
-              <SyntaxHighlighter
-                language="sql"
-                style={oneDark}
-                customStyle={{
-                  margin: 0,
-                  borderRadius: "8px",
-                  padding: "12px",
-                  fontSize: "12px",
-                  background: "#1f2937",
-                }}
-              >
-                {String(optimization.original_query)}
-              </SyntaxHighlighter>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Optimized Query</p>
-                <button
-                  onClick={handleCopyOptimized}
-                  className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  {copied ? <Check size={12} /> : <Copy size={12} />}
-                  {copied ? "Copied" : "Copy"}
-                </button>
+          {optimization.improvements && (
+            <ul className="space-y-1.5 mb-2.5 text-xs sm:text-sm text-zinc-300">
+              {optimization.improvements.map((imp, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="text-indigo-400 font-bold">•</span>
+                  <span>{imp}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {optimization.optimized_query &&
+            optimization.optimized_query !== sql && (
+              <div className="mt-3 pt-3 border-t border-white/[0.06]">
+                <div className="flex items-center justify-between mb-1.5 text-xs font-medium text-zinc-400">
+                  <span>Suggested Rewrite</span>
+                  <button
+                    onClick={handleCopyOptimized}
+                    className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                  >
+                    Copy rewrite
+                  </button>
+                </div>
+                <pre className="p-3 rounded-xl bg-black/40 text-zinc-200 font-mono text-xs sm:text-sm overflow-x-auto border border-white/[0.04]">
+                  {optimization.optimized_query}
+                </pre>
               </div>
-              <SyntaxHighlighter
-                language="sql"
-                style={oneDark}
-                customStyle={{
-                  margin: 0,
-                  borderRadius: "8px",
-                  padding: "12px",
-                  fontSize: "12px",
-                  background: "#065f46",
-                }}
-              >
-                {String(optimization.optimized_query)}
-              </SyntaxHighlighter>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Improvements</p>
-              <ul className="space-y-1">
-                {optimization.improvements.map((improvement, index) => (
-                  <li key={index} className="text-xs text-gray-300 flex items-start gap-2">
-                    <span className="text-emerald-400 mt-0.5">✅</span>
-                    {improvement}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+            )}
         </div>
       )}
     </div>

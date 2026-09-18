@@ -193,6 +193,138 @@ User: {user_message}
     }
 
 
+def _handle_no_database_request(user_message: str) -> dict:
+    """
+    Handle user requests when no database is currently connected.
+    Accurately supports:
+    1. Greetings & general conversation (natural AI chat)
+    2. Database connection help & instructions
+    3. Database-dependent operations (friendly guidance to connect first)
+    """
+    msg_clean = user_message.lower().strip()
+
+    # Fast deterministic greeting detection
+    greetings = {"hi", "hello", "hey", "hii", "heyy", "good morning", "good afternoon", "good evening", "howdy", "sup"}
+    if msg_clean in greetings or re.match(r"^(hi|hello|hey|greetings|good morning|good afternoon|good evening)[!.\s]*$", msg_clean):
+        explanation = (
+            "Hello! 👋 I'm **BG AI**, your AI-powered database assistant.\n\n"
+            "I can help you explore databases, generate SQL queries, analyze data, create visualizations, "
+            "and understand database relationships using natural language.\n\n"
+            "To get started, connect or upload your database using the **Connect the Database** button.\n\n"
+            "Once connected, you can ask me questions about your data. How can I help you today?"
+        )
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": True,
+                "columns": [],
+                "rows": [],
+                "execution_time_ms": 0,
+                "rows_returned": 0,
+            },
+            "diagram": None,
+            "analytics": None,
+            "explanation": explanation,
+            "followups": [
+                "How do I connect a database?",
+                "What databases do you support?",
+                "What can BG AI do?",
+                "What is SQL?",
+            ],
+        }
+
+    # Use LLM for intelligent conversation without database connection
+    prompt = f"""You are BG AI, a friendly, intelligent AI-powered database assistant.
+IMPORTANT: Currently, NO database is connected to the application.
+
+User's message: "{user_message}"
+
+Respond naturally, professionally, and helpfully following these instructions:
+
+1. GENERAL GREETINGS / CASUAL CHAT / COURTESY:
+   - Greet the user warmly and introduce yourself as BG AI.
+   - Mention your capabilities: conversational SQL generation, database exploration, data visualization, charts, ER diagrams, and CRUD workflows with safeguards.
+   - Guide them to connect a database using the "Connect the Database" button when they are ready to explore data.
+
+2. WHO ARE YOU / WHAT CAN YOU DO / ABOUT BG AI / HELP:
+   - Explain what BG AI is: an AI-powered conversational database intelligence and visualization platform.
+   - List key features: Natural Language Queries, AI SQL Generation, Data Visualization, ER Diagrams, and Multi-Database Support (SQLite, MySQL, PostgreSQL).
+   - Explain how to get started (using "Connect the Database").
+
+3. HOW TO CONNECT A DATABASE / SUPPORTED ENGINES:
+   - Provide clear, actionable instructions:
+     • SQLite: Click "Connect the Database" and upload a local .db, .sqlite, or .sqlite3 file.
+     • MySQL: Click "Connect the Database" → MySQL tab and provide host (localhost), port (3306), database name, username, and password.
+     • PostgreSQL: Click "Connect the Database" → PostgreSQL tab and provide host (localhost), port (5432), database name, username, and password.
+
+4. DATABASE DATA OPERATIONS (e.g. "show all customers", "list products", "analyze my database", "show monthly sales", "add a customer", "delete record"):
+   - Acknowledge what they want to do warmly (e.g. "I can help you retrieve customer records!").
+   - Clearly explain that no database is currently connected.
+   - Invite them to connect or upload their database using the "Connect the Database" button so you can run the query and visualize their data.
+   - NEVER output technical error messages or stack traces.
+
+5. EDUCATIONAL / GENERAL QUESTIONS (e.g. "what is SQL?", "what is a primary key?"):
+   - Answer the educational question accurately, clearly, and concisely.
+
+Keep responses friendly, helpful, well-formatted with Markdown, and free from robotic errors.
+"""
+
+    try:
+        explanation = ask_groq(prompt).strip()
+    except Exception:
+        # Fallback if Groq is temporarily unreachable
+        if any(w in msg_clean for w in ["connect", "upload", "mysql", "postgres", "sqlite", "how do i"]):
+            explanation = (
+                "You can connect or upload a database to BG AI in 3 ways:\n\n"
+                "1. **SQLite**: Click **Connect the Database** and upload a `.db`, `.sqlite`, or `.sqlite3` file.\n"
+                "2. **MySQL**: Click **Connect the Database** → **MySQL** tab and enter your host (`localhost`), port (`3306`), database name, and credentials.\n"
+                "3. **PostgreSQL**: Click **Connect the Database** → **PostgreSQL** tab and enter your host, port (`5432`), database name, and credentials.\n\n"
+                "Once connected, you can ask queries in natural language!"
+            )
+        elif any(w in msg_clean for w in ["who are you", "what can you do", "help", "what is bg ai", "explain bg ai"]):
+            explanation = (
+                "I am **BG AI**, an AI-powered conversational database assistant. I can help you:\n\n"
+                "• Ask questions about your database using natural language\n"
+                "• Automatically generate and optimize SQL queries\n"
+                "• Visualize data through interactive charts and analytics dashboards\n"
+                "• Explore schema structures and Entity Relationship (ER) diagrams\n"
+                "• Perform safe insert, update, and delete operations with confirmation safeguards\n\n"
+                "To get started, please connect or upload your database using the **Connect the Database** button!"
+            )
+        elif any(w in msg_clean for w in ["show", "list", "select", "find", "get", "analyze", "count", "sales", "customer", "order", "table"]):
+            explanation = (
+                "I'd be glad to help you with that! However, no database is currently connected.\n\n"
+                "Please connect or upload your database using the **Connect the Database** button, "
+                "and I'll help you explore and analyze your data."
+            )
+        else:
+            explanation = (
+                "Hello! 👋 I'm **BG AI**, your conversational database intelligence assistant. "
+                "Connect or upload a database using the **Connect the Database** button to start querying and visualizing your data, "
+                "or feel free to ask me general questions!"
+            )
+
+    return {
+        "generated_sql": "",
+        "result": {
+            "success": True,
+            "columns": [],
+            "rows": [],
+            "execution_time_ms": 0,
+            "rows_returned": 0,
+        },
+        "diagram": None,
+        "analytics": None,
+        "explanation": explanation,
+        "followups": [
+            "How do I connect a database?",
+            "What databases do you support?",
+            "What can BG AI do?",
+            "What is SQL?",
+        ],
+    }
+
+
 def _get_table_columns(table_name: str, schema: dict) -> list[str]:
     return list(schema.get(table_name, {}).keys())
 
@@ -463,24 +595,41 @@ def _clean_generated_sql(raw_sql: str) -> str:
     sql = re.sub(r"```(?:sql|mysql|postgresql)?", "", sql, flags=re.IGNORECASE)
     sql = sql.replace("```", "").strip()
 
-    # Find the first actual SQL statement
+    # Find the first actual SQL statement.
+    #
+    # IMPORTANT: the statement keyword must be matched in a way that
+    # cannot be satisfied by ordinary English. A bare \bWITH\b once
+    # matched the prose "...I can help with that." and produced the
+    # bogus statement "with that.". WITH is therefore only accepted
+    # when it begins a real common table expression:
+    #
+    #     WITH recent_orders AS (
+    #     WITH RECURSIVE tree AS (
     match = re.search(
-        r"\b(SELECT|WITH|INSERT|UPDATE|DELETE|PRAGMA)\b",
+        r"\bSELECT\b"
+        r"|\bINSERT\b"
+        r"|\bUPDATE\b"
+        r"|\bDELETE\b"
+        r"|\bPRAGMA\b"
+        r"|\bWITH\s+(?:RECURSIVE\s+)?"
+        r"[\"`\[]?[A-Za-z_][A-Za-z0-9_]*[\"`\]]?\s+AS\s*\(",
         sql,
         flags=re.IGNORECASE,
     )
 
     if match:
         sql = sql[match.start():]
+        sql = re.split(
+            r"\n\s*(Explanation|Here is|This query|Note:)\s*:",
+            sql,
+            flags=re.IGNORECASE,
+        )[0]
+        return sql.strip().rstrip(";").strip()
 
-    # Remove common trailing explanation
-    sql = re.split(
-        r"\n\s*(Explanation|Here is|This query|Note:)\s*:",
-        sql,
-        flags=re.IGNORECASE,
-    )[0]
-
-    return sql.strip().rstrip(";").strip()
+    # No SQL statement was found. The model replied with prose
+    # (typically a clarification request). Return an empty string so
+    # the caller can respond sensibly instead of executing the prose.
+    return ""
 
 
 def _normalize_sql_for_active_database(
@@ -3601,9 +3750,20 @@ def run_agent(
     input_values: dict | None = None,
     pending_insert: bool = False,
 ):
-    schema = get_schema()
+    try:
+        schema = get_schema()
+    except Exception:
+        schema = None
+
+    if schema is None:
+        return _handle_no_database_request(user_message)
 
     if not schema:
+        msg_clean = user_message.lower().strip()
+        greetings = {"hi", "hello", "hey", "hii", "heyy", "good morning", "good afternoon", "good evening", "howdy", "sup"}
+        if msg_clean in greetings or re.match(r"^(hi|hello|hey|greetings|good morning|good afternoon|good evening)[!.\s]*$", msg_clean):
+            return _handle_no_database_request(user_message)
+
         return {
             "generated_sql": "",
             "result": {
@@ -3874,6 +4034,47 @@ SQL RULES:
                 "input_request": None,
                 "explanation": f"BG AI encountered an error: {str(e)}",
                 "followups": [],
+            }
+
+        # ---------------------------------------------------------
+        # No SQL statement was produced.
+        #
+        # The model replied in prose (normally asking for
+        # clarification). Never pass that prose to the validator:
+        # its first word would be reported as an unsupported
+        # "operation".
+        #
+        # Write requests are handled deterministically before this
+        # point, so reaching here means the request was a read
+        # request the model could not translate.
+        # ---------------------------------------------------------
+        if not sql:
+            return {
+                "generated_sql": "",
+                "result": {
+                    "success": False,
+                    "columns": [],
+                    "rows": [],
+                    "rows_returned": 0,
+                    "error": (
+                        "I could not turn that request into a "
+                        "database query."
+                    ),
+                },
+                "chart": None,
+                "diagram": None,
+                "analytics": None,
+                "input_request": None,
+                "explanation": (
+                    "I couldn't turn that into a database query.\n\n"
+                    "**To read data, try:**\n"
+                    "• *show all customers*\n\n"
+                    "**To change data, try:**\n"
+                    "• *add a new customer*\n"
+                    "• *update customer 1 city to Salem*\n"
+                    "• *delete customer 3*"
+                ),
+                "followups": _get_followups(user_message),
             }
 
         validation = validate_sql(sql)

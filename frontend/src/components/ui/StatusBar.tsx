@@ -1,41 +1,76 @@
 type Status = "ready" | "thinking" | "executing" | "done" | "error";
 
 const statusConfig = {
-  ready: { color: "bg-green-500", text: "text-green-400", label: "Ready" },
-  thinking: { color: "bg-yellow-500", text: "text-yellow-400", label: "BG Thinking..." },
-  executing: { color: "bg-blue-500", text: "text-blue-400", label: "Executing SQL..." },
-  done: { color: "bg-green-500", text: "text-green-400", label: "Finished" },
-  error: { color: "bg-red-500", text: "text-red-400", label: "Error" },
+  ready: { color: "bg-emerald-400", text: "text-emerald-400", label: "Ready" },
+  thinking: {
+    color: "bg-amber-400",
+    text: "text-amber-400",
+    label: "Thinking...",
+  },
+  executing: {
+    color: "bg-indigo-400",
+    text: "text-indigo-400",
+    label: "Executing SQL...",
+  },
+  done: {
+    color: "bg-emerald-400",
+    text: "text-emerald-400",
+    label: "Completed",
+  },
+  error: { color: "bg-rose-400", text: "text-rose-400", label: "Failed" },
 };
 
-export default function StatusBar({ status }: { status: Status }) {
+interface StatusBarProps {
+  status: Status;
+  dbConnected?: boolean;
+  dbType?: string | null;
+}
+
+const dbTypeLabel = (type?: string | null) => {
+  if (!type || type === "none") return null;
+  return type === "mysql"
+    ? "MySQL"
+    : type === "postgres"
+      ? "PostgreSQL"
+      : type === "sqlite"
+        ? "SQLite"
+        : null;
+};
+
+export default function StatusBar({
+  status,
+  dbConnected,
+  dbType,
+}: StatusBarProps) {
   const current = statusConfig[status];
+  const connectedDb = dbTypeLabel(dbType);
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 dark:bg-[#0a0a0a]/80 bg-white/80 backdrop-blur-xl">
-      <div className="flex items-center gap-4 text-xs">
+    <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.06] bg-[#09090b]/80 backdrop-blur-md">
+      <div className="flex items-center gap-5 text-xs sm:text-sm font-medium">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2 w-2">
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${current.color} opacity-75`}></span>
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${current.color}`}></span>
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${current.color}`}
+            ></span>
           </span>
           <span className={current.text}>{current.label}</span>
         </div>
 
-        <div className="flex items-center gap-1 text-green-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-green-500"></span>
-          BG Connected
+        <div className="flex items-center gap-2 text-zinc-300">
+          <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
+          <span>Engine Active</span>
         </div>
 
-        <div className="flex items-center gap-1 text-green-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-green-500"></span>
-          SQLite Connected
-        </div>
+        {connectedDb && dbConnected && (
+          <div className="flex items-center gap-2 text-zinc-200">
+            <span className="h-2 w-2 rounded-full bg-teal-400"></span>
+            <span>{connectedDb} Connected</span>
+          </div>
+        )}
       </div>
 
-      <div className="text-xs dark:text-gray-500 text-gray-700">
-        BG AI v1.0.0
-      </div>
+      <div className="text-xs text-zinc-400 font-mono">v1.0</div>
     </div>
   );
 }

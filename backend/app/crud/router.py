@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.agent.groq_agent import ask_groq
+from app.crud.columns import (
+    build_insert_form_fields,
+    required_insert_columns,
+)
 from app.crud.confirmation import store_pending
+from app.crud.deterministic import build_deterministic_intent
 from app.crud.intent import parse_crud_intent
 from app.crud.matcher import match_records, quote_identifier
 from app.crud.planner import (
@@ -75,6 +80,19 @@ def handle_crud_request(
     )
 
     if not intent:
+        # Deterministic fallback.
+        #
+        # A write request must never leak into the read-only SQL
+        # pipeline just because the LLM abstained. The LLM intent
+        # parser is required to return None for ambiguous requests,
+        # and a plain "add a new customer" is always ambiguous
+        # (the user has not supplied the column values yet).
+        intent = build_deterministic_intent(
+            user_message=message,
+            schema=schema,
+        )
+
+    if not intent:
         return None
 
     operation = intent["operation"]
@@ -132,48 +150,10 @@ def _handle_create(
         }
 
     table_schema = schema.get(table, {})
-    fields = []
 
-    for column_name, metadata in table_schema.items():
-        name = column_name.lower()
-        if name in {"created_at", "updated_at", "deleted_at"}:
-            continue
-        if metadata.get("primary_key"):
-            autoincrement = metadata.get("autoincrement")
-            default_value = metadata.get("default")
-            server_default = metadata.get("server_default")
-
-            if (
-                autoincrement is True
-                or default_value is not None
-                or server_default is not None
-            ):
-                continue
-
-        column_type = str(metadata.get("type", "")).lower()
-        field_type = "text"
-        if "int" in column_type:
-            field_type = "number"
-        elif any(x in column_type for x in ["decimal", "numeric", "float", "double", "real"]):
-            field_type = "number"
-        elif "bool" in column_type:
-            field_type = "boolean"
-        elif any(x in column_type for x in ["date", "time"]):
-            field_type = "date"
-        if "email" in name:
-            field_type = "email"
-
-        fields.append({
-            "name": column_name,
-            "label": column_name.replace("_", " ").title(),
-            "type": field_type,
-            "required": (
-                not metadata.get("nullable", True)
-                and metadata.get("default") is None
-                and metadata.get("server_default") is None
-                and not metadata.get("primary_key")
-            ),
-        })
+    # Auto-generated columns (integer primary keys, audit columns)
+    # are omitted entirely by build_insert_form_fields.
+    fields = build_insert_form_fields(table_schema)
 
     from app.agent.orchestrator import conversation_state
 
@@ -453,37 +433,9 @@ def _handle_insert_form(
                 continue
         allowed_values[supplied_column] = value
 
-    required_fields = []
-
-    for column, metadata in table_schema.items():
-
-        column_lower = column.lower()
-
-        if column_lower in {
-            "created_at",
-            "updated_at",
-            "deleted_at",
-        }:
-            continue
-
-        if metadata.get("primary_key"):
-            if (
-                metadata.get("autoincrement") is True
-                or metadata.get("default") is not None
-                or metadata.get("server_default") is not None
-            ):
-                continue
-
-        if metadata.get("nullable", True):
-            continue
-
-        if metadata.get("default") is not None:
-            continue
-
-        if metadata.get("server_default") is not None:
-            continue
-
-        required_fields.append(column)
+    # Uses the same rules that built the form, so the form and its
+    # validation can never disagree again.
+    required_fields = required_insert_columns(table_schema)
 
     missing = [field for field in required_fields if field not in allowed_values]
 
