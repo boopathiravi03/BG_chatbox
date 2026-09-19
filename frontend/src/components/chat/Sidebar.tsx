@@ -225,26 +225,35 @@ export default function Sidebar({
   return (
     <aside
       className={`h-full ${
-        collapsed ? "w-[68px]" : "w-[240px]"
-      } border-r border-white/[0.08] bg-[#0e0e11] text-zinc-200 flex flex-col select-none transition-[width] duration-300 ease-in-out relative z-30 shrink-0 overflow-hidden`}
+        collapsed ? "w-[72px]" : "w-[280px]"
+      } border-r border-white/[0.08] bg-[#0c0c0f] text-zinc-200 flex flex-col select-none transition-[width] duration-300 ease-in-out relative z-30 shrink-0 overflow-hidden`}
     >
       {/* Brand Header */}
       <div
-        className={`p-3.5 sm:p-4 flex items-center ${
-          collapsed ? "justify-center flex-col gap-2.5" : "justify-between"
-        } border-b border-white/[0.04] shrink-0`}
+        className={`p-4 sm:p-4.5 flex items-center ${
+          collapsed ? "justify-center flex-col gap-3" : "justify-between"
+        } border-b border-white/[0.06] shrink-0`}
       >
         {!collapsed ? (
           <>
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 text-indigo-400 shadow-sm shrink-0">
-                <Database size={18} />
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600/15 border border-indigo-500/30 p-2 shadow-lg shadow-indigo-950/50 shrink-0 hover:border-indigo-400/50 hover:bg-indigo-600/25 transition-all group">
+                <img
+                  src="/bg-logo.png"
+                  alt="BG AI Logo"
+                  className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)] group-hover:scale-105 transition-transform"
+                />
               </div>
               <div className="truncate">
-                <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-1.5">
-                  BG <span className="text-indigo-400 font-extrabold">AI</span>
-                </h1>
-                <p className="text-xs text-zinc-400 font-medium truncate">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-black tracking-tight text-white leading-none">
+                    BG <span className="text-indigo-400">AI</span>
+                  </h1>
+                  <span className="text-xs font-mono px-2 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/35 text-indigo-300 font-bold">
+                    v1.0
+                  </span>
+                </div>
+                <p className="text-xs sm:text-[13px] text-zinc-300 font-semibold truncate mt-1 tracking-wide">
                   Database Intelligence
                 </p>
               </div>
@@ -254,28 +263,32 @@ export default function Sidebar({
               {onToggleCollapse && (
                 <button
                   onClick={onToggleCollapse}
-                  className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                  className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
                   title="Collapse sidebar (Ctrl+\)"
                 >
-                  <PanelLeftClose size={17} />
+                  <PanelLeftClose size={18} />
                 </button>
               )}
               {onClose && (
                 <button
                   onClick={onClose}
-                  className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                  className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
                   title="Close sidebar"
                 >
-                  <X size={17} />
+                  <X size={18} />
                 </button>
               )}
             </div>
           </>
         ) : (
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-2.5">
             <SidebarTooltip label="BG AI Database Intelligence">
-              <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 text-indigo-400 shadow-sm">
-                <Database size={18} />
+              <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600/15 border border-indigo-500/30 p-2 shadow-lg shadow-indigo-950/50 hover:border-indigo-400/50 transition-all">
+                <img
+                  src="/bg-logo.png"
+                  alt="BG AI Logo"
+                  className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)]"
+                />
               </div>
             </SidebarTooltip>
 
@@ -283,9 +296,9 @@ export default function Sidebar({
               <SidebarTooltip label="Expand sidebar (Ctrl+\)">
                 <button
                   onClick={onToggleCollapse}
-                  className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                  className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
                 >
-                  <PanelLeftOpen size={16} />
+                  <PanelLeftOpen size={18} />
                 </button>
               </SidebarTooltip>
             )}
@@ -307,7 +320,7 @@ export default function Sidebar({
             >
               <button
                 onClick={onNewChat}
-                className="group flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+                className="group flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white text-sm font-semibold shadow-md shadow-indigo-600/25 transition-all cursor-pointer"
               >
                 <div className="flex items-center gap-2.5">
                   <Plus size={16} />
@@ -326,7 +339,7 @@ export default function Sidebar({
                   e.stopPropagation();
                   setShowUploadMenu(!showUploadMenu);
                 }}
-                className={`flex items-center justify-between w-full px-3.5 py-2 rounded-xl border text-sm font-medium transition-all cursor-pointer ${
+                className={`flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl border text-sm font-medium transition-all cursor-pointer ${
                   showUploadMenu
                     ? "bg-white/[0.08] border-white/20 text-white"
                     : "bg-white/[0.02] hover:bg-white/[0.06] border-white/[0.08] text-zinc-200"
@@ -334,7 +347,7 @@ export default function Sidebar({
               >
                 <div className="flex items-center gap-2.5 truncate">
                   <Database size={15} className="text-zinc-400 shrink-0" />
-                  <span className="truncate">Connect the Database</span>
+                  <span className="truncate">Connect Database</span>
                 </div>
                 <ChevronDown
                   size={14}
@@ -352,40 +365,55 @@ export default function Sidebar({
                     initial="hidden"
                     animate="visible"
                     exit="exit"
-                    className="absolute top-full left-0 right-0 mt-1.5 p-1.5 rounded-xl bg-[#141418] border border-white/10 shadow-2xl shadow-black/80 z-50 text-sm"
+                    className="absolute top-full left-0 right-0 mt-1.5 p-1.5 rounded-xl bg-[#141418] border border-white/10 shadow-2xl shadow-black/90 z-50 text-sm"
                   >
                     <button
                       onClick={() => {
                         setShowUploadMenu(false);
                         setShowConnectModal("sqlite");
                       }}
-                      className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-left text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors text-xs cursor-pointer"
+                      className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-left text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors text-xs cursor-pointer group"
                     >
-                      <Database
-                        size={14}
-                        className="text-indigo-400 shrink-0"
-                      />
-                      <span>Upload SQLite (.db)</span>
+                      <div className="flex items-center gap-2.5 truncate">
+                        <Database
+                          size={14}
+                          className="text-indigo-400 shrink-0"
+                        />
+                        <span className="truncate">SQLite File</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-zinc-500 group-hover:text-zinc-300">
+                        .db
+                      </span>
                     </button>
                     <button
                       onClick={() => {
                         setShowUploadMenu(false);
                         setShowConnectModal("mysql");
                       }}
-                      className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-left text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors text-xs cursor-pointer"
+                      className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-left text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors text-xs cursor-pointer group"
                     >
-                      <Server size={14} className="text-teal-400 shrink-0" />
-                      <span>Connect MySQL</span>
+                      <div className="flex items-center gap-2.5 truncate">
+                        <Server size={14} className="text-teal-400 shrink-0" />
+                        <span className="truncate">MySQL</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-zinc-500 group-hover:text-zinc-300">
+                        3306
+                      </span>
                     </button>
                     <button
                       onClick={() => {
                         setShowUploadMenu(false);
                         setShowConnectModal("postgres");
                       }}
-                      className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-left text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors text-xs cursor-pointer"
+                      className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-left text-zinc-200 hover:text-white hover:bg-white/[0.06] transition-colors text-xs cursor-pointer group"
                     >
-                      <Server size={14} className="text-sky-400 shrink-0" />
-                      <span>Connect PostgreSQL</span>
+                      <div className="flex items-center gap-2.5 truncate">
+                        <Server size={14} className="text-sky-400 shrink-0" />
+                        <span className="truncate">PostgreSQL</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-zinc-500 group-hover:text-zinc-300">
+                        5432
+                      </span>
                     </button>
                   </motion.div>
                 )}
@@ -439,9 +467,9 @@ export default function Sidebar({
                           return (
                             <div
                               key={session.id}
-                              className={`group relative flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-all ${
+                              className={`group relative flex items-center justify-between pl-3.5 pr-2.5 py-2 rounded-xl text-sm transition-all ${
                                 isActive
-                                  ? "bg-white/[0.08] text-white font-medium border border-white/[0.08] shadow-sm"
+                                  ? "bg-white/[0.08] text-white font-medium border border-white/[0.1] shadow-sm before:absolute before:left-1 before:top-2 before:bottom-2 before:w-1 before:rounded-full before:bg-indigo-500"
                                   : "text-zinc-300 hover:text-white hover:bg-white/[0.04]"
                               }`}
                             >
@@ -534,10 +562,10 @@ export default function Sidebar({
                   />
                 </span>
                 <span
-                  className={`truncate ${
+                  className={`truncate font-medium text-sm ${
                     isConnected
-                      ? "text-zinc-100 font-medium"
-                      : "text-zinc-400 group-hover:text-zinc-200"
+                      ? "text-emerald-300 font-semibold"
+                      : "text-zinc-300 group-hover:text-white"
                   }`}
                 >
                   {getDbStatusLabel()}
@@ -545,14 +573,14 @@ export default function Sidebar({
               </div>
               <ChevronRight
                 size={14}
-                className="text-zinc-500 group-hover:translate-x-0.5 transition-transform shrink-0"
+                className="text-zinc-400 group-hover:translate-x-0.5 transition-transform shrink-0"
               />
             </button>
 
             {/* About BG AI */}
             <button
               onClick={onOpenAbout}
-              className="flex items-center gap-2.5 w-full px-3.5 py-2 rounded-xl text-sm text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] transition-colors group cursor-pointer"
+              className="flex items-center gap-2.5 w-full px-3.5 py-2.5 rounded-xl text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/[0.05] transition-colors group cursor-pointer"
             >
               <Info
                 size={16}
@@ -564,12 +592,18 @@ export default function Sidebar({
             {/* Theme Toggle */}
             <button
               onClick={toggleTheme}
-              className="flex items-center gap-2.5 w-full px-3.5 py-2 rounded-xl text-sm text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] transition-colors cursor-pointer"
+              className="flex items-center gap-2.5 w-full px-3.5 py-2.5 rounded-xl text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/[0.05] transition-colors cursor-pointer"
             >
               {theme === "dark" ? (
-                <Sun size={16} className="shrink-0" />
+                <Sun
+                  size={16}
+                  className="shrink-0 text-zinc-400 group-hover:text-amber-400"
+                />
               ) : (
-                <Moon size={16} className="shrink-0" />
+                <Moon
+                  size={16}
+                  className="shrink-0 text-zinc-400 group-hover:text-indigo-400"
+                />
               )}
               <span>
                 {theme === "dark" ? "Light Appearance" : "Dark Appearance"}

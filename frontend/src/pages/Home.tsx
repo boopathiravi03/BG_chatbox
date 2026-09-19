@@ -29,11 +29,6 @@ export default function Home() {
   const [connectModalType, setConnectModalType] = useState<
     "sqlite" | "mysql" | "postgres"
   >("sqlite");
-  const [canReturnBack, setCanReturnBack] = useState(false);
-  const previousStateRef = useRef<{
-    messages: Message[];
-    activeSessionId: string | null;
-  } | null>(null);
   const loadedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -76,8 +71,6 @@ export default function Home() {
     setActiveSessionId(null);
     setStatus("ready");
     setShowAbout(false);
-    setCanReturnBack(false);
-    previousStateRef.current = null;
   };
 
   const [sessionId] = useState(() => {
@@ -271,30 +264,9 @@ export default function Home() {
   };
 
   const handleHistoryClick = (session: ChatSession) => {
-    previousStateRef.current = {
-      messages,
-      activeSessionId,
-    };
     setActiveSessionId(session.id);
     setMessages(session.messages);
     setShowAbout(false);
-    setCanReturnBack(true);
-  };
-
-  const handleReturnBack = () => {
-    if (showAbout) {
-      setShowAbout(false);
-      return;
-    }
-    if (previousStateRef.current) {
-      setMessages(previousStateRef.current.messages);
-      setActiveSessionId(previousStateRef.current.activeSessionId);
-      previousStateRef.current = null;
-      setCanReturnBack(false);
-    } else if (activeSessionId) {
-      handleNewChat();
-      setCanReturnBack(false);
-    }
   };
 
   const [uploadVersion, setUploadVersion] = useState(0);
@@ -437,11 +409,6 @@ export default function Home() {
       onOpenDatabase={() => setShowDatabase(true)}
       onOpenAbout={() => setShowAbout(true)}
       isAboutView={showAbout}
-      onReturnBack={
-        showAbout || canReturnBack || activeSessionId
-          ? handleReturnBack
-          : undefined
-      }
     >
       {showAbout ? (
         <AboutModal isEmbedded={true} onClose={() => setShowAbout(false)} />

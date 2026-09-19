@@ -1,16 +1,12 @@
 import {
-  Database,
   Server,
   HardDrive,
   BarChart3,
   ShieldCheck,
-  Sparkles,
   ArrowRight,
   Terminal,
   Layers,
   HelpCircle,
-  FileSpreadsheet,
-  CheckCircle2,
   Plug,
 } from "lucide-react";
 import ClickSpark from "../reactbits/ClickSpark";
@@ -42,17 +38,21 @@ export default function DatabaseOnboardingCard({
   return (
     <div className="space-y-6 text-zinc-100">
       {/* 1. INTRO PICTORIAL HERO */}
-      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-b from-indigo-950/40 via-[#14141a] to-[#121216] border border-indigo-500/20 shadow-xl shadow-black/40">
+      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-b from-indigo-950/40 via-[#14141a] to-[#121216] border border-indigo-500/25 shadow-xl shadow-black/40">
         <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0 shadow-lg shadow-indigo-500/10">
-            <Sparkles size={24} />
+          <div className="w-12 h-12 rounded-2xl overflow-hidden border border-indigo-500/35 bg-white/[0.06] p-1 shadow-lg shadow-indigo-500/10 shrink-0">
+            <img
+              src="/bg-logo.png"
+              alt="BG AI Logo"
+              className="w-full h-full object-contain rounded-xl"
+            />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                 Hello! Welcome to BG AI
               </h2>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-[11px] font-semibold text-indigo-300">
+              <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-xs font-bold text-indigo-300">
                 Database Intelligence
               </span>
             </div>

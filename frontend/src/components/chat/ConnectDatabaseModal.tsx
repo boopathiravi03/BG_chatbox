@@ -11,7 +11,6 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Sparkles,
   ArrowRight,
   ShieldCheck,
   HardDrive,
@@ -23,7 +22,6 @@ import {
 } from "../../lib/motion";
 import { useToast } from "../../context/ToastContext";
 import ClickSpark from "../reactbits/ClickSpark";
-import SpotlightCard from "../reactbits/SpotlightCard";
 
 interface Props {
   onClose: () => void;

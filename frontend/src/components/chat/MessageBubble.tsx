@@ -14,7 +14,6 @@ import DatabaseOnboardingCard from "./DatabaseOnboardingCard";
 import {
   Copy,
   Check,
-  Bot,
   User,
   ChevronDown,
   ChevronRight,
@@ -82,24 +81,13 @@ export default function MessageBubble({
   const rowCount = rows.length;
   const columnCount = columns.length;
 
-  const isIntroOrNoDb =
+  const isInitialGreeting =
     !isUser &&
     !dataAvailable &&
     !message.requires_confirmation &&
     !message.input_request &&
-    (message.content
-      .toLowerCase()
-      .includes("friendly ai-powered database assistant") ||
-      message.content
-        .toLowerCase()
-        .includes("friendly, intelligent ai-powered database assistant") ||
-      message.content.toLowerCase().includes("welcome to bg ai") ||
-      (message.content.toLowerCase().includes("no database") &&
-        (message.content.toLowerCase().includes("show the database") ||
-          message.content.toLowerCase().includes("supported engines") ||
-          message.content.toLowerCase().includes("connect a database") ||
-          message.content.toLowerCase().includes("let's get started") ||
-          message.content.toLowerCase().includes("connect the database"))));
+    message.content.includes("Hello! 👋 I'm **BG AI**") &&
+    message.content.includes("To get started, connect or upload your database");
 
   return (
     <motion.div
@@ -111,31 +99,37 @@ export default function MessageBubble({
       <div
         className={`rounded-2xl transition-all ${
           isUser
-            ? "max-w-[88%] sm:max-w-2xl md:max-w-3xl bg-[#1c1c22] text-zinc-100 border border-white/[0.08] px-4.5 py-3 sm:px-5 sm:py-3.5 shadow-md shadow-black/20"
-            : "w-full bg-[#121215] text-zinc-100 border border-white/[0.07] p-4.5 sm:p-6 shadow-lg shadow-black/30"
+            ? "max-w-[85%] sm:max-w-2xl md:max-w-3xl bg-[#16161a] text-[#ededed] border border-white/[0.1] px-5 py-3.5 shadow-sm"
+            : "w-full bg-[#0d0d10] text-[#ededed] border border-white/[0.08] p-5 sm:p-6 shadow-xl shadow-black/30"
         }`}
       >
         {/* Bubble Header */}
-        <div className="text-xs sm:text-sm text-zinc-400 mb-3 flex items-center justify-between gap-4 border-b border-white/[0.04] pb-2">
-          <span className="flex items-center gap-2 font-semibold">
+        <div className="text-xs text-zinc-400 mb-3 flex items-center justify-between gap-4 border-b border-white/[0.04] pb-2.5">
+          <span className="flex items-center gap-2.5 font-semibold">
             {isUser ? (
               <>
-                <User size={15} className="text-zinc-400" />
-                <span className="text-zinc-200">You</span>
+                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-white/[0.08] border border-white/15 text-zinc-200 shadow-sm">
+                  <User size={14} />
+                </div>
+                <span className="text-sm font-bold text-zinc-200">You</span>
               </>
             ) : (
               <>
-                <div className="flex items-center justify-center w-5 h-5 rounded-md bg-indigo-500/20 text-indigo-400">
-                  <Bot size={13} />
+                <div className="flex items-center justify-center w-6 h-6 rounded-lg overflow-hidden border border-white/15 bg-white/[0.05] p-0.5 shadow-sm">
+                  <img
+                    src="/bg-logo.png"
+                    alt="BG AI Logo"
+                    className="w-full h-full object-contain rounded-md"
+                  />
                 </div>
-                <span className="text-white font-bold tracking-tight">
-                  BG AI
+                <span className="text-sm sm:text-base font-black text-white tracking-tight">
+                  BG <span className="text-indigo-400">AI</span>
                 </span>
               </>
             )}
           </span>
           {message.timestamp && (
-            <span className="text-xs text-zinc-400 font-mono">
+            <span className="text-[11px] text-zinc-400 font-mono">
               {message.timestamp}
             </span>
           )}
@@ -394,8 +388,13 @@ export default function MessageBubble({
               <span>{copied ? "Copied" : "Copy Response"}</span>
             </button>
           </div>
-        ) : isIntroOrNoDb ? (
+        ) : isInitialGreeting ? (
           <div>
+            <div className="text-[15px] sm:text-base leading-relaxed text-zinc-200 mb-5">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
             <DatabaseOnboardingCard
               onConnectDatabase={onConnectDatabase}
               onSend={onSend}

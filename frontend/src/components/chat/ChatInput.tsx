@@ -219,7 +219,7 @@ export default function ChatInput({
               <Mic size={isHero ? 19 : 18} />
             </button>
 
-            <span className="text-xs text-zinc-500 hidden sm:inline px-1 font-medium select-none">
+            <span className="text-xs sm:text-[13px] text-zinc-400 hidden sm:inline px-1.5 font-medium select-none">
               Enter to send, Shift+Enter for new line
             </span>
 

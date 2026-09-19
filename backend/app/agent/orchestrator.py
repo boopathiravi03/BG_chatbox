@@ -3761,7 +3761,16 @@ def run_agent(
     if not schema:
         msg_clean = user_message.lower().strip()
         greetings = {"hi", "hello", "hey", "hii", "heyy", "good morning", "good afternoon", "good evening", "howdy", "sup"}
-        if msg_clean in greetings or re.match(r"^(hi|hello|hey|greetings|good morning|good afternoon|good evening)[!.\s]*$", msg_clean):
+        is_general_query = (
+            msg_clean in greetings
+            or bool(re.match(r"^(hi|hello|hey|greetings|good morning|good afternoon|good evening)[!.\s]*$", msg_clean))
+            or any(phrase in msg_clean for phrase in [
+                "what is bg ai", "who are you", "what can you do", "help", "how do i use",
+                "how to use", "how do i connect", "how to connect", "about bg ai", "what is sql",
+                "features", "capabilities", "what is a primary key"
+            ])
+        )
+        if is_general_query:
             return _handle_no_database_request(user_message)
 
         return {
@@ -3776,10 +3785,13 @@ def run_agent(
             "diagram": None,
             "analytics": None,
             "explanation": (
-                "No usable tables were found in the currently "
-                "connected database."
+                "The connected database has no tables yet. "
+                "Please connect a database with tables or upload a populated SQLite file (.db) to start querying."
             ),
-            "followups": [],
+            "followups": [
+                "How do I connect a database?",
+                "What can BG AI do?",
+            ],
         }
 
     # ---------------------------------------------------------

@@ -1,19 +1,10 @@
 import Sidebar from "../components/chat/Sidebar";
 import Background from "../components/ui/Background";
-import AnnouncementBadge from "../components/ui/AnnouncementBadge";
 import ModelSelector from "../components/ui/ModelSelector";
-import StatusBar from "../components/ui/StatusBar";
 import DatabaseOverview from "../components/dashboard/DatabaseOverview";
 import type { ChatSession } from "../types";
 import { useState, useEffect } from "react";
-import {
-  Unplug,
-  Menu,
-  Info,
-  ArrowLeft,
-  PanelLeftOpen,
-  Database,
-} from "lucide-react";
+import { Unplug, Menu, Info, PanelLeftOpen, Database } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type Status = "ready" | "thinking" | "executing" | "done" | "error";
@@ -33,7 +24,6 @@ interface MainLayoutProps {
   onDisconnect?: () => void;
   onOpenDatabase?: () => void;
   onOpenAbout?: () => void;
-  onReturnBack?: () => void;
   isAboutView?: boolean;
   onConnectDatabase?: () => void;
 }
@@ -73,7 +63,6 @@ export default function MainLayout({
   onDisconnect,
   onOpenDatabase,
   onOpenAbout,
-  onReturnBack,
   isAboutView = false,
   onConnectDatabase,
 }: MainLayoutProps) {
@@ -197,37 +186,35 @@ export default function MainLayout({
                 <Menu size={18} />
               </button>
 
-              {/* Desktop Expand Sidebar Toggle */}
+              {/* Desktop Expand Sidebar Toggle & Brand Pill */}
               {sidebarCollapsed && (
-                <button
-                  onClick={() => setSidebarCollapsed(false)}
-                  className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-zinc-300 hover:text-white text-xs font-medium transition-all group shadow-sm"
-                  title="Expand sidebar (Ctrl+\)"
-                >
-                  <PanelLeftOpen
-                    size={15}
-                    className="text-zinc-400 group-hover:text-indigo-400 transition-colors"
-                  />
-                  <span className="hidden lg:inline">Expand Sidebar</span>
-                </button>
-              )}
-
-              {onReturnBack && (
-                <button
-                  onClick={onReturnBack}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-indigo-500/40 text-zinc-300 hover:text-white text-xs sm:text-sm font-medium transition-all group shadow-sm"
-                  title="Return to Current Chat"
-                >
-                  <ArrowLeft
-                    size={14}
-                    className="group-hover:-translate-x-0.5 transition-transform text-zinc-400 group-hover:text-indigo-400"
-                  />
-                  <span>Return to Current Chat</span>
-                </button>
+                <div className="hidden md:flex items-center gap-3">
+                  <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-indigo-600/15 border border-indigo-500/30 shadow-sm">
+                    <img
+                      src="/bg-logo.png"
+                      alt="BG AI Logo"
+                      className="w-7 h-7 rounded-lg object-contain filter drop-shadow-[0_1px_6px_rgba(99,102,241,0.5)]"
+                    />
+                    <span className="text-base font-black text-white tracking-tight">
+                      BG <span className="text-indigo-400">AI</span>
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setSidebarCollapsed(false)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-zinc-300 hover:text-white text-xs font-medium transition-all group shadow-sm"
+                    title="Expand sidebar (Ctrl+\)"
+                  >
+                    <PanelLeftOpen
+                      size={15}
+                      className="text-zinc-400 group-hover:text-indigo-400 transition-colors"
+                    />
+                    <span className="hidden lg:inline">Expand Sidebar</span>
+                  </button>
+                </div>
               )}
 
               {/* Status Indicator Pill */}
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.08] text-xs font-medium">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-xs sm:text-sm font-semibold">
                 <span className="relative flex h-2 w-2">
                   <span
                     className={`relative inline-flex rounded-full h-2 w-2 ${currentStatus.color} ${
@@ -243,15 +230,15 @@ export default function MainLayout({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               {onOpenAbout && (
                 <button
                   onClick={onOpenAbout}
-                  className="text-xs sm:text-sm font-medium text-zinc-400 hover:text-zinc-100 bg-white/[0.03] hover:bg-white/[0.07] px-3 py-1.5 rounded-xl border border-white/10 transition-all flex items-center gap-1.5"
+                  className="text-sm font-semibold text-zinc-300 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] px-3.5 py-1.5 rounded-xl border border-white/10 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                   title="About BG AI"
                 >
                   <Info
-                    size={14}
+                    size={15}
                     className="text-zinc-400 group-hover:text-indigo-400"
                   />
                   <span className="hidden sm:inline">About</span>
@@ -262,7 +249,7 @@ export default function MainLayout({
               {dbConnected && dbLabel ? (
                 <button
                   onClick={onOpenDatabase}
-                  className="text-xs sm:text-sm font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/15 px-3 py-1.5 rounded-xl border border-emerald-500/25 flex items-center gap-2 transition-all cursor-pointer shadow-sm group"
+                  className="text-sm font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/20 px-3.5 py-1.5 rounded-xl border border-emerald-500/30 flex items-center gap-2 transition-all cursor-pointer shadow-sm group"
                   title="View Database Catalog & Details"
                 >
                   <span className="relative flex h-2 w-2">
@@ -276,11 +263,11 @@ export default function MainLayout({
                 onConnectDatabase && (
                   <button
                     onClick={onConnectDatabase}
-                    className="text-xs sm:text-sm font-medium text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-1.5 rounded-xl border border-indigo-500/25 flex items-center gap-1.5 transition-all cursor-pointer shadow-sm group"
+                    className="text-sm font-semibold text-indigo-200 hover:text-white bg-indigo-500/15 hover:bg-indigo-500/25 px-3.5 py-1.5 rounded-xl border border-indigo-500/30 flex items-center gap-2 transition-all cursor-pointer shadow-sm group"
                     title="Connect SQLite, MySQL, or PostgreSQL"
                   >
                     <Database
-                      size={13}
+                      size={14}
                       className="text-indigo-400 group-hover:scale-110 transition-transform"
                     />
                     <span>Connect Database</span>
@@ -291,7 +278,7 @@ export default function MainLayout({
               {dbConnected && onDisconnect && (
                 <button
                   onClick={onDisconnect}
-                  className="text-xs sm:text-sm font-medium text-zinc-300 hover:text-rose-400 bg-white/[0.03] hover:bg-rose-500/10 px-3 py-1.5 rounded-xl border border-white/10 hover:border-rose-500/30 transition-all flex items-center gap-1.5 cursor-pointer group"
+                  className="text-sm font-semibold text-zinc-300 hover:text-rose-400 bg-white/[0.04] hover:bg-rose-500/10 px-3.5 py-1.5 rounded-xl border border-white/10 hover:border-rose-500/30 transition-all flex items-center gap-1.5 cursor-pointer group"
                   title="Disconnect Database Session"
                 >
                   <Unplug

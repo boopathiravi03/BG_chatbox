@@ -16,10 +16,8 @@ import {
   ArrowRight,
   ArrowLeft,
   Server,
-  ChevronRight,
   CheckCircle2,
   Layers,
-  Terminal,
   Table,
   PlusCircle,
   Edit3,
@@ -31,20 +29,21 @@ import BlurText from "../reactbits/BlurText";
 import SpotlightCard from "../reactbits/SpotlightCard";
 import ScrollReveal from "../reactbits/ScrollReveal";
 import ClickSpark from "../reactbits/ClickSpark";
+import WorkflowFlowchart from "./WorkflowFlowchart";
 
 interface AboutModalProps {
   onClose: () => void;
   isEmbedded?: boolean;
 }
 
-type TabType = "overview" | "guide" | "features" | "team" | "tech";
+type TabType = "overview" | "guide" | "features" | "workflow" | "team";
 
 const tabs: { id: TabType; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "guide", label: "User Guide" },
   { id: "features", label: "Features" },
+  { id: "workflow", label: "Workflow" },
   { id: "team", label: "Meet the Team" },
-  { id: "tech", label: "Tech Stack" },
 ];
 
 export default function AboutModal({
@@ -104,20 +103,24 @@ export default function AboutModal({
 
             <div className="h-5 w-[1px] bg-white/[0.08] hidden sm:block" />
 
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-indigo-700/30 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-md shadow-indigo-950/40 shrink-0">
-                <Sparkles size={18} />
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/15 bg-white/[0.06] p-1 shadow-md shrink-0">
+                <img
+                  src="/bg-logo.png"
+                  alt="BG AI Logo"
+                  className="w-full h-full object-contain rounded-lg"
+                />
               </div>
               <div>
                 <div className="flex items-center gap-2.5">
-                  <h1 className="text-base sm:text-lg font-bold text-white tracking-tight">
-                    About BG AI
+                  <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                    About BG <span className="text-indigo-400">AI</span>
                   </h1>
-                  <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-white/[0.06] text-zinc-400 font-mono font-medium">
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-mono font-bold">
                     v1.0.0
                   </span>
                 </div>
-                <p className="text-xs text-zinc-400 hidden md:block">
+                <p className="text-xs sm:text-sm text-zinc-300 hidden md:block font-medium">
                   AI-Powered Conversational Database Intelligence &
                   Visualization
                 </p>
@@ -1009,6 +1012,33 @@ export default function AboutModal({
               </motion.div>
             )}
 
+            {/* TAB: DATABASE WORKFLOW */}
+            {activeTab === "workflow" && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={smoothTransition}
+                className="space-y-10"
+              >
+                <div className="max-w-4xl space-y-3">
+                  <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/25 text-xs sm:text-sm font-code font-bold text-indigo-300">
+                    <BrainCircuit size={16} />
+                    <span>Deterministic & LLM Hybrid Architecture</span>
+                  </div>
+                  <h2 className="font-display text-3xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight">
+                    End-to-End Database Workflow
+                  </h2>
+                  <p className="font-body text-base sm:text-xl text-zinc-300 mt-2 leading-relaxed max-w-3xl">
+                    How BG AI safely processes natural language questions into
+                    verified queries, introspects tables, and produces
+                    visualizations without risking data integrity.
+                  </p>
+                </div>
+
+                <WorkflowFlowchart />
+              </motion.div>
+            )}
+
             {/* TAB: MEET THE CREATORS (Inspired by Uploaded Images) */}
             {activeTab === "team" && (
               <motion.div
@@ -1218,123 +1248,6 @@ export default function AboutModal({
                         </span>
                       </SpotlightCard>
                     ))}
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* TAB: TECH STACK */}
-            {activeTab === "tech" && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={smoothTransition}
-                className="space-y-10"
-              >
-                <div>
-                  <h2 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-                    Technology Architecture
-                  </h2>
-                  <p className="text-base sm:text-lg text-zinc-400 mt-2">
-                    Engineered with modern, production-grade tools verified in
-                    the application repository.
-                  </p>
-                </div>
-
-                <div className="space-y-8">
-                  {/* Frontend Section */}
-                  <div className="rounded-3xl bg-[#121216] border border-white/[0.08] p-8 space-y-6 shadow-xl">
-                    <div className="flex items-center gap-3 text-white font-bold text-lg sm:text-xl">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
-                        <Code2 size={20} />
-                      </div>
-                      <h3>Frontend Technologies</h3>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {[
-                        { name: "React 19", role: "Component UI Engine" },
-                        { name: "TypeScript", role: "Type Safety & DX" },
-                        { name: "Tailwind CSS", role: "Utility Design System" },
-                        { name: "Vite 8", role: "High-Performance Bundler" },
-                        {
-                          name: "Framer Motion",
-                          role: "Smooth Spring Animations",
-                        },
-                        {
-                          name: "Chart.js",
-                          role: "Interactive Visualizations",
-                        },
-                        {
-                          name: "React Flow",
-                          role: "Entity Relationship Graphs",
-                        },
-                        { name: "Lucide React", role: "Vector Iconography" },
-                      ].map((tech, i) => (
-                        <div
-                          key={i}
-                          className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.12] transition-colors"
-                        >
-                          <div className="text-base font-bold text-white">
-                            {tech.name}
-                          </div>
-                          <div className="text-xs sm:text-sm text-zinc-400 mt-1">
-                            {tech.role}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Backend & AI Section */}
-                  <div className="rounded-3xl bg-[#121216] border border-white/[0.08] p-8 space-y-6 shadow-xl">
-                    <div className="flex items-center gap-3 text-white font-bold text-lg sm:text-xl">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                        <Server size={20} />
-                      </div>
-                      <h3>Backend & AI Architecture</h3>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {[
-                        {
-                          name: "FastAPI",
-                          role: "High-Performance Async Python API",
-                        },
-                        {
-                          name: "SQLAlchemy",
-                          role: "Database Engine & ORM Layer",
-                        },
-                        {
-                          name: "Groq / Gemini AI",
-                          role: "Natural Language to SQL Generation",
-                        },
-                        {
-                          name: "SQLite & aiosqlite",
-                          role: "Embedded Serverless Database Support",
-                        },
-                        {
-                          name: "PyMySQL",
-                          role: "Production MySQL Database Support",
-                        },
-                        {
-                          name: "Pydantic",
-                          role: "Strict Schema & Request Validation",
-                        },
-                      ].map((tech, i) => (
-                        <div
-                          key={i}
-                          className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.12] transition-colors"
-                        >
-                          <div className="text-base font-bold text-white">
-                            {tech.name}
-                          </div>
-                          <div className="text-xs sm:text-sm text-zinc-400 mt-1">
-                            {tech.role}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 </div>
               </motion.div>

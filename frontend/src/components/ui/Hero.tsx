@@ -1,5 +1,4 @@
 import {
-  Database,
   BarChart3,
   LineChart,
   GitBranch,
@@ -73,14 +72,20 @@ export default function Hero({
       initial="hidden"
       animate="show"
     >
-      {/* Badge */}
+      {/* Badge with Official Logo */}
       <motion.div
         variants={staggerItem}
-        className="inline-flex items-center gap-2.5 bg-white/[0.04] border border-white/[0.1] rounded-full px-4 py-1.5 mb-5 backdrop-blur-sm shadow-sm"
+        className="inline-flex items-center gap-2.5 bg-white/[0.05] border border-white/[0.12] rounded-full px-4 py-1.5 mb-5 backdrop-blur-sm shadow-md"
       >
-        <Database size={15} className="text-indigo-400" />
-        <span className="text-xs sm:text-sm font-medium text-zinc-200">
-          Intelligent Database Intelligence & Visualization
+        <div className="w-5 h-5 flex items-center justify-center rounded-md bg-indigo-500/20 p-0.5 shrink-0">
+          <img
+            src="/bg-logo.png"
+            alt="BG AI Logo"
+            className="w-full h-full object-contain filter drop-shadow-[0_1px_4px_rgba(99,102,241,0.6)]"
+          />
+        </div>
+        <span className="text-xs sm:text-sm font-semibold text-zinc-200 tracking-wide">
+          Conversational Database Intelligence & Visualization
         </span>
       </motion.div>
 
@@ -88,40 +93,40 @@ export default function Hero({
       <motion.div variants={staggerItem} className="flex justify-center">
         <BlurText
           text="Intelligent Database Interaction. Simplified."
-          className="text-3xl sm:text-5xl font-bold tracking-tight text-white leading-[1.15] justify-center"
-          delay={40}
+          className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white leading-[1.12] justify-center"
+          delay={35}
         />
       </motion.div>
 
-      {/* Body Description (15px–17px) */}
+      {/* Body Description (16px–20px) */}
       <motion.p
         variants={staggerItem}
-        className="mt-3.5 text-base sm:text-lg text-zinc-300 max-w-xl mx-auto leading-relaxed"
+        className="mt-4 text-base sm:text-xl text-zinc-200 max-w-2xl mx-auto leading-relaxed font-normal"
       >
         Explore, query, analyze, and visualize your data using natural language.
       </motion.p>
 
       {/* Connection State / CTA */}
-      <motion.div variants={staggerItem} className="mt-4">
+      <motion.div variants={staggerItem} className="mt-5">
         {dbConnected && dbLabel ? (
           <button
             onClick={onOpenDetails || onConnect}
-            className="inline-flex items-center gap-2 rounded-full border border-teal-500/30 bg-teal-500/10 hover:bg-teal-500/15 px-3.5 py-1.5 text-xs sm:text-sm text-teal-300 font-semibold shadow-sm transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-full border border-teal-500/35 bg-teal-500/15 hover:bg-teal-500/25 px-4 py-2 text-sm text-teal-200 font-semibold shadow-md transition-colors cursor-pointer"
             title="View Connected Database Details & Schema"
           >
-            <span className="h-2 w-2 rounded-full bg-teal-400 animate-pulse" />
+            <span className="h-2.5 w-2.5 rounded-full bg-teal-400 animate-pulse" />
             <span>Connected to {dbLabel}</span>
           </button>
         ) : (
           <ClickSpark sparkColor="#818cf8" sparkCount={6} sparkRadius={22}>
             <button
               onClick={onConnect}
-              className="inline-flex items-center gap-2 rounded-xl border border-indigo-500/40 bg-indigo-600/20 hover:bg-indigo-600/30 px-4 py-2 text-xs sm:text-sm font-semibold text-indigo-200 hover:text-white transition-all shadow-md shadow-indigo-950/40 cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-500/40 bg-indigo-600/25 hover:bg-indigo-600/40 px-5 py-2.5 text-sm font-bold text-indigo-100 hover:text-white transition-all shadow-lg shadow-indigo-950/50 cursor-pointer"
               title="Open Database Connection Options"
             >
-              <Plug size={15} className="text-indigo-400" />
+              <Plug size={16} className="text-indigo-400" />
               <span>Connect the Database</span>
-              <ArrowRight size={14} className="text-indigo-400" />
+              <ArrowRight size={15} className="text-indigo-400" />
             </button>
           </ClickSpark>
         )}
@@ -131,7 +136,7 @@ export default function Hero({
       {composer && (
         <motion.div
           variants={staggerItem}
-          className="mt-7 mb-6 w-full text-left"
+          className="mt-8 mb-7 w-full text-left"
         >
           {composer}
         </motion.div>
@@ -145,21 +150,21 @@ export default function Hero({
         {quickActions.map((action) => (
           <SpotlightCard
             key={action.prompt}
-            spotlightColor="rgba(99, 102, 241, 0.14)"
+            spotlightColor="rgba(99, 102, 241, 0.16)"
             className="rounded-xl border border-white/[0.08] bg-[#121215] hover:border-white/20 transition-all shadow-sm"
           >
             <button
               onClick={() => onSend?.(action.prompt)}
-              className="group flex items-start gap-3.5 p-3.5 sm:p-4 w-full h-full text-left cursor-pointer"
+              className="group flex items-start gap-3.5 p-4 w-full h-full text-left cursor-pointer"
             >
-              <div className="p-2 rounded-lg bg-white/[0.04] border border-white/[0.08] text-zinc-300 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 transition-colors shrink-0">
-                <action.icon size={16} />
+              <div className="p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-300 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 transition-colors shrink-0">
+                <action.icon size={17} />
               </div>
               <div className="min-w-0">
-                <p className="text-[15px] font-semibold text-zinc-200 group-hover:text-white transition-colors">
+                <p className="text-base font-bold text-white group-hover:text-indigo-300 transition-colors">
                   {action.label}
                 </p>
-                <p className="text-xs sm:text-sm text-zinc-400 mt-0.5 leading-normal truncate">
+                <p className="text-xs sm:text-sm text-zinc-300 mt-1 leading-normal truncate">
                   {action.desc}
                 </p>
               </div>
