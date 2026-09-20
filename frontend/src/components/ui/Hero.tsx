@@ -89,21 +89,26 @@ export default function Hero({
         </span>
       </motion.div>
 
-      {/* Main Heading with React Bits BlurText */}
-      <motion.div variants={staggerItem} className="flex justify-center">
+      {/* Main H1 Heading with React Bits BlurText */}
+      <motion.h1
+        variants={staggerItem}
+        className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white leading-[1.12] flex justify-center"
+      >
         <BlurText
-          text="Intelligent Database Interaction. Simplified."
-          className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white leading-[1.12] justify-center"
+          text="AI-Powered Conversational Database Assistant"
+          className="justify-center"
           delay={35}
         />
-      </motion.div>
+      </motion.h1>
 
-      {/* Body Description (16px–20px) */}
+      {/* SEO Introductory Paragraph */}
       <motion.p
         variants={staggerItem}
-        className="mt-4 text-base sm:text-xl text-zinc-200 max-w-2xl mx-auto leading-relaxed font-normal"
+        className="mt-4 text-base sm:text-lg text-zinc-300 max-w-2xl mx-auto leading-relaxed font-normal"
       >
-        Explore, query, analyze, and visualize your data using natural language.
+        BG AI is an intelligent conversational database platform built for
+        natural language SQL query generation, interactive database
+        visualization, and effortless schema exploration.
       </motion.p>
 
       {/* Connection State / CTA */}
