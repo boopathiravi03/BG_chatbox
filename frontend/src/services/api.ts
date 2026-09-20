@@ -1,21 +1,15 @@
+import axios from "axios";
+
 export const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001"
 ).replace(/\/+$/, "");
 
 export async function sendMessage(message: string, sessionId: string) {
-  const response = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      session_id: sessionId,
-    }),
+  const response = await axios.post(`${API_BASE}/chat`, {
+    message,
+    session_id: sessionId,
   });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-  return response.json();
+  return response.data;
 }
 
 export async function sendInsert(
@@ -27,21 +21,13 @@ export async function sendInsert(
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ");
 
-  const response = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      session_id: sessionId,
-      input_values: inputValues,
-      pending_insert: true,
-    }),
+  const response = await axios.post(`${API_BASE}/chat`, {
+    message,
+    session_id: sessionId,
+    input_values: inputValues,
+    pending_insert: true,
   });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-  return response.json();
+  return response.data;
 }
 
 export async function getSchema() {
