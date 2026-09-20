@@ -1,4 +1,5 @@
-export const API_BASE = "http://127.0.0.1:8001";
+export const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
 
 export async function sendMessage(message: string, sessionId: string) {
   const response = await fetch(`${API_BASE}/chat`, {
@@ -16,7 +17,11 @@ export async function sendMessage(message: string, sessionId: string) {
   return response.json();
 }
 
-export async function sendInsert(inputValues: Record<string, string>, table: string, sessionId: string) {
+export async function sendInsert(
+  inputValues: Record<string, string>,
+  table: string,
+  sessionId: string,
+) {
   const message = Object.entries(inputValues)
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ");
@@ -37,7 +42,7 @@ export async function sendInsert(inputValues: Record<string, string>, table: str
   }
   return response.json();
 }
- 
+
 export async function getSchema() {
   const response = await fetch(`${API_BASE}/schema`);
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
