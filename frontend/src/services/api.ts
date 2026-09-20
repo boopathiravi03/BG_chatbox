@@ -1,5 +1,6 @@
-export const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
+export const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001"
+).replace(/\/+$/, "");
 
 export async function sendMessage(message: string, sessionId: string) {
   const response = await fetch(`${API_BASE}/chat`, {
