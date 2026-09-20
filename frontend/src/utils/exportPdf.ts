@@ -1,7 +1,7 @@
-import { jsPDF } from "jspdf";
 import type { Message } from "../types";
 
-export function exportChatPDF(messages: Message[]) {
+export async function exportChatPDF(messages: Message[]) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF();
 
   let y = 20;

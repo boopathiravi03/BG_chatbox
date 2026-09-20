@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Database,
@@ -20,8 +20,9 @@ import {
 } from "lucide-react";
 import type { ChatSession } from "../../types";
 import DatabaseUploader from "./DatabaseUploader";
-import DatabasePopup from "./DatabasePopup";
-import ConnectDatabaseModal from "./ConnectDatabaseModal";
+
+const DatabasePopup = lazy(() => import("./DatabasePopup"));
+const ConnectDatabaseModal = lazy(() => import("./ConnectDatabaseModal"));
 import { getDatabaseType } from "../../services/api";
 import { useTheme } from "../../context/ThemeContext";
 import { dropdownVariants } from "../../lib/motion";
@@ -241,14 +242,17 @@ export default function Sidebar({
                 <img
                   src="/bg-logo.png"
                   alt="BG AI Logo"
+                  width={48}
+                  height={48}
+                  decoding="async"
                   className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)] group-hover:scale-105 transition-transform"
                 />
               </div>
               <div className="truncate">
                 <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-black tracking-tight text-white leading-none">
+                  <span className="text-2xl font-black tracking-tight text-white leading-none">
                     BG <span className="text-indigo-400">AI</span>
-                  </h1>
+                  </span>
                   <span className="text-xs font-mono px-2 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/35 text-indigo-300 font-bold">
                     v1.0
                   </span>
@@ -287,6 +291,9 @@ export default function Sidebar({
                 <img
                   src="/bg-logo.png"
                   alt="BG AI Logo"
+                  width={48}
+                  height={48}
+                  decoding="async"
                   className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)]"
                 />
               </div>
@@ -773,24 +780,28 @@ export default function Sidebar({
       )}
 
       {showDatabase && (
-        <DatabasePopup
-          onClose={() => setShowDatabase(false)}
-          onDisconnected={() => {
-            fetchDbInfo();
-            onDisconnect?.();
-          }}
-        />
+        <Suspense fallback={null}>
+          <DatabasePopup
+            onClose={() => setShowDatabase(false)}
+            onDisconnected={() => {
+              fetchDbInfo();
+              onDisconnect?.();
+            }}
+          />
+        </Suspense>
       )}
 
       {showConnectModal && (
-        <ConnectDatabaseModal
-          defaultType={showConnectModal}
-          onClose={() => setShowConnectModal(null)}
-          onConnected={() => {
-            fetchDbInfo();
-            onDatabaseConnected?.();
-          }}
-        />
+        <Suspense fallback={null}>
+          <ConnectDatabaseModal
+            defaultType={showConnectModal}
+            onClose={() => setShowConnectModal(null)}
+            onConnected={() => {
+              fetchDbInfo();
+              onDatabaseConnected?.();
+            }}
+          />
+        </Suspense>
       )}
     </aside>
   );

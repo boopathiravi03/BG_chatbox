@@ -1,5 +1,3 @@
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
 import { FileSpreadsheet } from "lucide-react";
 import { useToast } from "../../context/ToastContext";
 
@@ -17,10 +15,15 @@ export default function ResultTable({ result }: Props) {
   if (!result?.success || !result.columns || result.columns.length === 0)
     return null;
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
     if (!result?.rows?.length) return;
 
     try {
+      const [XLSX, { saveAs }] = await Promise.all([
+        import("xlsx"),
+        import("file-saver"),
+      ]);
+
       const data = result.rows.map((row) => {
         const values = Array.isArray(row) ? row : Object.values(row);
         const obj: Record<string, any> = {};

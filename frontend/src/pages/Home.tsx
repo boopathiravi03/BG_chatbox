@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import MainLayout from "../layouts/MainLayout";
 import ChatArea from "../components/chat/ChatArea";
 import type { Message, ChatSession } from "../types/index";
@@ -10,10 +10,15 @@ import {
   getDatabaseInfo,
   getDatabaseType,
 } from "../services/api";
-import DatabasePopup from "../components/chat/DatabasePopup";
-import AboutModal from "../components/ui/AboutModal";
-import ConnectDatabaseModal from "../components/chat/ConnectDatabaseModal";
-import DisconnectConfirmationModal from "../components/chat/DisconnectConfirmationModal";
+
+const DatabasePopup = lazy(() => import("../components/chat/DatabasePopup"));
+const AboutModal = lazy(() => import("../components/ui/AboutModal"));
+const ConnectDatabaseModal = lazy(
+  () => import("../components/chat/ConnectDatabaseModal"),
+);
+const DisconnectConfirmationModal = lazy(
+  () => import("../components/chat/DisconnectConfirmationModal"),
+);
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -411,7 +416,9 @@ export default function Home() {
       isAboutView={showAbout}
     >
       {showAbout ? (
-        <AboutModal isEmbedded={true} onClose={() => setShowAbout(false)} />
+        <Suspense fallback={null}>
+          <AboutModal isEmbedded={true} onClose={() => setShowAbout(false)} />
+        </Suspense>
       ) : (
         <ChatArea
           messages={messages}
@@ -436,29 +443,37 @@ export default function Home() {
       )}
 
       {showDatabase && (
-        <DatabasePopup
-          onClose={() => setShowDatabase(false)}
-          onDisconnected={handleDisconnect}
-        />
+        <Suspense fallback={null}>
+          <DatabasePopup
+            onClose={() => setShowDatabase(false)}
+            onDisconnected={handleDisconnect}
+          />
+        </Suspense>
       )}
 
       {showConnectModal && (
-        <ConnectDatabaseModal
-          defaultType={connectModalType}
-          onClose={() => setShowConnectModal(false)}
-          onConnected={() => {
-            handleUploadComplete();
-            setShowConnectModal(false);
-          }}
-        />
+        <Suspense fallback={null}>
+          <ConnectDatabaseModal
+            defaultType={connectModalType}
+            onClose={() => setShowConnectModal(false)}
+            onConnected={() => {
+              handleUploadComplete();
+              setShowConnectModal(false);
+            }}
+          />
+        </Suspense>
       )}
 
-      <DisconnectConfirmationModal
-        isOpen={showDisconnectModal}
-        onClose={() => setShowDisconnectModal(false)}
-        onConfirm={handleDisconnect}
-        dbType={dbType}
-      />
+      {showDisconnectModal && (
+        <Suspense fallback={null}>
+          <DisconnectConfirmationModal
+            isOpen={showDisconnectModal}
+            onClose={() => setShowDisconnectModal(false)}
+            onConfirm={handleDisconnect}
+            dbType={dbType}
+          />
+        </Suspense>
+      )}
     </MainLayout>
   );
 }

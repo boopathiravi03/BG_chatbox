@@ -193,6 +193,9 @@ export default function MainLayout({
                     <img
                       src="/bg-logo.png"
                       alt="BG AI Logo"
+                      width={28}
+                      height={28}
+                      decoding="async"
                       className="w-7 h-7 rounded-lg object-contain filter drop-shadow-[0_1px_6px_rgba(99,102,241,0.5)]"
                     />
                     <span className="text-base font-black text-white tracking-tight">

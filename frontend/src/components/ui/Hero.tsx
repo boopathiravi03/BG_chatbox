@@ -81,6 +81,9 @@ export default function Hero({
           <img
             src="/bg-logo.png"
             alt="BG AI Logo"
+            width={20}
+            height={20}
+            decoding="async"
             className="w-full h-full object-contain filter drop-shadow-[0_1px_4px_rgba(99,102,241,0.6)]"
           />
         </div>

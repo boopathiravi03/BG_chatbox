@@ -119,17 +119,18 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
               ease: [0.16, 1, 0.3, 1],
             },
           }}
-          className="fixed inset-0 z-[99999] w-screen h-screen bg-[#545c63] flex items-center justify-center select-none overflow-hidden"
+          className="fixed inset-0 z-[99999] w-screen h-screen bg-[#09090b] flex items-center justify-center select-none overflow-hidden"
           style={{ willChange: "opacity" }}
         >
           {/* True Fullscreen Video Player */}
-          <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+          <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-[#09090b]">
             <video
               ref={videoRef}
               playsInline
               muted
               autoPlay
-              preload="auto"
+              preload="metadata"
+              poster="/bg-logo-wide.png"
               onTimeUpdate={handleTimeUpdate}
               onEnded={handleDismiss}
               onError={() => {
@@ -139,7 +140,6 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
               className="w-full h-full object-cover"
             >
               <source src="/bg-ai-intro.mp4" type="video/mp4" />
-              <source src="/intro.mp4" type="video/mp4" />
             </video>
 
             {/* Autoplay Blocked Fallback Modal */}

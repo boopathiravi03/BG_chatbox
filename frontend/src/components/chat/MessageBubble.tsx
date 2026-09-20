@@ -4,13 +4,16 @@ import remarkGfm from "remark-gfm";
 import Highlighter from "react-highlight-words";
 import SQLBlock from "./SQLBlock";
 import ResultTable from "./ResultTable";
-import ChartRenderer from "./ChartRenderer";
 import ExplanationCard from "./ExplanationCard";
-import MermaidChart from "./MermaidChart";
-import RelationshipGraph from "./RelationshipGraph";
-import AnalyticsDashboard from "../dashboard/AnalyticsDashboard";
 import InsertForm from "./InsertForm";
 import DatabaseOnboardingCard from "./DatabaseOnboardingCard";
+
+const ChartRenderer = lazy(() => import("./ChartRenderer"));
+const MermaidChart = lazy(() => import("./MermaidChart"));
+const RelationshipGraph = lazy(() => import("./RelationshipGraph"));
+const AnalyticsDashboard = lazy(
+  () => import("../dashboard/AnalyticsDashboard"),
+);
 import {
   Copy,
   Check,
@@ -27,7 +30,7 @@ import {
   Plug,
   ArrowRight,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { motion } from "framer-motion";
 import { messageBubbleVariants } from "../../lib/motion";
 import ClickSpark from "../reactbits/ClickSpark";
@@ -119,6 +122,10 @@ export default function MessageBubble({
                   <img
                     src="/bg-logo.png"
                     alt="BG AI Logo"
+                    width={24}
+                    height={24}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-contain rounded-md"
                   />
                 </div>
@@ -254,23 +261,47 @@ export default function MessageBubble({
 
             {message.chart && (
               <div className="mt-5">
-                <ChartRenderer chart={message.chart} />
+                <Suspense
+                  fallback={
+                    <div className="h-48 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-center text-xs text-zinc-500 animate-pulse">
+                      Loading chart engine...
+                    </div>
+                  }
+                >
+                  <ChartRenderer chart={message.chart} />
+                </Suspense>
               </div>
             )}
 
             {message.diagram && (
               <div className="mt-5">
-                {typeof message.diagram === "string" ? (
-                  <MermaidChart chart={message.diagram} />
-                ) : (
-                  <RelationshipGraph graph={message.diagram} />
-                )}
+                <Suspense
+                  fallback={
+                    <div className="h-48 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-center text-xs text-zinc-500 animate-pulse">
+                      Loading diagram renderer...
+                    </div>
+                  }
+                >
+                  {typeof message.diagram === "string" ? (
+                    <MermaidChart chart={message.diagram} />
+                  ) : (
+                    <RelationshipGraph graph={message.diagram} />
+                  )}
+                </Suspense>
               </div>
             )}
 
             {message.analytics && (
               <div className="mt-5">
-                <AnalyticsDashboard data={message.analytics} />
+                <Suspense
+                  fallback={
+                    <div className="h-48 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-center text-xs text-zinc-500 animate-pulse">
+                      Loading analytics dashboard...
+                    </div>
+                  }
+                >
+                  <AnalyticsDashboard data={message.analytics} />
+                </Suspense>
               </div>
             )}
 
