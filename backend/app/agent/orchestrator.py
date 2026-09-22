@@ -74,6 +74,108 @@ def _get_followups(user_message: str) -> list[str]:
     )
 
 
+def _is_general_knowledge_question(user_message: str) -> bool:
+    """
+    Detect educational/conceptual questions about SQL, databases,
+    and programming that can be answered without a database connection.
+
+    Returns True for questions like:
+        - What is SQL?
+        - Explain primary key
+        - What is an INNER JOIN?
+        - What is normalization?
+        - What is CRUD?
+
+    Returns False for database operations:
+        - Show all customers
+        - How many orders do I have?
+        - Add a new customer
+    """
+    message = user_message.lower().strip()
+
+    # Exclude messages with personal/operational references
+    if re.search(
+        r"\b(my\s+database|my\s+table|my\s+data|do\s+i\s+have"
+        r"|show\s+me|show\s+all|list\s+all|give\s+me"
+        r"|in\s+my|from\s+my)\b",
+        message,
+    ):
+        return False
+
+    # Must start with an educational question pattern
+    educational_starters = [
+        r"^what\s+(?:is|are|does|do)\b",
+        r"^(?:can\s+you\s+)?explain\b",
+        r"^define\b",
+        r"^describe\s+(?:what\s+)?(?:is\s+)?(?:an?\s+)?",
+        r"^how\s+does\b",
+        r"^how\s+do\b.*\bwork\b",
+        r"^(?:what(?:'s|\s+is)\s+)?(?:the\s+)?difference\s+between\b",
+        r"^tell\s+me\s+(?:about|what)\b",
+        r"^what\s+do(?:es)?\s+.*\bmean\b",
+        r"^meaning\s+of\b",
+        r"^types?\s+of\b",
+        r"^what\s+(?:is|are)\s+(?:the\s+)?(?:purpose|use|advantage"
+        r"|benefit|disadvantage)s?\s+of\b",
+    ]
+
+    if not any(re.search(p, message) for p in educational_starters):
+        return False
+
+    # Must reference a CS/database knowledge topic
+    knowledge_topics = [
+        "sql", "structured query language",
+        "database", "databases", "dbms", "rdbms",
+        "mysql", "postgresql", "postgres", "sqlite",
+        "oracle", "mariadb", "nosql", "mongodb", "redis",
+        "primary key", "foreign key", "unique key",
+        "composite key", "candidate key", "super key",
+        "join", "inner join", "outer join",
+        "left join", "right join", "cross join",
+        "self join", "natural join",
+        "normalization", "denormalization", "normal form",
+        "1nf", "2nf", "3nf", "bcnf",
+        "crud", "api", "rest api", "restful",
+        "index", "indexing", "b-tree",
+        "trigger", "stored procedure", "stored function",
+        "view", "materialized view",
+        "transaction", "acid",
+        "schema", "data model", "data modeling",
+        "subquery", "correlated subquery",
+        "aggregate", "aggregation",
+        "group by", "having", "order by",
+        "union", "intersect", "except",
+        "constraint", "check constraint",
+        "auto increment", "sequence",
+        "cursor", "deadlock", "concurrency",
+        "replication", "sharding", "partitioning",
+        "orm", "object relational mapping",
+        "relational database", "relational",
+        "entity relationship", "er diagram", "er model",
+        "data type", "varchar", "integer", "boolean",
+        "ddl", "dml", "dcl", "tcl",
+        "select statement", "insert statement",
+        "update statement", "delete statement",
+        "where clause", "having clause",
+        "group by clause", "order by clause",
+        "null", "not null",
+        "distinct", "alias",
+        "like operator", "wildcard",
+        "window function", "row_number", "rank", "dense_rank",
+        "cte", "common table expression",
+        "temp table", "temporary table",
+        "data warehouse", "etl", "olap", "oltp",
+        "sql injection", "prepared statement",
+        "query optimization", "execution plan",
+        "backup", "restore", "migration",
+    ]
+
+    return any(
+        re.search(rf"\b{re.escape(topic)}\b", message)
+        for topic in knowledge_topics
+    )
+
+
 def _classify_intent(user_message: str, schema: dict) -> str:
 
     message = user_message.lower().strip()
@@ -103,6 +205,7 @@ dashboard
 relationship_graph
 er_diagram
 analytics
+general_knowledge
 
 IMPORTANT:
 
@@ -128,6 +231,12 @@ contains a matching student-related table.
 - Only choose chat for genuine conversation unrelated
   to database data.
 
+- Choose general_knowledge for educational questions about
+  SQL concepts, database theory, or programming concepts
+  that do NOT require querying the connected database.
+  Examples: "What is SQL?", "Explain primary key",
+  "What is normalization?"
+
 Return ONLY the category.
 """
 
@@ -143,6 +252,7 @@ Return ONLY the category.
             "er_diagram",
             "analytics",
             "database_schema",
+            "general_knowledge",
         ]
 
         for intent in valid_intents:
@@ -190,6 +300,60 @@ User: {user_message}
         "analytics": None,
         "explanation": explanation,
         "followups": _get_followups(user_message),
+    }
+
+
+def _handle_general_knowledge(user_message: str) -> dict:
+    """
+    Answer general SQL/database/programming knowledge questions
+    without referencing any connected database.
+    """
+    prompt = f"""You are a knowledgeable database and SQL educator.
+
+Answer the following question directly, clearly, and concisely.
+
+Rules:
+- Give a focused, accurate educational explanation.
+- Use examples and sample SQL syntax when helpful.
+- Use Markdown formatting for readability.
+- Do NOT introduce yourself or mention your name.
+- Do NOT ask the user to connect a database.
+- Do NOT claim to have queried any database.
+- Do NOT generate SQL against any real database.
+- Keep the response concise but thorough.
+- At the end, you may add a brief note that the user
+  does not need a database connection for general
+  SQL/database questions.
+
+Question: {user_message}
+"""
+
+    try:
+        explanation = ask_groq(prompt).strip()
+    except Exception:
+        explanation = (
+            "I'm sorry, I couldn't process that question right now. "
+            "Please try again."
+        )
+
+    return {
+        "generated_sql": "",
+        "result": {
+            "success": True,
+            "columns": [],
+            "rows": [],
+            "execution_time_ms": 0,
+            "rows_returned": 0,
+        },
+        "diagram": None,
+        "analytics": None,
+        "explanation": explanation,
+        "followups": [
+            "What is a primary key?",
+            "Explain JOINs in SQL",
+            "What is normalization?",
+            "What can BG AI do?",
+        ],
     }
 
 
@@ -3750,6 +3914,13 @@ def run_agent(
     input_values: dict | None = None,
     pending_insert: bool = False,
 ):
+    # ---------------------------------------------------------
+    # General knowledge questions are answered directly,
+    # regardless of whether a database is connected.
+    # ---------------------------------------------------------
+    if _is_general_knowledge_question(user_message):
+        return _handle_general_knowledge(user_message)
+
     try:
         schema = get_schema()
     except Exception:
@@ -3876,6 +4047,10 @@ def run_agent(
     if intent == "chat":
         conversation_state.pop(session_id, None)
         return _handle_chat(user_message)
+
+    if intent == "general_knowledge":
+        conversation_state.pop(session_id, None)
+        return _handle_general_knowledge(user_message)
 
     if intent == "er_diagram":
         conversation_state.pop(session_id, None)
