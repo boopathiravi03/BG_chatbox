@@ -9,3 +9,7 @@ requests
 pydantic
 python-multipart
 PyMySQL==1.1.1
+psycopg2-binary
+bcrypt==5.0.0
+python-jose[cryptography]==3.5.0
+slowapi==0.1.10
