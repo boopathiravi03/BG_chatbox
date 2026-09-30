@@ -11,6 +11,3 @@ dist/
 .venv_backup/
 
 backend/venv_backup/
-bgai_audit.db
-bgai_users.db
-*.sqlite

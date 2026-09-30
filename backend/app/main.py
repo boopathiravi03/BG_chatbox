@@ -695,3 +695,4 @@ def clear_db(user: AuthenticatedUser = Depends(get_current_user)):
         return {"status": "success", "message": "Database cleared"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+

@@ -144,8 +144,7 @@ try:
     conn_raw.close()
     print("Database balance for id=1 after failed verification:", row_after[1])
     assert row_after[1] == 100.0, f"Expected 100.0 (original balance), got {row_after[1]}! Rollback failed!"
-    print("[PASS] Rollback confirmed: balance remained original 100.0 despite executing UPDATE in transaction.")
-
+    print("✓ Rollback confirmed: balance remained original 100.0 despite executing UPDATE in transaction.")
 
     # TEST 2B: DELETE with forced error / verification mismatch
     plan_del = ActionPlan(
@@ -173,8 +172,7 @@ try:
     conn_raw2.close()
     print("Database record for id=2 after failed verification:", row_del_after)
     assert row_del_after is not None and row_del_after[0] == 2, "Row was not rolled back!"
-    print("[PASS] Rollback confirmed: deleted row restored after transaction abort.")
-
+    print("✓ Rollback confirmed: deleted row restored after transaction abort.")
 
     audit_results["transaction_rollback"] = {
         "status": "PASS",
@@ -266,8 +264,7 @@ try:
         "status": "PASS",
         "evidence": "Double confirmation, cancelled action execution, and cross-database replay were all rejected.",
     }
-    print("[PASS] Replay and context protection verified.")
-
+    print("✓ Replay and context protection verified.")
 except Exception as e:
     traceback.print_exc()
     audit_results["action_replay_protection"] = {"status": "FAIL", "error": str(e)}
