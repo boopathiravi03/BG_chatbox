@@ -36,16 +36,36 @@ app.add_middleware(
 
 
 # ── Security headers middleware ───────────────────────────────────────────────
+_DOCS_PATHS = {"/docs", "/redoc", "/docs/oauth2-redirect"}
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none';"
+)
+_STRICT_CSP = "default-src 'none'"
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = "default-src 'none'"
+
+        path = request.url.path
+        if path in _DOCS_PATHS or path.rstrip("/") in {"/docs", "/redoc"}:
+            response.headers["Content-Security-Policy"] = _DOCS_CSP
+        else:
+            response.headers["Content-Security-Policy"] = _STRICT_CSP
+
         if os.getenv("BGAI_PRODUCTION", "false").lower() == "true":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
+
 
 app.add_middleware(SecurityHeadersMiddleware)
 
