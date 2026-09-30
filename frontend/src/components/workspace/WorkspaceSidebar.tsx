@@ -15,6 +15,9 @@ import {
   Sparkles,
   Plug,
   X,
+  TrendingUp,
+  AlertTriangle,
+  Bot,
 } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
 
@@ -22,6 +25,9 @@ export type WorkspaceTab =
   | "overview"
   | "explorer"
   | "analytics"
+  | "forecasting"
+  | "anomalies"
+  | "agents"
   | "sqllab"
   | "health"
   | "chat"
@@ -45,6 +51,9 @@ const navItems: { id: WorkspaceTab; label: string; icon: React.ElementType; badg
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "explorer", label: "Data Explorer", icon: Search },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "forecasting", label: "Forecasting", icon: TrendingUp },
+  { id: "anomalies", label: "Anomaly Center", icon: AlertTriangle },
+  { id: "agents", label: "AI Agents", icon: Bot, badge: "SAFE" },
   { id: "sqllab", label: "SQL Lab", icon: Terminal },
   { id: "health", label: "Data Health", icon: Activity },
   { id: "chat", label: "AI Command", icon: MessageSquare, badge: "AI" },

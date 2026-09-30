@@ -9,9 +9,12 @@ import {
   Layers,
   HardDrive,
   Activity,
+  LogOut,
+  User,
 } from "lucide-react";
 import type { WorkspaceTab } from "./WorkspaceSidebar";
 import ModelSelector from "../ui/ModelSelector";
+import { useAuth } from "../../context/AuthContext";
 
 interface WorkspaceHeaderProps {
   activeTab: WorkspaceTab;
@@ -42,6 +45,18 @@ const tabTitles: Record<WorkspaceTab, { title: string; subtitle: string }> = {
   analytics: {
     title: "Analytics & Dashboards",
     subtitle: "Automated Visual Metric Charts & Dashboards",
+  },
+  forecasting: {
+    title: "Forecasting Studio",
+    subtitle: "Predictive Time-Series Projections & Statistical Confidence Intervals",
+  },
+  anomalies: {
+    title: "Anomaly Center",
+    subtitle: "Explainable Outlier Detection & Deviation Intelligence",
+  },
+  agents: {
+    title: "AI Agent Center",
+    subtitle: "Modular Specialist Agents & Human-Approved Safe Actions",
   },
   sqllab: {
     title: "AI SQL Lab",
@@ -77,6 +92,8 @@ export default function WorkspaceHeader({
   onOpenDatabaseDetails,
 }: WorkspaceHeaderProps) {
   const current = tabTitles[activeTab] || tabTitles.overview;
+  const { user, logout } = useAuth();
+
 
   const dbLabel =
     dbType === "mysql"
@@ -163,6 +180,23 @@ export default function WorkspaceHeader({
           >
             <Info size={16} />
           </button>
+        )}
+
+        {/* User + Logout */}
+        {user && (
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:flex items-center gap-1.5 text-xs text-zinc-500 font-mono">
+              <User size={12} />
+              {user.username}
+            </span>
+            <button
+              onClick={logout}
+              className="p-1.5 rounded-xl text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 border border-white/[0.06] transition-all cursor-pointer"
+              title="Sign out"
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
         )}
       </div>
     </header>

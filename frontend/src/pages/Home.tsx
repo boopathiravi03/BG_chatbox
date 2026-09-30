@@ -32,6 +32,15 @@ const ConnectDatabaseModal = lazy(
 const DisconnectConfirmationModal = lazy(
   () => import("../components/chat/DisconnectConfirmationModal"),
 );
+const ForecastingView = lazy(
+  () => import("../components/workspace/views/ForecastingView"),
+);
+const AnomalyCenterView = lazy(
+  () => import("../components/workspace/views/AnomalyCenterView"),
+);
+const AgentCenterView = lazy(
+  () => import("../components/workspace/views/AgentCenterView"),
+);
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
@@ -506,6 +515,59 @@ export default function Home() {
                 setShowConnectModal(true);
               }}
             />
+          )}
+
+          {activeTab === "forecasting" && (
+            <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading Forecasting Studio...</div>}>
+              <ForecastingView
+                dbConnected={dbConnected}
+                onConnectDatabase={() => {
+                  setConnectModalType("sqlite");
+                  setShowConnectModal(true);
+                }}
+                onTabChange={setActiveTab}
+                onOpenSqlLabWithQuery={(q) => {
+                  setSqlLabInitialQuery(q);
+                  setActiveTab("sqllab");
+                }}
+              />
+            </Suspense>
+          )}
+
+          {activeTab === "anomalies" && (
+            <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading Anomaly Center...</div>}>
+              <AnomalyCenterView
+                dbConnected={dbConnected}
+                onConnectDatabase={() => {
+                  setConnectModalType("sqlite");
+                  setShowConnectModal(true);
+                }}
+                onTabChange={setActiveTab}
+                onOpenSqlLabWithQuery={(q) => {
+                  setSqlLabInitialQuery(q);
+                  setActiveTab("sqllab");
+                }}
+                onRunAnalysis={(q) => {
+                  if (q) handleSend(q);
+                }}
+              />
+            </Suspense>
+          )}
+
+          {activeTab === "agents" && (
+            <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading AI Agent Center...</div>}>
+              <AgentCenterView
+                dbConnected={dbConnected}
+                dbType={dbType}
+                onNavigateTab={(tab: WorkspaceTab, target?: string) => {
+                  if (tab === "sqllab" && target) {
+                    handleOpenSqlLabWithTable(target);
+                  } else {
+                    setActiveTab(tab);
+                  }
+                }}
+              />
+            </Suspense>
           )}
 
           {activeTab === "sqllab" && (

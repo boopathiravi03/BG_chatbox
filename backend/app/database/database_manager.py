@@ -188,6 +188,15 @@ def disconnect_database(clear_profile=True):
 # ============================================================
 
 def get_current_db_type():
+    try:
+        from app.database.connection_context import get_request_db_type, get_request_user_id
+        if get_request_user_id() is not None:
+            return get_request_db_type()
+        req_type = get_request_db_type()
+        if req_type and req_type != "none":
+            return req_type
+    except Exception:
+        pass
     return current_db_type
 
 
@@ -198,18 +207,20 @@ def get_current_db_type():
 def get_engine():
     """
     ALWAYS return the currently connected database engine.
-
-    This is the important function used by:
-    - SELECT
-    - INSERT
-    - UPDATE
-    - DELETE
-    - charts
-    - analytics
-    - schema inspection
+    In Phase 7, checks the user's isolated request context first.
     """
+    try:
+        from app.database.connection_context import get_request_engine, get_request_user_id
+        if get_request_user_id() is not None:
+            return get_request_engine()
+        req_engine = get_request_engine()
+        if req_engine is not None:
+            return req_engine
+    except Exception:
+        pass
 
     return engine
+
 
 
 # ============================================================

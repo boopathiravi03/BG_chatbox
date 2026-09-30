@@ -76,6 +76,20 @@ def validate_sql(sql: str):
     # ---------------------------------------------------------
     # READ OPERATIONS
     # ---------------------------------------------------------
+    if operation == "pragma":
+        if "=" in sql:
+            return {
+                "allowed": False,
+                "operation": operation,
+                "reason": "PRAGMA configuration statements modifying database parameters are not permitted.",
+                "requires_confirmation": False,
+            }
+        return {
+            "allowed": True,
+            "operation": operation,
+            "requires_confirmation": False,
+        }
+
     if operation in READ_ONLY:
         return {
             "allowed": True,

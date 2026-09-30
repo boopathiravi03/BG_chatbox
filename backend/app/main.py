@@ -1,41 +1,105 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from pathlib import Path
-import re
+from __future__ import annotations
 
-from app.agent.orchestrator import run_agent, clear_pending_insert
+import os
+import re
+import logging
+from pathlib import Path
+
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# ── App init & Rate Limiter ───────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="BG AI", version="7.0.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+_PRODUCTION_ORIGINS = ["https://thebg.co.in"]
+_DEV_ORIGINS = os.getenv("BGAI_EXTRA_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000").split(",")
+_ALLOWED_ORIGINS = _PRODUCTION_ORIGINS + [o.strip() for o in _DEV_ORIGINS if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+)
+
+
+# ── Security headers middleware ───────────────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'none'"
+        if os.getenv("BGAI_PRODUCTION", "false").lower() == "true":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ── Auth & Context imports ────────────────────────────────────────────────────
+from app.security.auth import create_access_token
+from app.security.sessions import (
+    get_current_user, AuthenticatedUser,
+    register_user, authenticate_user, get_user_by_id,
+)
+from app.database.connection_context import (
+    set_user_context_for_request,
+    connect_sqlite_for_user,
+    connect_mysql_for_user,
+    connect_postgres_for_user,
+    clear_user_context,
+    get_user_context,
+)
+from app.security.user_cache import cache_clear_user
+
+# ── Tool imports ──────────────────────────────────────────────────────────────
+from app.agent.orchestrator import run_agent as _run_agent, clear_pending_insert, generate_suggestions
 from app.tools.get_schema import get_schema
 from app.tools.execute_query import validate_sql, execute_query
 from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
 from app.tools.analyze_database import analyze_database
 from app.database.db import get_database_info, get_dashboard_data
-from app.database.database_manager import connect_sqlite, connect_mysql, connect_postgres, get_current_db_type, get_engine, get_database_connection_info, disconnect_database
+from app.database.database_manager import get_current_db_type, get_database_connection_info
 from app.database.database_context import refresh_database_profile, get_database_profile, clear_database_profile
 from app.database.backup import create_backup, restore_backup, get_backup_dir
 from app.tools.optimize_sql import optimize_sql
-from fastapi.responses import FileResponse
-from app.agent.orchestrator import generate_suggestions
-
-app = FastAPI(title="BG AI")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
+# ── Startup ────────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 def startup():
-    """
-    Start BG AI without connecting to any database.
-    The user must explicitly upload or connect a database.
-    """
     clear_database_profile()
+    try:
+        import app.agents.audit_db
+        import app.security.models
+    except Exception:
+        pass
+
+
+# ── Pydantic request models ────────────────────────────────────────────────────
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: str = ""
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class ChatRequest(BaseModel):
@@ -51,203 +115,192 @@ class ConfirmQueryRequest(BaseModel):
 
 class DatabaseConnection(BaseModel):
     db_type: str
-    host: str
-    port: int
-    database: str
-    username: str
-    password: str
+    host: str = ""
+    port: int = 3306
+    database: str = ""
+    username: str = ""
+    password: str = ""
 
 
 class OptimizationRequest(BaseModel):
     sql: str
 
 
+class QueryRequest(BaseModel):
+    query: str
+
+
+class AgentRunRequest(BaseModel):
+    task: str
+    agent_name: str | None = None
+    context: dict | None = None
+
+
+def _activate(user: AuthenticatedUser):
+    set_user_context_for_request(user.user_id)
+
+
+# =============================================================================
+# PUBLIC ENDPOINTS
+# =============================================================================
+
 @app.get("/")
 def home():
-    return {"message": "Welcome to BG AI Backend"}
+    return {"message": "BG AI Backend v7", "status": "operational"}
 
+
+@app.post("/auth/register")
+@limiter.limit("5/minute")
+def auth_register(req: RegisterRequest, request: Request):
+    try:
+        if not req.username or len(req.username) < 3:
+            raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+        if not req.password or len(req.password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+        user = register_user(req.username, req.password, req.email)
+        token = create_access_token(user["user_id"], user["username"])
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user_id": user["user_id"],
+            "username": user["username"],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+
+@app.post("/auth/login")
+@limiter.limit("10/minute")
+def auth_login(req: LoginRequest, request: Request):
+    user = authenticate_user(req.username, req.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = create_access_token(user["user_id"], user["username"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user_id": user["user_id"],
+        "username": user["username"],
+    }
+
+
+@app.get("/auth/me")
+def auth_me(user: AuthenticatedUser = Depends(get_current_user)):
+    info = get_user_by_id(user.user_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return info
+
+
+# =============================================================================
+# PROTECTED ENDPOINTS (require Bearer token)
+# =============================================================================
 
 @app.post("/chat")
-def chat(req: ChatRequest):
+@limiter.limit("60/minute")
+def chat(req: ChatRequest, request: Request, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
     try:
-        return run_agent(
+        return _run_agent(
             req.message,
-            req.session_id,
+            f"{user.user_id}:{req.session_id}",
             input_values=req.input_values,
             pending_insert=req.pending_insert,
         )
-
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-
+        logging.getLogger("bgai").error("Chat error: %s", str(e), exc_info=True)
         return {
             "generated_sql": "",
-            "result": {
-                "success": False,
-                "error": str(e),
-            },
-            "explanation": f"Error: {str(e)}",
+            "result": {"success": False, "error": "Internal error. Please try again."},
+            "explanation": "An error occurred processing your request.",
             "followups": [],
         }
 
 
 @app.post("/confirm-query")
-def confirm_query(request: ConfirmQueryRequest):
+def confirm_query(request: ConfirmQueryRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
     try:
         from app.crud.service import execute_confirmed
-
-        result = execute_confirmed(request.session_id)
-
-        return result
-
+        return execute_confirmed(f"{user.user_id}:{request.session_id}")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-
-        return {
-            "success": False,
-            "confirmed": False,
-            "error": str(e),
-        }
+        return {"success": False, "confirmed": False, "error": str(e)}
 
 
 @app.post("/upload")
-async def upload_database(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def upload_database(
+    request: Request,
+    file: UploadFile = File(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
     try:
         contents = await file.read()
-
-        upload_dir = (
-            Path(__file__).resolve().parents[2]
-            / "database"
-        )
-
-        upload_dir.mkdir(exist_ok=True)
-
         safe_name = Path(file.filename).name
+
+        if not safe_name.lower().endswith((".db", ".sqlite", ".sqlite3")):
+            raise HTTPException(status_code=400, detail="Only .db / .sqlite / .sqlite3 files are accepted.")
+
+        upload_dir = Path(__file__).resolve().parents[2] / "database"
+        upload_dir.mkdir(exist_ok=True)
         db_path = upload_dir / safe_name
         db_path.write_bytes(contents)
 
-        # Make uploaded SQLite the ACTIVE database
-        connect_sqlite(str(db_path))
+        ctx = connect_sqlite_for_user(user.user_id, str(db_path))
+        set_user_context_for_request(user.user_id)
 
         profile = refresh_database_profile()
-
         return {
             "status": "success",
             "message": "Database uploaded successfully",
             "database": db_path.name,
             "tables": list(get_schema().keys()),
+            "context_id": ctx.context_id,
         }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-        }
-
-
-@app.post("/backup")
-def backup_database():
-    try:
-        return create_backup()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.post("/restore")
-async def restore_database(file: UploadFile = File(...)):
-    try:
-        backup_dir = get_backup_dir()
-        backup_path = backup_dir / file.filename
-
-        contents = await file.read()
-        backup_path.write_bytes(contents)
-
-        result = restore_backup(backup_path)
-        return result
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/download-backup")
-def download_backup():
-    try:
-        backup_dir = get_backup_dir()
-        backups = sorted(backup_dir.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
-
-        if not backups:
-            return {"status": "error", "message": "No backups found"}
-
-        latest = backups[0]
-        return FileResponse(
-            path=str(latest),
-            filename=latest.name,
-            media_type="application/octet-stream",
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
 @app.post("/connect")
-def connect_database(req: DatabaseConnection):
-
+@limiter.limit("10/minute")
+def connect_database(
+    req: DatabaseConnection,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
     try:
-
-        # Clear old database state FIRST
+        cache_clear_user(user.user_id)
         clear_pending_insert()
-
         try:
             from app.agent.orchestrator import conversation_state
-            conversation_state.clear()
+            conversation_state.pop(f"{user.user_id}:default", None)
         except Exception:
             pass
 
-        clear_database_profile()
-
-        # Completely remove previous connection
-        disconnect_database()
-
         if req.db_type == "mysql":
-
-            connect_mysql(
-                req.host,
-                req.port,
-                req.database,
-                req.username,
-                req.password,
+            ctx = connect_mysql_for_user(
+                user.user_id, req.host, req.port, req.database, req.username, req.password
             )
-
-            # Verify the SAME engine used by query execution
-            from app.database.database_manager import get_engine
-
-            engine = get_engine()
-
-            if engine is None:
-                raise RuntimeError("MySQL engine was not created.")
-
-            with engine.connect() as conn:
-                conn.exec_driver_sql("SELECT 1")
-
         elif req.db_type == "postgres":
-
-            connect_postgres(
-                req.host,
-                req.port,
-                req.database,
-                req.username,
-                req.password,
+            ctx = connect_postgres_for_user(
+                user.user_id, req.host, req.port, req.database, req.username, req.password
             )
-
         else:
-            return {
-                "status": "error",
-                "message": "Unsupported database type",
-            }
+            return {"status": "error", "message": "Unsupported database type"}
 
-        # Analyze ONLY the newly connected database
+        set_user_context_for_request(user.user_id)
         profile = refresh_database_profile()
-
         schema = get_schema()
 
         return {
@@ -258,119 +311,147 @@ def connect_database(req: DatabaseConnection):
             "schema": schema,
             "tables": list(schema.keys()),
             "table_count": len(schema),
-            "analysis": (
-                profile.to_context()
-                if profile
-                else ""
-            ),
+            "context_id": ctx.context_id,
+            "analysis": profile.to_context() if profile else "",
         }
     except Exception as e:
-        error_message = str(e)
-        if "1045" in error_message:
-            friendly_message = (
-                "Access denied. Please check your "
-                "username and password."
-            )
-        elif (
-            "does not exist" in error_message
-            and "database" in error_message.lower()
-        ):
-            friendly_message = (
-                "Database does not exist. "
-                "Please create the database first."
-            )
-        elif (
-            "2003" in error_message
-            or "Can't connect to MySQL server"
-            in error_message
-        ):
-            friendly_message = (
-                "Cannot connect to MySQL server. "
-                "Check the server, host and port."
-            )
+        err = str(e)
+        if "1045" in err:
+            msg = "Access denied. Check username and password."
+        elif "2003" in err or "Can't connect" in err:
+            msg = "Cannot reach database server. Check host and port."
+        elif "does not exist" in err and "database" in err.lower():
+            msg = "Database does not exist."
         else:
-            friendly_message = (
-                f"Connection failed: {error_message}"
-            )
-        return {
-            "status": "error",
-            "message": friendly_message,
-        }
+            msg = f"Connection failed: {err}"
+        return {"status": "error", "message": msg}
 
 
 @app.post("/disconnect")
-def disconnect():
+def disconnect(user: AuthenticatedUser = Depends(get_current_user)):
     try:
-        disconnect_database()
+        clear_user_context(user.user_id)
+        cache_clear_user(user.user_id)
         clear_database_profile()
-
-        # Clear pending AI operations
         clear_pending_insert()
 
-        # Clear conversation state
         try:
             from app.agent.orchestrator import conversation_state
-            conversation_state.clear()
+            to_del = [k for k in list(conversation_state.keys()) if k.startswith(user.user_id)]
+            for k in to_del:
+                conversation_state.pop(k, None)
         except Exception:
             pass
 
-        return {
-            "status": "success",
-            "message": "Database disconnected successfully",
-            "db_type": "none",
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-        }
+        try:
+            from app.intelligence.anomaly.detector import clear_cached_anomaly_report
+            clear_cached_anomaly_report()
+        except Exception:
+            pass
 
-
-@app.post("/optimize")
-def optimize_sql_endpoint(req: OptimizationRequest):
-    try:
-        result = optimize_sql(req.sql)
-        return result
+        return {"status": "success", "message": "Database disconnected successfully", "db_type": "none"}
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "original_query": req.sql,
-            "optimized_query": req.sql,
-            "improvements": [],
-            "estimated_improvement": "N/A",
-        }
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/schema")
-def schema():
+def schema_endpoint(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
     try:
         return get_schema()
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
-class QueryRequest(BaseModel):
-    query: str
+@app.get("/database-info")
+def database_info(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return get_database_info()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/database-type")
+def database_type(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return {"db_type": get_current_db_type()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/database-connection-info")
+def database_connection_info(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return get_database_connection_info()
+    except Exception as e:
+        return {"connected": False, "db_type": "none", "error": str(e)}
 
 
 @app.post("/query")
-def run_query(request: QueryRequest):
+@limiter.limit("30/minute")
+def run_query(request: Request, req: QueryRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
     try:
-        return execute_query(request.query)
+        return execute_query(req.query)
     except Exception as e:
-        return {
-            "success": False,
-            "columns": [],
-            "rows": [],
-            "error": str(e),
-            "rows_returned": 0,
-        }
+        return {"success": False, "columns": [], "rows": [], "error": str(e), "rows_returned": 0}
+
+
+@app.post("/optimize")
+def optimize_sql_endpoint(req: OptimizationRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return optimize_sql(req.sql)
+    except Exception as e:
+        return {"status": "error", "message": str(e), "original_query": req.sql, "optimized_query": req.sql, "improvements": []}
+
+
+@app.get("/dashboard")
+def dashboard(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return get_dashboard_data()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/analytics")
+def analytics(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return get_analytics_data()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/relationship-graph")
+def relationship_graph(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        return get_relationship_graph()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/suggestions")
+def suggestions(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        s = get_schema()
+        profile = get_database_profile()
+        db_ctx = profile.to_context() if profile and profile.analyzed else ""
+        return {"suggestions": generate_suggestions(s, db_ctx)}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "suggestions": []}
 
 
 @app.get("/analyze-business")
 @app.post("/analyze-business")
-def analyze_business_endpoint():
+def analyze_business_endpoint(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
     try:
         from app.tools.ai_analyst import analyze_business
         return analyze_business()
@@ -378,8 +459,234 @@ def analyze_business_endpoint():
         return {"status": "error", "message": str(e)}
 
 
+@app.post("/backup")
+@limiter.limit("5/minute")
+def backup_database(request: Request, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        result = create_backup()
+        if isinstance(result, dict):
+            result.pop("backup_path", None)
+            result.pop("path", None)
+        return result
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/restore")
+@limiter.limit("3/minute")
+async def restore_database(
+    request: Request,
+    file: UploadFile = File(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        safe_name = Path(file.filename).name
+        if not safe_name.lower().endswith(".db"):
+            raise HTTPException(status_code=400, detail="Only .db files are supported for restore.")
+
+        backup_dir = get_backup_dir()
+        backup_path = backup_dir / safe_name
+        contents = await file.read()
+        backup_path.write_bytes(contents)
+
+        result = restore_backup(backup_path)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/download-backup")
+def download_backup(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        backup_dir = get_backup_dir()
+        backups = sorted(backup_dir.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not backups:
+            return {"status": "error", "message": "No backups found"}
+        latest = backups[0]
+        return FileResponse(path=str(latest), filename=latest.name, media_type="application/octet-stream")
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence")
+@limiter.limit("10/minute")
+def intelligence_scan(request: Request, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        from app.intelligence.scanner import run_database_intelligence_scan
+        report = run_database_intelligence_scan(force_refresh=False)
+        if report is None:
+            return {"status": "error", "message": "No database connected."}
+        return report.to_dict() if hasattr(report, "to_dict") else {"status": "ok", "report": str(report)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ── Phase 5 Agent API ──────────────────────────────────────────────────────────
+
+from app.agents.registry import get_available_agents, run_agent_task, route_to_agent
+from app.agents.audit import (
+    get_action, list_actions, confirm_and_execute_action,
+    cancel_action, get_current_db_identity,
+)
+from app.agents.models import AgentTask
+
+
+@app.get("/agents")
+def list_agents(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        agents = get_available_agents()
+        return {"agents": [agent.to_dict() for agent in agents]}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/agents/run")
+@limiter.limit("20/minute")
+def run_agent_endpoint(
+    req: AgentRunRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        result = run_agent_task(req.task, req.agent_name, req.context or {})
+
+        if result.proposed_action is not None:
+            try:
+                ctx = get_user_context(user.user_id)
+                from app.agents.audit_db import store_action_persistent
+                store_action_persistent(result.proposed_action, user.user_id, ctx.context_id)
+            except Exception:
+                pass
+
+        return {"result": result.to_dict()}
+    except Exception as e:
+        logging.getLogger("bgai").error("Agent run error: %s", str(e), exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/agents/route")
+def route_agent(req: AgentRunRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        agent_name = route_to_agent(req.task)
+        return {"agent": agent_name, "task": req.task}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/agent-actions")
+def list_agent_actions(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        actions = list_actions()
+        return {"actions": [a.to_dict() for a in actions]}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/agent-actions/{action_id}")
+def get_agent_action(action_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        action = get_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        curr_identity = get_current_db_identity()
+        if action.database_identity != curr_identity:
+            raise HTTPException(status_code=403, detail="Access denied.")
+        return {"action": action.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/agent-actions/{action_id}/confirm")
+def confirm_agent_action(action_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        action = get_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail="Action not found.")
+
+        curr_identity = get_current_db_identity()
+        if action.database_identity != curr_identity:
+            raise HTTPException(status_code=403, detail="Access denied: action belongs to a different database context.")
+
+        try:
+            from app.agents.audit_db import is_action_expired
+            if is_action_expired(action_id):
+                action.status = "EXPIRED"
+                return {"success": False, "error": "Action has expired. Please create a new action plan."}
+        except Exception:
+            pass
+
+        result = confirm_and_execute_action(action_id)
+
+        try:
+            action_updated = get_action(action_id)
+            if action_updated:
+                from app.agents.audit_db import update_action_persistent
+                update_action_persistent(action_updated)
+        except Exception:
+            pass
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.getLogger("bgai").error("Confirm action error: %s", str(e), exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/agent-actions/{action_id}/cancel")
+def cancel_agent_action(action_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        action = get_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail="Action not found.")
+
+        curr_identity = get_current_db_identity()
+        if action.database_identity != curr_identity:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+        result = cancel_action(action_id)
+
+        try:
+            action_updated = get_action(action_id)
+            if action_updated:
+                from app.agents.audit_db import update_action_persistent
+                update_action_persistent(action_updated)
+        except Exception:
+            pass
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/audit-history")
+def audit_history(user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        from app.agents.audit_db import list_audit_events
+        return {"events": list_audit_events(user.user_id)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.post("/clear-db")
-def clear_db():
+def clear_db(user: AuthenticatedUser = Depends(get_current_user)):
     try:
         from app.database.db import get_database_path
         db_path = get_database_path()
@@ -388,73 +695,3 @@ def clear_db():
         return {"status": "success", "message": "Database cleared"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-
-@app.get("/database-info")
-def database_info():
-    try:
-        return get_database_info()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/database-type")
-def database_type():
-    try:
-        return {"db_type": get_current_db_type()}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/database-connection-info")
-def database_connection_info():
-    try:
-        return get_database_connection_info()
-    except Exception as e:
-        return {
-            "connected": False,
-            "db_type": "none",
-            "error": str(e),
-        }
-
-
-@app.get("/suggestions")
-def suggestions():
-    try:
-        schema = get_schema()
-        profile = get_database_profile()
-        database_context = profile.to_context() if profile and profile.analyzed else ""
-        return {"suggestions": generate_suggestions(schema, database_context)}
-    except Exception as e:
-        return {"status": "error", "message": str(e), "suggestions": []}
-
-
-@app.get("/dashboard")
-def dashboard():
-    try:
-        return get_dashboard_data()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/analytics")
-def analytics():
-    try:
-        return get_analytics_data()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/relationship-graph")
-def relationship_graph():
-    try:
-        return get_relationship_graph()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-print("\n===== REGISTERED ROUTES =====")
-for route in app.routes:
-    print(route.path, route.methods)
-print("=============================\n")
-

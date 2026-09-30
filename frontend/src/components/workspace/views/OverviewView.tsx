@@ -16,7 +16,8 @@ import {
   TrendingUp,
 } from "lucide-react";
 import type { WorkspaceTab } from "../WorkspaceSidebar";
-import { getDatabaseInfo, getSchema, getDashboardData } from "../../../services/api";
+import { getDatabaseInfo, getSchema, getDashboardData, getIntelligenceReport, getAnomalySummary } from "../../../services/api";
+
 
 interface OverviewViewProps {
   dbConnected: boolean;
@@ -24,6 +25,7 @@ interface OverviewViewProps {
   onTabChange: (tab: WorkspaceTab) => void;
   onConnectDatabase: () => void;
   onRunAnalysis: () => void;
+  onNavigateToAgents?: (prompt: string, agent?: string) => void;
 }
 
 export default function OverviewView({
@@ -32,6 +34,7 @@ export default function OverviewView({
   onTabChange,
   onConnectDatabase,
   onRunAnalysis,
+  onNavigateToAgents,
 }: OverviewViewProps) {
   const [dbInfo, setDbInfo] = useState<{
     database?: string;
@@ -42,21 +45,35 @@ export default function OverviewView({
   const [tableCount, setTableCount] = useState<number>(0);
   const [tablesList, setTablesList] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [healthScore, setHealthScore] = useState<number | null>(null);
+  const [anomalySummary, setAnomalySummary] = useState<{
+    total: number;
+    critical: number;
+    warning: number;
+  } | null>(null);
+  const [qualityIssues, setQualityIssues] = useState<number>(0);
+  const [perfIssues, setPerfIssues] = useState<number>(0);
 
   useEffect(() => {
     if (!dbConnected) {
       setDbInfo({});
       setTableCount(0);
       setTablesList([]);
+      setHealthScore(null);
+      setAnomalySummary(null);
+      setQualityIssues(0);
+      setPerfIssues(0);
       return;
     }
 
     const loadData = async () => {
       setLoading(true);
       try {
-        const [info, schema] = await Promise.allSettled([
+        const [info, schema, report, anomaly] = await Promise.allSettled([
           getDatabaseInfo(),
           getSchema(),
+          getIntelligenceReport(),
+          getAnomalySummary(),
         ]);
 
         if (info.status === "fulfilled" && info.value) {
@@ -66,6 +83,23 @@ export default function OverviewView({
           const names = Object.keys(schema.value).filter((k) => k !== "status");
           setTablesList(names);
           setTableCount(names.length);
+        }
+        if (report.status === "fulfilled" && report.value) {
+          const r = report.value;
+          setHealthScore(r.health_score ?? null);
+          setQualityIssues(
+            (r.data_quality?.null_heavy_columns?.length || 0) +
+            (r.data_quality?.orphan_foreign_keys?.length || 0) +
+            (r.data_quality?.empty_tables?.length || 0)
+          );
+          setPerfIssues(r.performance_findings?.length || 0);
+        }
+        if (anomaly.status === "fulfilled" && anomaly.value) {
+          setAnomalySummary({
+            total: anomaly.value.total || 0,
+            critical: anomaly.value.critical || 0,
+            warning: anomaly.value.warning || 0,
+          });
         }
       } catch (err) {
         console.error("Error loading overview data:", err);
