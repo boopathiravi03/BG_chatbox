@@ -8,6 +8,7 @@ import {
   disconnectDatabase,
   getDatabaseInfo,
   getDatabaseType,
+  getAuthToken,
 } from "../services/api";
 
 import WorkspaceSidebar, {
@@ -112,6 +113,12 @@ export default function Home() {
   }, [activeSessionId]);
 
   const refreshDbStatus = async () => {
+    if (!getAuthToken()) {
+      setDbConnected(false);
+      setDbType(null);
+      setDbInfo({});
+      return;
+    }
     try {
       const [info, typeData] = await Promise.all([
         getDatabaseInfo(),
@@ -482,6 +489,7 @@ export default function Home() {
             <OverviewView
               dbConnected={dbConnected}
               dbType={dbType}
+              initialDbInfo={dbInfo}
               onTabChange={setActiveTab}
               onConnectDatabase={() => {
                 setConnectModalType("sqlite");

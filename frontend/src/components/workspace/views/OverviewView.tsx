@@ -27,12 +27,19 @@ import {
   getAnomalySummary,
   getBusinessInsights,
   refreshBusinessInsights,
+  getAuthToken,
 } from "../../../services/api";
 import type { BusinessInsight } from "../../../types";
 
 interface OverviewViewProps {
   dbConnected: boolean;
   dbType: string | null;
+  initialDbInfo?: {
+    database?: string;
+    tables?: number;
+    rows?: number;
+    size?: string;
+  };
   onTabChange: (tab: WorkspaceTab) => void;
   onConnectDatabase: () => void;
   onRunAnalysis: () => void;
@@ -42,6 +49,7 @@ interface OverviewViewProps {
 export default function OverviewView({
   dbConnected,
   dbType,
+  initialDbInfo,
   onTabChange,
   onConnectDatabase,
   onRunAnalysis,
@@ -52,7 +60,7 @@ export default function OverviewView({
     tables?: number;
     rows?: number;
     size?: string;
-  }>({});
+  }>(initialDbInfo || {});
   const [tableCount, setTableCount] = useState<number>(0);
   const [tablesList, setTablesList] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,7 +79,7 @@ export default function OverviewView({
   const [selectedInsight, setSelectedInsight] = useState<BusinessInsight | null>(null);
 
   useEffect(() => {
-    if (!dbConnected) {
+    if (!dbConnected || !getAuthToken()) {
       setDbInfo({});
       setTableCount(0);
       setTablesList([]);
@@ -83,11 +91,19 @@ export default function OverviewView({
       return;
     }
 
+    if (initialDbInfo && initialDbInfo.database) {
+      setDbInfo(initialDbInfo);
+    }
+
     const loadData = async () => {
       setLoading(true);
       try {
+        const fetchInfoPromise = initialDbInfo?.database
+          ? Promise.resolve(initialDbInfo)
+          : getDatabaseInfo();
+
         const [info, schema, report, anomaly, biResp] = await Promise.allSettled([
-          getDatabaseInfo(),
+          fetchInfoPromise,
           getSchema(),
           getIntelligenceReport(),
           getAnomalySummary(),
@@ -95,7 +111,7 @@ export default function OverviewView({
         ]);
 
         if (info.status === "fulfilled" && info.value) {
-          setDbInfo(info.value);
+          setDbInfo(info.value as any);
         }
         if (schema.status === "fulfilled" && schema.value && typeof schema.value === "object") {
           const names = Object.keys(schema.value).filter((k) => k !== "status");
