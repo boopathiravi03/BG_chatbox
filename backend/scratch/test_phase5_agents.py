@@ -20,7 +20,6 @@ def test(name, fn):
         print(f"  [FAIL] {name}: {e}")
 
 
-
 # ============================================================
 # Tests 1-2: Agent Registry & Discovery
 # ============================================================
@@ -480,7 +479,6 @@ def test_30_phase2_regression():
         "parse_crud_intent must be importable and callable"
 
 
-
 def test_31_phase3_regression():
     """Test 31: Phase 3 - AI analyst exists."""
     from app.intelligence.ai_analyst.analyst import run_ai_analysis
@@ -569,4 +567,3 @@ if __name__ == "__main__":
             if r[0] == "FAIL":
                 print(f"  [FAIL] {r[1]}: {r[2]}")
     sys.exit(0 if failed == 0 else 1)
-

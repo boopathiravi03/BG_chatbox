@@ -102,7 +102,6 @@ class ActionAgent(BaseAgent):
         set_clause = context.get("set") or ""
         action_type = context.get("action_type") or ""
 
-
         # Parse orphan fix pattern e.g. "delete orphan records from orders where customer_id = 999"
         if not exact_sql:
             delete_match = re.search(r"delete\s+(?:.*?\s+from\s+|from\s+)?([a-zA-Z0-9_]+)\s+where\s+(.+)", task.request, re.IGNORECASE)
