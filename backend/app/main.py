@@ -43,7 +43,7 @@ _DOCS_CSP = (
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
     "img-src 'self' data: https://fastapi.tiangolo.com; "
     "font-src 'self' data:; "
-    "connect-src 'self'; "
+    "connect-src 'self' http://127.0.0.1:8001 https://bg-chatbox.onrender.com; "
     "frame-ancestors 'none';"
 )
 _STRICT_CSP = "default-src 'none'"
