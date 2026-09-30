@@ -176,6 +176,44 @@ def _is_general_knowledge_question(user_message: str) -> bool:
     )
 
 
+def _is_analysis_request(user_message: str) -> bool:
+    """
+    Detect requests for business analysis, data profiling,
+    or comprehensive database insights.
+
+    Examples:
+        - Analyze my business
+        - Analyze my database
+        - Give me business insights
+        - Show me data quality report
+        - Profile my data
+        - Analyze performance
+        - What are the trends in my data?
+        - Data health check
+    """
+    message = user_message.lower().strip()
+
+    analysis_patterns = [
+        r"\banalyze\b",
+        r"\banalysis\b",
+        r"\banalyse\b",
+        r"\bbusiness\s+(?:insights?|overview|performance|report|intelligence)\b",
+        r"\bdata\s+(?:quality|health|profil|insights?|overview|report|audit)\b",
+        r"\bdatabase\s+(?:insights?|overview|health|profil|report|audit)\b",
+        r"\bkpi\b",
+        r"\bkey\s+(?:performance|metrics)\b",
+        r"\btrend\s+analysis\b",
+        r"\banomal(?:y|ies)\s+detect\b",
+        r"\bgive\s+me\s+(?:an?\s+)?(?:overview|insights?|analysis|report)\b",
+        r"\bshow\s+(?:me\s+)?(?:insights?|trends?|anomalies)\b",
+        r"\bhealth\s+check\b",
+        r"\bprofil(?:e|ing)\s+(?:my\s+)?(?:data|database)\b",
+        r"\bsummar(?:y|ize)\s+(?:my\s+)?(?:data|database|business)\b",
+    ]
+
+    return any(re.search(p, message) for p in analysis_patterns)
+
+
 def _classify_intent(user_message: str, schema: dict) -> str:
 
     message = user_message.lower().strip()
@@ -355,6 +393,72 @@ Question: {user_message}
             "What can BG AI do?",
         ],
     }
+
+
+def _handle_analysis_request(user_message: str) -> dict:
+    """
+    Handle business analysis / data profiling requests.
+
+    Triggers deep database analysis and returns structured
+    AI insights, KPIs, data quality metrics, and recommendations.
+    """
+    try:
+        from app.tools.ai_analyst import analyze_business
+
+        analysis = analyze_business(user_message)
+
+        # Build the explanation from AI summary
+        explanation = analysis.get("ai_summary", "")
+
+        if not explanation:
+            explanation = "I analyzed your database but couldn't generate insights."
+
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": True,
+                "columns": [],
+                "rows": [],
+                "execution_time_ms": 0,
+                "rows_returned": 0,
+            },
+            "chart": None,
+            "diagram": None,
+            "analytics": analysis.get("analytics_data"),
+            "explanation": explanation,
+            "followups": [
+                "Show me data quality issues",
+                "Create a dashboard",
+                "Show table relationships",
+                "What tables have the most records?",
+            ],
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+
+        return {
+            "generated_sql": "",
+            "result": {
+                "success": False,
+                "columns": [],
+                "rows": [],
+                "rows_returned": 0,
+                "error": str(e),
+            },
+            "chart": None,
+            "diagram": None,
+            "analytics": None,
+            "explanation": (
+                f"I encountered an error while analyzing your database: {str(e)}\n\n"
+                "Please make sure a database is connected and try again."
+            ),
+            "followups": [
+                "How do I connect a database?",
+                "What databases do you support?",
+            ],
+        }
 
 
 def _handle_no_database_request(user_message: str) -> dict:
@@ -3927,7 +4031,39 @@ def run_agent(
         schema = None
 
     if schema is None:
+        # No database connected — but analysis still needs a DB
+        if _is_analysis_request(user_message):
+            return {
+                "generated_sql": "",
+                "result": {
+                    "success": False,
+                    "columns": [],
+                    "rows": [],
+                    "rows_returned": 0,
+                },
+                "chart": None,
+                "diagram": None,
+                "analytics": None,
+                "explanation": (
+                    "I'd love to analyze your data! However, no database "
+                    "is currently connected.\n\n"
+                    "Please connect or upload your database using the "
+                    "**Connect the Database** button, and I'll provide "
+                    "a comprehensive analysis with KPIs, insights, "
+                    "and recommendations."
+                ),
+                "followups": [
+                    "How do I connect a database?",
+                    "What databases do you support?",
+                ],
+            }
         return _handle_no_database_request(user_message)
+
+    # ---------------------------------------------------------
+    # Analysis requests: deep business intelligence
+    # ---------------------------------------------------------
+    if _is_analysis_request(user_message):
+        return _handle_analysis_request(user_message)
 
     if not schema:
         msg_clean = user_message.lower().strip()

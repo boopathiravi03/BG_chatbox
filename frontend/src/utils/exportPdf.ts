@@ -55,3 +55,37 @@ export async function exportChatPDF(messages: Message[]) {
 
   doc.save("BG_AI_Report.pdf");
 }
+
+export async function exportDocumentPDF(
+  title: string,
+  content: string,
+  filename: string = "BG_AI_Report.pdf",
+) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF();
+
+  let y = 20;
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text(title, 20, y);
+
+  y += 10;
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 20, y);
+
+  y += 12;
+  doc.setFontSize(10);
+  const lines = doc.splitTextToSize(content || "", 170);
+
+  lines.forEach((line: string) => {
+    if (y > 270) {
+      doc.addPage();
+      y = 20;
+    }
+    doc.text(line, 20, y);
+    y += 5.5;
+  });
+
+  doc.save(filename);
+}

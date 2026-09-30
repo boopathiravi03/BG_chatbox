@@ -175,3 +175,9 @@ export async function disconnectDatabase() {
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
   return response.json();
 }
+
+export async function getBusinessAnalysis() {
+  const response = await fetch(`${API_BASE}/analyze-business`);
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  return response.json();
+}

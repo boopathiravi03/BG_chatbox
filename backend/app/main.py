@@ -350,6 +350,34 @@ def schema():
         return {"status": "error", "message": str(e)}
 
 
+class QueryRequest(BaseModel):
+    query: str
+
+
+@app.post("/query")
+def run_query(request: QueryRequest):
+    try:
+        return execute_query(request.query)
+    except Exception as e:
+        return {
+            "success": False,
+            "columns": [],
+            "rows": [],
+            "error": str(e),
+            "rows_returned": 0,
+        }
+
+
+@app.get("/analyze-business")
+@app.post("/analyze-business")
+def analyze_business_endpoint():
+    try:
+        from app.tools.ai_analyst import analyze_business
+        return analyze_business()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.post("/clear-db")
 def clear_db():
     try:
