@@ -58,8 +58,10 @@ def get_action(action_id: str) -> Optional[ActionPlan]:
 def list_actions(db_identity_only: bool = True) -> list[ActionPlan]:
     with _lock:
         current_id = get_current_db_identity()
+        if db_identity_only and current_id == "none":
+            return []
         actions = list(_action_store.values())
-        if db_identity_only and current_id != "none":
+        if db_identity_only:
             actions = [a for a in actions if a.database_identity == current_id]
         # Return sorted latest first
         actions.sort(key=lambda a: a.created_at, reverse=True)

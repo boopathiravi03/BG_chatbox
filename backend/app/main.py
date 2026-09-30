@@ -586,8 +586,11 @@ def route_agent(req: AgentRunRequest, user: AuthenticatedUser = Depends(get_curr
 def list_agent_actions(user: AuthenticatedUser = Depends(get_current_user)):
     _activate(user)
     try:
-        actions = list_actions()
-        return {"actions": [a.to_dict() for a in actions]}
+        curr_identity = get_current_db_identity()
+        if curr_identity == "none":
+            return {"actions": []}
+        actions = list_actions(db_identity_only=True)
+        return {"actions": [a.to_dict() for a in actions if a.database_identity == curr_identity]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
