@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Database, Upload, X, FileUp, Loader2 } from "lucide-react";
-import { API_BASE } from "../../services/api";
+import { uploadDatabase } from "../../services/api";
 import {
   modalBackdropVariants,
   modalContainerVariants,
@@ -39,17 +39,9 @@ export default function DatabaseUploader({ onClose, onUploadComplete }: Props) {
     setUploading(true);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
+      const data = await uploadDatabase(file);
 
-      const response = await fetch(`${API_BASE}/upload`, {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.status === "success") {
+      if (data.status === "success") {
         toast.success("SQLite database attached successfully!");
         setTimeout(() => {
           onClose();

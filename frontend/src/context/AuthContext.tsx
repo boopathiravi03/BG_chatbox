@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { API_BASE, getAuthToken, setAuthToken } from '../services/api';
 
 interface User {
   user_id: string;
@@ -18,45 +19,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-// Token stored in memory (not localStorage) to avoid XSS exposure.
-// For persistent sessions across page refresh, we use sessionStorage
-// which is cleared when the tab/browser closes.
-let _memoryToken: string | null = null;
-
-const TOKEN_KEY = 'bgai_session';
-
-function readToken(): string | null {
-  if (_memoryToken) return _memoryToken;
-  try {
-    return sessionStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeToken(t: string | null): void {
-  _memoryToken = t;
-  try {
-    if (t) {
-      sessionStorage.setItem(TOKEN_KEY, t);
-    } else {
-      sessionStorage.removeItem(TOKEN_KEY);
-    }
-  } catch {
-    // sessionStorage unavailable (e.g. private mode)
-  }
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(getAuthToken());
   const [isLoading, setIsLoading] = useState(true);
+
+  const logout = useCallback(() => {
+    setAuthToken(null);
+    setToken(null);
+    setUser(null);
+  }, []);
+
+  // Listen for 401 session expiration event
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      logout();
+    };
+    window.addEventListener('bgai:auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('bgai:auth-expired', handleAuthExpired);
+  }, [logout]);
 
   // On mount: restore session from sessionStorage and validate token
   useEffect(() => {
-    const stored = readToken();
+    const stored = getAuthToken();
     if (stored) {
       fetch(`${API_BASE}/auth/me`, {
         headers: { Authorization: `Bearer ${stored}` },
@@ -66,17 +51,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const data = await res.json();
             setUser({ user_id: data.user_id, username: data.username, email: data.email });
             setToken(stored);
-            _memoryToken = stored;
           } else {
-            writeToken(null);
+            logout();
           }
         })
-        .catch(() => writeToken(null))
+        .catch(() => logout())
         .finally(() => setIsLoading(false));
     } else {
       setIsLoading(false);
     }
-  }, []);
+  }, [logout]);
 
   const login = useCallback(async (username: string, password: string) => {
     try {
@@ -87,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json();
       if (res.ok && data.access_token) {
-        writeToken(data.access_token);
+        setAuthToken(data.access_token);
         setToken(data.access_token);
         setUser({ user_id: data.user_id, username: data.username });
         return { success: true };
@@ -107,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json();
       if (res.ok && data.access_token) {
-        writeToken(data.access_token);
+        setAuthToken(data.access_token);
         setToken(data.access_token);
         setUser({ user_id: data.user_id, username: data.username });
         return { success: true };
@@ -116,13 +100,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       return { success: false, error: 'Network error. Is the backend running?' };
     }
-  }, []);
-
-  const logout = useCallback(() => {
-    writeToken(null);
-    setToken(null);
-    setUser(null);
-    _memoryToken = null;
   }, []);
 
   return (
@@ -140,7 +117,4 @@ export function useAuth(): AuthContextType {
   return ctx;
 }
 
-/** Returns the current token for use in API calls. */
-export function getAuthToken(): string | null {
-  return readToken();
-}
+export { getAuthToken } from '../services/api';

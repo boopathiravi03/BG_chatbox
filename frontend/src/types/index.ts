@@ -441,5 +441,52 @@ export interface AgentActionResponse {
   action?: ActionPlan;
 }
 
+export interface BusinessInsight {
+  id: string;
+  title: string;
+  summary: string;
+  category:
+    | "TREND"
+    | "GROWTH"
+    | "DECLINE"
+    | "TOP_CONTRIBUTOR"
+    | "CONCENTRATION"
+    | "QUALITY"
+    | "ANOMALY"
+    | "FORECAST"
+    | "PERFORMANCE"
+    | "DATA_COMPLETENESS"
+    | string;
+  severity: "INFO" | "WARNING" | "CRITICAL";
+  priority: number;
+  metric?: string | null;
+  current_value?: any;
+  previous_value?: any;
+  change_value?: any;
+  change_percent?: number | null;
+  source_tables: string[];
+  source_columns: string[];
+  sql?: string | null;
+  evidence: Record<string, any>;
+  generated_at: string;
+  investigation_type: string;
+  recommended_next_step: string;
+}
+
+export interface BusinessInsightsResponse {
+  success: boolean;
+  status?: string;
+  message?: string;
+  generated_at?: string;
+  database_context?: any;
+  insights: BusinessInsight[];
+  summary: {
+    total: number;
+    critical: number;
+    warning: number;
+    info: number;
+  };
+}
+
 
 

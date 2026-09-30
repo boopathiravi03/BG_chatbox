@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Database, Table, Rows, TrendingUp } from "lucide-react";
-import { API_BASE } from "../../services/api";
+import { getDashboardData } from "../../services/api";
 
 interface DashboardData {
   table_count: number;
@@ -42,11 +42,10 @@ export default function DashboardCards({ uploadVersion = 0 }: Props) {
   useEffect(() => {
     const fetchDashboard = async () => {
       try {
-        const response = await fetch(`${API_BASE}/dashboard`);
-        const json = await response.json();
+        const json = await getDashboardData();
         setData(json);
-      } catch (error) {
-        console.error("Failed to fetch dashboard:", error);
+      } catch {
+        setData(null);
       } finally {
         setLoading(false);
       }

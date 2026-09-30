@@ -14,10 +14,21 @@ import {
   AlertTriangle,
   CheckCircle2,
   TrendingUp,
+  Lightbulb,
+  RefreshCw,
+  FileCode2,
+  X,
 } from "lucide-react";
 import type { WorkspaceTab } from "../WorkspaceSidebar";
-import { getDatabaseInfo, getSchema, getDashboardData, getIntelligenceReport, getAnomalySummary } from "../../../services/api";
-
+import {
+  getDatabaseInfo,
+  getSchema,
+  getIntelligenceReport,
+  getAnomalySummary,
+  getBusinessInsights,
+  refreshBusinessInsights,
+} from "../../../services/api";
+import type { BusinessInsight } from "../../../types";
 
 interface OverviewViewProps {
   dbConnected: boolean;
@@ -54,6 +65,11 @@ export default function OverviewView({
   const [qualityIssues, setQualityIssues] = useState<number>(0);
   const [perfIssues, setPerfIssues] = useState<number>(0);
 
+  // Phase 8.1 Automated Business Intelligence
+  const [insights, setInsights] = useState<BusinessInsight[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState<boolean>(false);
+  const [selectedInsight, setSelectedInsight] = useState<BusinessInsight | null>(null);
+
   useEffect(() => {
     if (!dbConnected) {
       setDbInfo({});
@@ -63,17 +79,19 @@ export default function OverviewView({
       setAnomalySummary(null);
       setQualityIssues(0);
       setPerfIssues(0);
+      setInsights([]);
       return;
     }
 
     const loadData = async () => {
       setLoading(true);
       try {
-        const [info, schema, report, anomaly] = await Promise.allSettled([
+        const [info, schema, report, anomaly, biResp] = await Promise.allSettled([
           getDatabaseInfo(),
           getSchema(),
           getIntelligenceReport(),
           getAnomalySummary(),
+          getBusinessInsights(),
         ]);
 
         if (info.status === "fulfilled" && info.value) {
@@ -96,10 +114,13 @@ export default function OverviewView({
         }
         if (anomaly.status === "fulfilled" && anomaly.value) {
           setAnomalySummary({
-            total: anomaly.value.total || 0,
-            critical: anomaly.value.critical || 0,
-            warning: anomaly.value.warning || 0,
+            total: anomaly.value.total_count ?? anomaly.value.total ?? 0,
+            critical: anomaly.value.critical_count ?? anomaly.value.critical ?? 0,
+            warning: anomaly.value.warning_count ?? anomaly.value.warning ?? 0,
           });
+        }
+        if (biResp.status === "fulfilled" && biResp.value && biResp.value.insights) {
+          setInsights(biResp.value.insights);
         }
       } catch (err) {
         console.error("Error loading overview data:", err);
@@ -110,6 +131,20 @@ export default function OverviewView({
 
     loadData();
   }, [dbConnected]);
+
+  const handleRefreshInsights = async () => {
+    setInsightsLoading(true);
+    try {
+      const resp = await refreshBusinessInsights();
+      if (resp && resp.insights) {
+        setInsights(resp.insights);
+      }
+    } catch {
+      // Keep existing insights on transient error
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
 
   // If no database connected, render professional empty state
   if (!dbConnected) {
@@ -131,8 +166,8 @@ export default function OverviewView({
 
             <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
               BG AI automatically profiles your tables, detects key business metrics,
-              monitors data health, and allows you to run natural-language SQL queries
-              with complete safety.
+              discovers revenue and volume trends, and allows you to run natural-language queries
+              with complete enterprise safety.
             </p>
 
             <div className="pt-2 flex flex-wrap items-center gap-3">
@@ -267,8 +302,12 @@ export default function OverviewView({
             <span>Data Health</span>
             <ShieldCheck size={15} className="text-emerald-400" />
           </div>
-          <p className="text-2xl font-bold text-emerald-400 font-mono">Healthy</p>
-          <p className="text-[11px] text-zinc-400">Nulls & FK integrity verified</p>
+          <p className="text-2xl font-bold text-emerald-400 font-mono">
+            {healthScore !== null ? `${healthScore}/100` : "Healthy"}
+          </p>
+          <p className="text-[11px] text-zinc-400">
+            {qualityIssues > 0 ? `${qualityIssues} items flagged` : "Zero critical issues"}
+          </p>
         </div>
 
         <div className="p-5 rounded-xl bg-[#121216] border border-white/[0.06] space-y-1">
@@ -280,6 +319,102 @@ export default function OverviewView({
           <p className="text-[11px] text-zinc-400">SQLAlchemy driver</p>
         </div>
       </div>
+
+      {/* Phase 8.1: Automated Business Intelligence Insights */}
+      {insights.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <Lightbulb size={14} />
+              </div>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                Automated Business Insights
+              </h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">
+                {insights.length} Verified
+              </span>
+            </div>
+
+            <button
+              onClick={handleRefreshInsights}
+              disabled={insightsLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={insightsLoading ? "animate-spin text-indigo-400" : ""} />
+              <span>Refresh Insights</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {insights.slice(0, 4).map((ins) => {
+              const severityColor =
+                ins.severity === "CRITICAL"
+                  ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
+                  : ins.severity === "WARNING"
+                  ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
+                  : "bg-blue-500/15 border-blue-500/30 text-blue-300";
+
+              return (
+                <div
+                  key={ins.id}
+                  className="p-5 rounded-2xl bg-[#121216] border border-white/[0.08] hover:border-white/[0.16] transition-all flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300">
+                        {ins.category}
+                      </span>
+                      <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}>
+                        {ins.severity}
+                      </span>
+                    </div>
+
+                    <h4 className="text-sm font-bold text-white tracking-tight">
+                      {ins.title}
+                    </h4>
+
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      {ins.summary}
+                    </p>
+
+                    {ins.recommended_next_step && (
+                      <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400">
+                        <strong className="text-zinc-200">Recommended Next Step: </strong>
+                        {ins.recommended_next_step}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                    <button
+                      onClick={() => setSelectedInsight(ins)}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <FileCode2 size={13} />
+                      <span>Inspect Evidence & SQL</span>
+                    </button>
+
+                    {onNavigateToAgents && (
+                      <button
+                        onClick={() =>
+                          onNavigateToAgents(
+                            `Analyze and act on insight: ${ins.title}. Recommended action: ${ins.recommended_next_step}`
+                          )
+                        }
+                        className="text-[11px] text-zinc-400 hover:text-white inline-flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <span>Take Action</span>
+                        <ArrowRight size={11} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quick Action Buttons */}
       <div className="space-y-3">
@@ -374,6 +509,67 @@ export default function OverviewView({
                 />
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Evidence & SQL Inspection Modal */}
+      {selectedInsight && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-[#121216] border border-white/10 shadow-2xl p-6 space-y-4 text-left">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300">
+                  {selectedInsight.category}
+                </span>
+                <h3 className="text-base font-bold text-white mt-1.5">
+                  {selectedInsight.title}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedInsight(null)}
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              {selectedInsight.summary}
+            </p>
+
+            {/* Lineage SQL */}
+            {selectedInsight.sql && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  Reproducible SQL Query
+                </p>
+                <div className="p-3 rounded-xl bg-black/50 border border-white/[0.06] font-mono text-xs text-emerald-400 overflow-x-auto whitespace-pre-wrap">
+                  {selectedInsight.sql}
+                </div>
+              </div>
+            )}
+
+            {/* Structured Evidence */}
+            {selectedInsight.evidence && Object.keys(selectedInsight.evidence).length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  Verified Evidence
+                </p>
+                <div className="p-3 rounded-xl bg-black/40 border border-white/[0.06] font-mono text-[11px] text-zinc-300 overflow-x-auto whitespace-pre-wrap">
+                  {JSON.stringify(selectedInsight.evidence, null, 2)}
+                </div>
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-white/[0.08] flex justify-end">
+              <button
+                onClick={() => setSelectedInsight(null)}
+                className="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-xs font-semibold text-white transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

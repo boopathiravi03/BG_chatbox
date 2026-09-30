@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   HardDrive,
 } from "lucide-react";
-import { connectDatabase, API_BASE } from "../../services/api";
+import { connectDatabase, uploadDatabase } from "../../services/api";
 import {
   modalBackdropVariants,
   modalContainerVariants,
@@ -192,18 +192,10 @@ export default function ConnectDatabaseModal({
         setStageMessage("Validating database schema and indexing tables...");
       }, 400);
 
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch(`${API_BASE}/upload`, {
-        method: "POST",
-        body: formData,
-      });
-
+      const data = await uploadDatabase(file);
       clearTimeout(verifyTimer);
-      const data = await response.json();
 
-      if (response.ok && data.status === "success") {
+      if (data.status === "success") {
         setStage("connected");
         setConnectedSummary({
           name: file.name,

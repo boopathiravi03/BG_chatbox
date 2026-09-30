@@ -57,7 +57,18 @@ def set_database(db_path: Path):
 
 def get_database_info():
     try:
-        active_engine = _active_engine()
+        active_engine = get_engine()
+        if active_engine is None:
+            return {
+                "connected": False,
+                "db_type": "none",
+                "database": "Not Connected",
+                "tables": 0,
+                "rows": 0,
+                "columns": 0,
+                "size": "0 B",
+            }
+
         inspector = inspect(active_engine)
         tables = inspector.get_table_names()
 

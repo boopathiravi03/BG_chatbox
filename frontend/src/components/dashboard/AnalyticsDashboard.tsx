@@ -13,7 +13,7 @@ import {
   Legend,
 } from "chart.js";
 import type { AnalyticsData } from "../../types";
-import { API_BASE } from "../../services/api";
+import { getAnalytics } from "../../services/api";
 
 ChartJS.register(
   CategoryScale,
@@ -51,11 +51,10 @@ export default function AnalyticsDashboard({ data }: Props) {
 
     const fetchAnalytics = async () => {
       try {
-        const response = await fetch(`${API_BASE}/analytics`);
-        const json = await response.json();
+        const json = await getAnalytics();
         setAnalytics(json);
-      } catch (error) {
-        console.error("Failed to fetch analytics:", error);
+      } catch {
+        setAnalytics(null);
       } finally {
         setLoading(false);
       }

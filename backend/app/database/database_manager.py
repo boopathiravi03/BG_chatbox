@@ -236,19 +236,21 @@ def is_database_connected():
 # ============================================================
 
 def get_database_connection_info():
+    active_eng = get_engine()
+    active_type = get_current_db_type()
 
-    if engine is None:
+    if active_eng is None or active_type == "none":
         return {
             "connected": False,
             "db_type": "none",
         }
 
     try:
-        url = engine.url
+        url = active_eng.url
 
         return {
             "connected": True,
-            "db_type": current_db_type,
+            "db_type": active_type,
             "host": url.host,
             "port": url.port,
             "database": url.database,
@@ -260,7 +262,7 @@ def get_database_connection_info():
 
         return {
             "connected": True,
-            "db_type": current_db_type,
+            "db_type": active_type,
             "error": str(e),
         }
 
@@ -270,8 +272,10 @@ def get_database_connection_info():
 # ============================================================
 
 def test_active_connection():
+    active_eng = get_engine()
+    active_type = get_current_db_type()
 
-    if engine is None:
+    if active_eng is None or active_type == "none":
         return {
             "connected": False,
             "db_type": "none",
@@ -280,12 +284,12 @@ def test_active_connection():
 
     try:
 
-        with engine.connect() as conn:
+        with active_eng.connect() as conn:
             conn.execute(text("SELECT 1"))
 
         return {
             "connected": True,
-            "db_type": current_db_type,
+            "db_type": active_type,
             "message": "Database connection is active.",
         }
 

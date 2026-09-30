@@ -93,7 +93,7 @@ from app.tools.get_relationship_graph import get_relationship_graph
 from app.tools.dashboard_data import get_dashboard_data as get_analytics_data
 from app.tools.analyze_database import analyze_database
 from app.database.db import get_database_info, get_dashboard_data
-from app.database.database_manager import get_current_db_type, get_database_connection_info
+from app.database.database_manager import get_current_db_type, get_database_connection_info, get_engine
 from app.database.database_context import refresh_database_profile, get_database_profile, clear_database_profile
 from app.database.backup import create_backup, restore_backup, get_backup_dir
 from app.tools.optimize_sql import optimize_sql
@@ -154,6 +154,21 @@ class AgentRunRequest(BaseModel):
     task: str
     agent_name: str | None = None
     context: dict | None = None
+
+
+class AnalystAskRequest(BaseModel):
+    question: str
+    table: str | None = None
+    metric: str | None = None
+
+
+class ForecastRequest(BaseModel):
+    table: str
+    date_column: str
+    metric_column: str | None = None
+    frequency: str = "monthly"
+    horizon: int = 3
+    aggregation: str = "SUM"
 
 
 def _activate(user: AuthenticatedUser):
@@ -316,6 +331,8 @@ def connect_database(
             ctx = connect_postgres_for_user(
                 user.user_id, req.host, req.port, req.database, req.username, req.password
             )
+        elif req.db_type == "sqlite":
+            ctx = connect_sqlite_for_user(user.user_id, req.database)
         else:
             return {"status": "error", "message": "Unsupported database type"}
 
@@ -389,16 +406,30 @@ def database_info(user: AuthenticatedUser = Depends(get_current_user)):
     try:
         return get_database_info()
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "connected": False,
+            "db_type": "none",
+            "database": "Not Connected",
+            "tables": 0,
+            "rows": 0,
+            "columns": 0,
+            "size": "0 B",
+            "error": str(e),
+        }
 
 
 @app.get("/database-type")
 def database_type(user: AuthenticatedUser = Depends(get_current_user)):
     _activate(user)
     try:
-        return {"db_type": get_current_db_type()}
+        eng = get_engine()
+        db_t = get_current_db_type()
+        return {
+            "connected": eng is not None and db_t != "none",
+            "db_type": db_t,
+        }
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"connected": False, "db_type": "none", "error": str(e)}
 
 
 @app.get("/database-connection-info")
@@ -534,17 +565,261 @@ def download_backup(user: AuthenticatedUser = Depends(get_current_user)):
 
 
 @app.get("/intelligence")
-@limiter.limit("10/minute")
-def intelligence_scan(request: Request, user: AuthenticatedUser = Depends(get_current_user)):
+@app.get("/intelligence/report")
+@limiter.limit("20/minute")
+def intelligence_report_endpoint(
+    request: Request,
+    force_refresh: bool = False,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
     _activate(user)
     try:
         from app.intelligence.scanner import run_database_intelligence_scan
-        report = run_database_intelligence_scan(force_refresh=False)
+        report = run_database_intelligence_scan(force_refresh=force_refresh)
         if report is None:
-            return {"status": "error", "message": "No database connected."}
-        return report.to_dict() if hasattr(report, "to_dict") else {"status": "ok", "report": str(report)}
+            return {"status": "error", "message": "No database connected.", "report": None}
+        return {"status": "success", "report": report.to_dict() if hasattr(report, "to_dict") else report}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e), "report": None}
+
+
+@app.post("/intelligence/scan")
+@limiter.limit("10/minute")
+def intelligence_scan_post(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.scanner import run_database_intelligence_scan
+        report = run_database_intelligence_scan(force_refresh=True)
+        if report is None:
+            return {"status": "error", "message": "No database connected.", "report": None}
+        return {"status": "success", "report": report.to_dict() if hasattr(report, "to_dict") else report}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "report": None}
+
+
+@app.get("/intelligence/table/{table_name}")
+def get_table_profile_endpoint(
+    table_name: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.table_explorer import get_table_profile
+        profile = get_table_profile(table_name)
+        return {"status": "success", "table": profile}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "table": None}
+
+
+@app.get("/intelligence/table/{table_name}/sample")
+def get_table_sample_endpoint(
+    table_name: str,
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str | None = None,
+    sort_dir: str = "asc",
+    search: str | None = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.table_explorer import get_table_sample
+        sample = get_table_sample(
+            table_name=table_name,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            search=search,
+        )
+        return {"status": "success", "sample": sample}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "sample": None}
+
+
+@app.get("/intelligence/column/{table_name}/{column_name}")
+def get_column_profile_endpoint(
+    table_name: str,
+    column_name: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.table_explorer import get_column_profile
+        profile = get_column_profile(table_name, column_name)
+        return {"status": "success", "column": profile}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "column": None}
+
+
+@app.post("/analyst/ask")
+@limiter.limit("30/minute")
+def analyst_ask_endpoint(
+    request: Request,
+    req: AnalystAskRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.ai_analyst.analyst import run_ai_analysis
+        result = run_ai_analysis(
+            question=req.question,
+            target_table=req.table,
+            target_metric=req.metric,
+        )
+        return {"status": "success", "analysis": result.to_dict() if hasattr(result, "to_dict") else result}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "analysis": None}
+
+
+@app.get("/analyst/quick-actions")
+def analyst_quick_actions_endpoint(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.ai_analyst.analyst import generate_quick_actions
+        actions = generate_quick_actions()
+        return {"status": "success", "actions": [a.to_dict() if hasattr(a, "to_dict") else a for a in actions]}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "actions": []}
+
+
+@app.get("/forecasting/candidates")
+def forecasting_candidates_endpoint(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.forecasting.detector import detect_forecast_candidates
+        candidates, message = detect_forecast_candidates()
+        return {
+            "status": "success" if candidates else "no_candidates",
+            "candidates": [c.to_dict() if hasattr(c, "to_dict") else c for c in candidates],
+            "message": message,
+        }
+    except Exception as e:
+        return {"status": "error", "candidates": [], "message": str(e)}
+
+
+@app.post("/forecasting/generate")
+@limiter.limit("20/minute")
+def forecasting_generate_endpoint(
+    request: Request,
+    req: ForecastRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.forecasting.forecaster import run_forecast
+        forecast = run_forecast(
+            table=req.table,
+            date_column=req.date_column,
+            metric_column=req.metric_column,
+            frequency=req.frequency,
+            horizon=req.horizon,
+            aggregation=req.aggregation,
+        )
+        return {"status": "success", "forecast": forecast.to_dict() if hasattr(forecast, "to_dict") else forecast}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "forecast": None}
+
+
+@app.get("/anomaly/report")
+@limiter.limit("20/minute")
+def anomaly_report_endpoint(
+    request: Request,
+    force_refresh: bool = False,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.anomaly.detector import detect_anomalies
+        report = detect_anomalies(force_refresh=force_refresh)
+        return {"status": "success", "report": report.to_dict() if hasattr(report, "to_dict") else report}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "report": None}
+
+
+@app.get("/anomaly/summary")
+def anomaly_summary_endpoint(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.anomaly.detector import detect_anomalies
+        report = detect_anomalies(force_refresh=False)
+        rep_dict = report.to_dict() if hasattr(report, "to_dict") else report
+        return {
+            "status": "success",
+            "critical_count": rep_dict.get("summary", {}).get("critical_count", 0),
+            "warning_count": rep_dict.get("summary", {}).get("warning_count", 0),
+            "info_count": rep_dict.get("summary", {}).get("info_count", 0),
+            "total_count": rep_dict.get("total_anomalies", 0),
+            "clean_tables": rep_dict.get("clean_tables", []),
+            "anomalies": rep_dict.get("anomalies", []),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "critical_count": 0,
+            "warning_count": 0,
+            "info_count": 0,
+            "total_count": 0,
+            "clean_tables": [],
+            "anomalies": [],
+            "error": str(e),
+        }
+
+
+@app.get("/intelligence/insights")
+@limiter.limit("20/minute")
+def business_insights_endpoint(
+    request: Request,
+    force_refresh: bool = False,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.business_intelligence.insight_engine import generate_business_intelligence_report
+        report = generate_business_intelligence_report(user_id=user.user_id, force_refresh=force_refresh)
+        return report.to_dict()
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "database_name": "unknown",
+            "database_type": "none",
+            "summary": {"total_insights": 0, "critical": 0, "warning": 0, "info": 0, "opportunity": 0},
+            "insights": [],
+            "generated_at": "",
+        }
+
+
+@app.post("/intelligence/insights/refresh")
+@limiter.limit("10/minute")
+def business_insights_refresh_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.business_intelligence.insight_engine import generate_business_intelligence_report
+        report = generate_business_intelligence_report(user_id=user.user_id, force_refresh=True)
+        return report.to_dict()
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "database_name": "unknown",
+            "database_type": "none",
+            "summary": {"total_insights": 0, "critical": 0, "warning": 0, "info": 0, "opportunity": 0},
+            "insights": [],
+            "generated_at": "",
+        }
 
 
 # ── Phase 5 Agent API ──────────────────────────────────────────────────────────
@@ -653,6 +928,17 @@ def confirm_agent_action(action_id: str, user: AuthenticatedUser = Depends(get_c
             pass
 
         result = confirm_and_execute_action(action_id)
+
+        if result.get("success"):
+            try:
+                from app.security.user_cache import (
+                    cache_delete, CACHE_INSIGHTS_REPORT, CACHE_ANALYTICS, CACHE_DATABASE_PROFILE
+                )
+                cache_delete(user.user_id, CACHE_INSIGHTS_REPORT)
+                cache_delete(user.user_id, CACHE_ANALYTICS)
+                cache_delete(user.user_id, CACHE_DATABASE_PROFILE)
+            except Exception:
+                pass
 
         try:
             action_updated = get_action(action_id)
