@@ -3,18 +3,10 @@ import {
   Table,
   Search,
   Key,
-  Shield,
   Layers,
-  ArrowRight,
   Database,
   Terminal,
-  BarChart2,
   Plug,
-  ExternalLink,
-  Hash,
-  Type,
-  Calendar,
-  AlertCircle,
 } from "lucide-react";
 import { getSchema } from "../../../services/api";
 
@@ -24,11 +16,107 @@ interface DataExplorerViewProps {
   onConnectDatabase?: () => void;
 }
 
-interface ColumnDetail {
-  name: string;
-  type: string;
-  isPk?: boolean;
+interface ColumnMetadata {
+  type?: string;
   nullable?: boolean;
+  primary_key?: boolean;
+  default?: unknown;
+}
+
+type ColumnDefinition = string | ColumnMetadata;
+
+/**
+ * Safely converts any primitive, array, or object into a displayable string
+ * to prevent React "Objects are not valid as a React child" rendering errors.
+ */
+function formatDisplayValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatDisplayValue).join(", ");
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if ("type" in obj && typeof obj.type === "string") {
+      return obj.type;
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+interface ParsedColumnInfo {
+  type: string;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  isNullable: boolean;
+  defaultValue: unknown;
+  constraint: string;
+}
+
+/**
+ * Extracts and normalizes column metadata from either legacy string types
+ * or modern structured metadata objects { type, nullable, primary_key, default }.
+ */
+function parseColumnInfo(
+  colName: string,
+  colDef: unknown,
+  tableName: string
+): ParsedColumnInfo {
+  let type = "UNKNOWN";
+  let isPrimaryKey = false;
+  let isNullable = true;
+  let defaultValue: unknown = null;
+
+  if (typeof colDef === "string") {
+    type = colDef;
+  } else if (typeof colDef === "object" && colDef !== null) {
+    const meta = colDef as ColumnMetadata;
+    type = typeof meta.type === "string" ? meta.type : formatDisplayValue(meta.type);
+    isPrimaryKey = Boolean(meta.primary_key);
+    isNullable = meta.nullable !== false;
+    defaultValue = meta.default;
+  }
+
+  // Fallback heuristics if primary_key was not explicitly defined
+  if (!isPrimaryKey) {
+    const lowerCol = colName.toLowerCase();
+    const lowerTable = tableName.toLowerCase();
+    isPrimaryKey =
+      lowerCol === "id" ||
+      lowerCol === `${lowerTable}_id` ||
+      lowerCol.endsWith("_pk");
+  }
+
+  const isForeignKey =
+    !isPrimaryKey &&
+    (colName.toLowerCase().endsWith("_id") || colName.toLowerCase().endsWith("id"));
+
+  let constraint = "Standard";
+  if (isPrimaryKey) {
+    constraint = "PRIMARY KEY NOT NULL";
+  } else if (!isNullable) {
+    constraint =
+      defaultValue !== null && defaultValue !== undefined
+        ? `NOT NULL DEFAULT ${formatDisplayValue(defaultValue)}`
+        : "NOT NULL";
+  } else if (defaultValue !== null && defaultValue !== undefined) {
+    constraint = `DEFAULT ${formatDisplayValue(defaultValue)}`;
+  } else {
+    constraint = "NULLABLE";
+  }
+
+  return {
+    type,
+    isPrimaryKey,
+    isForeignKey,
+    isNullable,
+    defaultValue,
+    constraint,
+  };
 }
 
 export default function DataExplorerView({
@@ -36,11 +124,11 @@ export default function DataExplorerView({
   onOpenSqlLabWithTable,
   onConnectDatabase,
 }: DataExplorerViewProps) {
-  const [schema, setSchema] = useState<Record<string, Record<string, string>>>({});
+  const [schema, setSchema] = useState<Record<string, Record<string, ColumnDefinition>>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"columns" | "preview" | "relationships">("columns");
+  const [activeTab, setActiveTab] = useState<"columns" | "preview">("columns");
 
   useEffect(() => {
     if (!dbConnected) {
@@ -50,25 +138,42 @@ export default function DataExplorerView({
       return;
     }
 
+    let isMounted = true;
+
     const fetchSchema = async () => {
       setLoading(true);
       try {
         const data = await getSchema();
-        if (data && typeof data === "object" && !data.error) {
+        if (!isMounted) return;
+        if (data && typeof data === "object" && !data.error && data.status !== "error") {
           setSchema(data);
-          const tableNames = Object.keys(data).filter((k) => k !== "status");
+          const tableNames = Object.keys(data).filter(
+            (k) =>
+              k !== "status" &&
+              k !== "message" &&
+              typeof data[k] === "object" &&
+              data[k] !== null
+          );
           if (tableNames.length > 0) {
             setSelectedTable(tableNames[0]);
           }
         }
       } catch (err) {
-        console.error("Failed to load schema:", err);
+        if (isMounted) {
+          console.error("Failed to load schema:", err);
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchSchema();
+
+    return () => {
+      isMounted = false;
+    };
   }, [dbConnected]);
 
   if (!dbConnected) {
@@ -93,11 +198,28 @@ export default function DataExplorerView({
     );
   }
 
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center p-12 text-zinc-400 text-xs gap-2.5 bg-[#09090b]">
+        <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        <span>Reading database catalog and schema...</span>
+      </div>
+    );
+  }
+
   const tableNames = Object.keys(schema).filter(
-    (name) => name !== "status" && name.toLowerCase().includes(search.toLowerCase()),
+    (name) =>
+      name !== "status" &&
+      name !== "message" &&
+      typeof schema[name] === "object" &&
+      schema[name] !== null &&
+      name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const selectedColumns = selectedTable && schema[selectedTable] ? schema[selectedTable] : {};
+  const selectedColumns =
+    selectedTable && schema[selectedTable] && typeof schema[selectedTable] === "object"
+      ? schema[selectedTable]
+      : {};
   const columnCount = Object.keys(selectedColumns).length;
 
   return (
@@ -131,7 +253,10 @@ export default function DataExplorerView({
             </div>
           ) : (
             tableNames.map((name) => {
-              const cols = schema[name] ? Object.keys(schema[name]).length : 0;
+              const cols =
+                schema[name] && typeof schema[name] === "object"
+                  ? Object.keys(schema[name]).length
+                  : 0;
               const isSelected = selectedTable === name;
 
               return (
@@ -149,7 +274,7 @@ export default function DataExplorerView({
                       size={14}
                       className={isSelected ? "text-indigo-400 shrink-0" : "text-zinc-400 shrink-0"}
                     />
-                    <span className="truncate font-medium">{name}</span>
+                    <span className="truncate font-medium">{formatDisplayValue(name)}</span>
                   </div>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.04] text-zinc-400 shrink-0">
                     {cols} cols
@@ -174,7 +299,7 @@ export default function DataExplorerView({
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-white tracking-tight">
-                      {selectedTable}
+                      {formatDisplayValue(selectedTable)}
                     </h2>
                     <p className="text-xs text-zinc-400">
                       Entity table &bull; {columnCount} attributes defined
@@ -221,67 +346,121 @@ export default function DataExplorerView({
             {/* Table of Columns */}
             <div className="rounded-xl border border-white/[0.08] bg-[#121216] overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-zinc-300">
-                  <thead className="bg-[#14141a] text-[11px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-white/[0.06]">
-                    <tr>
-                      <th className="px-4 py-3">Column Name</th>
-                      <th className="px-4 py-3">Data Type</th>
-                      <th className="px-4 py-3">Role / Key</th>
-                      <th className="px-4 py-3">Constraint</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.04]">
-                    {Object.entries(selectedColumns).map(([colName, colType]) => {
-                      const isPrimaryKey =
-                        colName.toLowerCase() === "id" ||
-                        colName.toLowerCase() === `${selectedTable.toLowerCase()}_id` ||
-                        colName.toLowerCase().endsWith("_pk");
+                {activeTab === "columns" ? (
+                  <table className="w-full text-left text-xs text-zinc-300">
+                    <thead className="bg-[#14141a] text-[11px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-white/[0.06]">
+                      <tr>
+                        <th className="px-4 py-3">Column Name</th>
+                        <th className="px-4 py-3">Data Type</th>
+                        <th className="px-4 py-3">Role / Key</th>
+                        <th className="px-4 py-3">Constraint</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {Object.entries(selectedColumns).map(([colName, colDef]) => {
+                        const info = parseColumnInfo(colName, colDef, selectedTable);
 
-                      const isForeignKey =
-                        !isPrimaryKey &&
-                        (colName.toLowerCase().endsWith("_id") ||
-                          colName.toLowerCase().endsWith("id"));
+                        return (
+                          <tr
+                            key={colName}
+                            className="hover:bg-white/[0.02] transition-colors"
+                          >
+                            <td className="px-4 py-3 font-mono font-medium text-white flex items-center gap-2">
+                              {info.isPrimaryKey && (
+                                <Key size={13} className="text-amber-400 shrink-0" />
+                              )}
+                              {info.isForeignKey && (
+                                <Layers size={13} className="text-indigo-400 shrink-0" />
+                              )}
+                              <span>{formatDisplayValue(colName)}</span>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-zinc-400 text-[11px]">
+                              {formatDisplayValue(info.type)}
+                            </td>
+                            <td className="px-4 py-3">
+                              {info.isPrimaryKey ? (
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                                  Primary Key
+                                </span>
+                              ) : info.isForeignKey ? (
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
+                                  Foreign Key
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-zinc-400 font-mono">
+                                  Standard Column
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-400 font-mono text-[11px]">
+                              {formatDisplayValue(info.constraint)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table className="w-full text-left text-xs text-zinc-300">
+                    <thead className="bg-[#14141a] text-[11px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-white/[0.06]">
+                      <tr>
+                        <th className="px-4 py-3">Column Name</th>
+                        <th className="px-4 py-3">SQL Data Type</th>
+                        <th className="px-4 py-3">Nullable</th>
+                        <th className="px-4 py-3">Primary Key</th>
+                        <th className="px-4 py-3">Default Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {Object.entries(selectedColumns).map(([colName, colDef]) => {
+                        const info = parseColumnInfo(colName, colDef, selectedTable);
 
-                      return (
-                        <tr
-                          key={colName}
-                          className="hover:bg-white/[0.02] transition-colors"
-                        >
-                          <td className="px-4 py-3 font-mono font-medium text-white flex items-center gap-2">
-                            {isPrimaryKey && (
-                              <Key size={13} className="text-amber-400 shrink-0" />
-                            )}
-                            {isForeignKey && (
-                              <Layers size={13} className="text-indigo-400 shrink-0" />
-                            )}
-                            <span>{colName}</span>
-                          </td>
-                          <td className="px-4 py-3 font-mono text-zinc-400 text-[11px]">
-                            {colType}
-                          </td>
-                          <td className="px-4 py-3">
-                            {isPrimaryKey ? (
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                                Primary Key
-                              </span>
-                            ) : isForeignKey ? (
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
-                                Foreign Key
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-zinc-400 font-mono">
-                                Standard Column
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-zinc-400 font-mono text-[11px]">
-                            {isPrimaryKey ? "NOT NULL UNIQUE" : "Standard"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                        return (
+                          <tr
+                            key={colName}
+                            className="hover:bg-white/[0.02] transition-colors"
+                          >
+                            <td className="px-4 py-3 font-mono font-medium text-white flex items-center gap-2">
+                              {info.isPrimaryKey && (
+                                <Key size={13} className="text-amber-400 shrink-0" />
+                              )}
+                              {info.isForeignKey && (
+                                <Layers size={13} className="text-indigo-400 shrink-0" />
+                              )}
+                              <span>{formatDisplayValue(colName)}</span>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-zinc-400 text-[11px]">
+                              {formatDisplayValue(info.type)}
+                            </td>
+                            <td className="px-4 py-3">
+                              {info.isNullable ? (
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                                  NULLABLE
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                                  NOT NULL
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {info.isPrimaryKey ? (
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                                  YES
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-mono text-zinc-500">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-zinc-400 text-[11px]">
+                              {formatDisplayValue(info.defaultValue)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </>
