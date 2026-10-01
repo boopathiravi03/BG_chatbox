@@ -192,6 +192,66 @@ def run_ai_analysis(
     intent = classify_analysis_intent(question)
     metrics_info = discover_metrics_in_schema(report.schema_summary)
 
+    # Phase 8.2: Multi-Table Cross-Table Analytical Queries
+    q_low = question.lower()
+    is_cross_table_candidate = (
+        intent in ("ranking", "distribution", "trend", "overview", "comparison")
+        and any(w in q_low for w in (
+            "revenue", "sold the most", "most revenue", "highest revenue",
+            "category", "categories", "product", "products",
+            "average order value", "most orders", "placed the most",
+            "region", "regional", "by customer", "by product", "by category"
+        ))
+    )
+    if is_cross_table_candidate:
+        try:
+            from app.intelligence.business_intelligence.multitable_engine import query_multitable_bi
+            mt_res = query_multitable_bi(question)
+            if mt_res.get("status") == "success":
+                rec_investigations = [
+                    RecommendedInvestigation(label="Inspect in Data Explorer", action="explorer", target=mt_res["source_tables"][0] if mt_res["source_tables"] else None),
+                    RecommendedInvestigation(label="Query in SQL Lab", action="sqllab", query=mt_res.get("sql")),
+                ]
+                return AnalystResult(
+                    question=question,
+                    analysis_type="multitable",
+                    key_insight=mt_res["key_insight"],
+                    evidence=Evidence(
+                        metric_name=mt_res.get("calculation", "Cross-Table Metric"),
+                        calculation=mt_res.get("calculation", "Verified Join Path"),
+                        source_table=", ".join(mt_res.get("source_tables", [])),
+                        breakdown=mt_res.get("data", [])[:10],
+                        confidence_note=f"Verified through relationship path: {', '.join(mt_res.get('lineage', []))}",
+                    ),
+                    recommended_investigations=rec_investigations,
+                    ai_explanation=mt_res.get("ai_explanation", mt_res["key_insight"]),
+                    breakdown=mt_res.get("data", [])[:10],
+                    sql_query=mt_res.get("sql"),
+                    status="success",
+                )
+            elif mt_res.get("status") == "no_relationship":
+                return AnalystResult(
+                    question=question,
+                    analysis_type="multitable",
+                    key_insight="No verified relationship was found between these tables.",
+                    evidence=Evidence(
+                        metric_name="No Relationship",
+                        calculation="FK Graph Check",
+                        source_table=", ".join(mt_res.get("tables", [])),
+                        confidence_note="Cartesian joins are forbidden by security policy.",
+                    ),
+                    recommended_investigations=[
+                        RecommendedInvestigation(label="Inspect Schema Relationships", action="explorer"),
+                    ],
+                    ai_explanation=f"No verified foreign key relationship connects tables {mt_res.get('tables', [])}. Available verified relationships: {', '.join(mt_res.get('available_relationships', []))}",
+                    breakdown=[],
+                    sql_query=None,
+                    status="no_relationship",
+                    error_message="No verified relationship was found between these tables.",
+                )
+        except Exception:
+            pass
+
     # 1. Quality & Health Analysis
     if intent == "quality":
         qh_data = analyze_health_findings()

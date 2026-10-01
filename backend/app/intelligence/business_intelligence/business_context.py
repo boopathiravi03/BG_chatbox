@@ -165,6 +165,16 @@ def discover_business_context(engine: Any, db_type: str, schema_info: Optional[d
                     "dimension_columns": [d["column"] for d in table_dims],
                 })
 
+    # Build relationship graph and discover verified join paths
+    join_paths_dicts: list[dict[str, Any]] = []
+    try:
+        from app.intelligence.business_intelligence.join_path import build_relationship_graph, find_all_join_paths
+        rel_graph = build_relationship_graph(schema_info)
+        discovered_paths = find_all_join_paths(rel_graph, max_depth=3, db_type=db_type)
+        join_paths_dicts = [p.to_dict() for p in discovered_paths]
+    except Exception:
+        join_paths_dicts = []
+
     # Evaluate sufficiency
     if total_records == 0:
         return BusinessContext(
@@ -173,6 +183,7 @@ def discover_business_context(engine: Any, db_type: str, schema_info: Optional[d
             measure_columns=measure_columns,
             dimension_columns=dimension_columns,
             relationships=relationships,
+            join_paths=join_paths_dicts,
             total_records=0,
             has_sufficient_data=False,
             reason="No records available for business intelligence.",
@@ -185,6 +196,7 @@ def discover_business_context(engine: Any, db_type: str, schema_info: Optional[d
             measure_columns=measure_columns,
             dimension_columns=dimension_columns,
             relationships=relationships,
+            join_paths=join_paths_dicts,
             total_records=total_records,
             has_sufficient_data=False,
             reason="Database connected, but insufficient records for automatic business insights.",
@@ -197,6 +209,7 @@ def discover_business_context(engine: Any, db_type: str, schema_info: Optional[d
             measure_columns=measure_columns,
             dimension_columns=dimension_columns,
             relationships=relationships,
+            join_paths=join_paths_dicts,
             total_records=total_records,
             has_sufficient_data=False,
             reason="Insufficient business data for automatic insight generation.",
@@ -208,6 +221,7 @@ def discover_business_context(engine: Any, db_type: str, schema_info: Optional[d
         measure_columns=measure_columns,
         dimension_columns=dimension_columns,
         relationships=relationships,
+        join_paths=join_paths_dicts,
         total_records=total_records,
         has_sufficient_data=True,
     )

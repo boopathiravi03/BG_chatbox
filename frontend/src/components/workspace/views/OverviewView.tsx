@@ -17,6 +17,7 @@ import {
   Lightbulb,
   RefreshCw,
   FileCode2,
+  GitMerge,
   X,
 } from "lucide-react";
 import type { WorkspaceTab } from "../WorkspaceSidebar";
@@ -336,8 +337,119 @@ export default function OverviewView({
         </div>
       </div>
 
-      {/* Phase 8.1: Automated Business Intelligence Insights */}
-      {insights.length > 0 && (
+      {/* Phase 8.2: Cross-Table Intelligence Section */}
+      {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <GitMerge size={14} />
+              </div>
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                Cross-Table Intelligence
+              </h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
+                Verified Multi-Table Relationships
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {insights
+              .filter((i) => i.source_tables && i.source_tables.length > 1)
+              .slice(0, 6)
+              .map((ins) => {
+                const severityColor =
+                  ins.severity === "CRITICAL"
+                    ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
+                    : ins.severity === "WARNING"
+                    ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
+                    : "bg-blue-500/15 border-blue-500/30 text-blue-300";
+
+                return (
+                  <div
+                    key={ins.id}
+                    className="p-5 rounded-2xl bg-[#121216] border border-white/[0.08] hover:border-indigo-500/30 transition-all flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {ins.source_tables.map((t) => (
+                            <span key={t} className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300">
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                        <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}>
+                          {ins.severity}
+                        </span>
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white tracking-tight">
+                        {ins.title}
+                      </h4>
+
+                      <p className="text-xs text-zinc-300 leading-relaxed">
+                        {ins.summary}
+                      </p>
+
+                      {ins.evidence?.lineage && ins.evidence.lineage.length > 0 && (
+                        <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05] space-y-1">
+                          <span className="text-[10px] font-mono uppercase text-zinc-400 font-semibold flex items-center gap-1">
+                            <GitMerge size={11} className="text-indigo-400" />
+                            Join Lineage
+                          </span>
+                          <div className="text-[11px] font-mono text-zinc-300 space-y-0.5">
+                            {ins.evidence.lineage.map((step: string, idx: number) => (
+                              <div key={idx} className="flex items-center gap-1">
+                                <span className="text-indigo-400">↳</span>
+                                <span>{step}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {ins.recommended_next_step && (
+                        <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400">
+                          <strong className="text-zinc-200">Recommended Action: </strong>
+                          {ins.recommended_next_step}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                      <button
+                        onClick={() => setSelectedInsight(ins)}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <FileCode2 size={13} />
+                        <span>View Data Lineage & SQL</span>
+                      </button>
+
+                      {onNavigateToAgents && (
+                        <button
+                          onClick={() =>
+                            onNavigateToAgents(
+                              `Investigate multi-table insight: ${ins.title}. Lineage: ${ins.evidence?.lineage?.join(", ") || ins.source_tables.join(" -> ")}`
+                            )
+                          }
+                          className="text-[11px] text-zinc-400 hover:text-white inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <span>Investigate</span>
+                          <ArrowRight size={11} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* Phase 8.1: Single-Table Automated Business Insights */}
+      {insights.some((i) => !i.source_tables || i.source_tables.length <= 1) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -348,7 +460,7 @@ export default function OverviewView({
                 Automated Business Insights
               </h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">
-                {insights.length} Verified
+                {insights.filter((i) => !i.source_tables || i.source_tables.length <= 1).length} Verified
               </span>
             </div>
 
@@ -363,71 +475,74 @@ export default function OverviewView({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {insights.slice(0, 4).map((ins) => {
-              const severityColor =
-                ins.severity === "CRITICAL"
-                  ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
-                  : ins.severity === "WARNING"
-                  ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
-                  : "bg-blue-500/15 border-blue-500/30 text-blue-300";
+            {insights
+              .filter((i) => !i.source_tables || i.source_tables.length <= 1)
+              .slice(0, 4)
+              .map((ins) => {
+                const severityColor =
+                  ins.severity === "CRITICAL"
+                    ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
+                    : ins.severity === "WARNING"
+                    ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
+                    : "bg-blue-500/15 border-blue-500/30 text-blue-300";
 
-              return (
-                <div
-                  key={ins.id}
-                  className="p-5 rounded-2xl bg-[#121216] border border-white/[0.08] hover:border-white/[0.16] transition-all flex flex-col justify-between space-y-4"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300">
-                        {ins.category}
-                      </span>
-                      <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}>
-                        {ins.severity}
-                      </span>
+                return (
+                  <div
+                    key={ins.id}
+                    className="p-5 rounded-2xl bg-[#121216] border border-white/[0.08] hover:border-white/[0.16] transition-all flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300">
+                          {ins.category}
+                        </span>
+                        <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}>
+                          {ins.severity}
+                        </span>
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white tracking-tight">
+                        {ins.title}
+                      </h4>
+
+                      <p className="text-xs text-zinc-300 leading-relaxed">
+                        {ins.summary}
+                      </p>
+
+                      {ins.recommended_next_step && (
+                        <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400">
+                          <strong className="text-zinc-200">Recommended Next Step: </strong>
+                          {ins.recommended_next_step}
+                        </div>
+                      )}
                     </div>
 
-                    <h4 className="text-sm font-bold text-white tracking-tight">
-                      {ins.title}
-                    </h4>
-
-                    <p className="text-xs text-zinc-300 leading-relaxed">
-                      {ins.summary}
-                    </p>
-
-                    {ins.recommended_next_step && (
-                      <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400">
-                        <strong className="text-zinc-200">Recommended Next Step: </strong>
-                        {ins.recommended_next_step}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
-                    <button
-                      onClick={() => setSelectedInsight(ins)}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <FileCode2 size={13} />
-                      <span>Inspect Evidence & SQL</span>
-                    </button>
-
-                    {onNavigateToAgents && (
+                    <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
                       <button
-                        onClick={() =>
-                          onNavigateToAgents(
-                            `Analyze and act on insight: ${ins.title}. Recommended action: ${ins.recommended_next_step}`
-                          )
-                        }
-                        className="text-[11px] text-zinc-400 hover:text-white inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        onClick={() => setSelectedInsight(ins)}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1.5 cursor-pointer"
                       >
-                        <span>Take Action</span>
-                        <ArrowRight size={11} />
+                        <FileCode2 size={13} />
+                        <span>Inspect Evidence & SQL</span>
                       </button>
-                    )}
+
+                      {onNavigateToAgents && (
+                        <button
+                          onClick={() =>
+                            onNavigateToAgents(
+                              `Analyze and act on insight: ${ins.title}. Recommended action: ${ins.recommended_next_step}`
+                            )
+                          }
+                          className="text-[11px] text-zinc-400 hover:text-white inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <span>Take Action</span>
+                          <ArrowRight size={11} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         </div>
       )}
@@ -553,6 +668,34 @@ export default function OverviewView({
             <p className="text-xs text-zinc-300 leading-relaxed">
               {selectedInsight.summary}
             </p>
+
+            {/* Visual Data Lineage */}
+            {selectedInsight.evidence?.lineage && selectedInsight.evidence.lineage.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <GitMerge size={12} className="text-indigo-400" />
+                  <span>Verified Data Lineage</span>
+                </p>
+                <div className="p-3.5 rounded-xl bg-black/50 border border-white/[0.06] font-mono text-xs text-indigo-300 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-zinc-400 text-[11px]">Tables:</span>
+                    {selectedInsight.source_tables.map((t) => (
+                      <span key={t} className="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-indigo-200 text-[11px]">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="space-y-1 border-t border-white/[0.06] pt-2">
+                    {selectedInsight.evidence.lineage.map((step: string, idx: number) => (
+                      <div key={idx} className="flex items-center gap-2 text-zinc-300">
+                        <span className="text-indigo-400 font-bold">[{idx + 1}]</span>
+                        <span>{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Lineage SQL */}
             {selectedInsight.sql && (

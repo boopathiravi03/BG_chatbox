@@ -91,6 +91,7 @@ class BusinessContext:
     measure_columns: list[dict[str, Any]] = field(default_factory=list)
     dimension_columns: list[dict[str, Any]] = field(default_factory=list)
     relationships: list[dict[str, Any]] = field(default_factory=list)
+    join_paths: list[dict[str, Any]] = field(default_factory=list)
     total_records: int = 0
     has_sufficient_data: bool = False
     reason: Optional[str] = None
@@ -102,6 +103,7 @@ class BusinessContext:
             "measure_columns": self.measure_columns,
             "dimension_columns": self.dimension_columns,
             "relationships": self.relationships,
+            "join_paths": self.join_paths,
             "total_records": self.total_records,
             "has_sufficient_data": self.has_sufficient_data,
             "reason": self.reason,
@@ -119,17 +121,33 @@ class DiscoveredMetric:
     calculation_method: str
     timestamp_col: Optional[str] = None
     confidence: float = 1.0
+    source_tables: list[str] = field(default_factory=list)
+    join_path: Optional[dict[str, Any]] = None
+    aggregation: Optional[str] = None
+    grouping: Optional[list[str]] = None
+    filters: Optional[list[str]] = None
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not self.source_tables and self.source_table:
+            self.source_tables = [self.source_table]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "source_table": self.source_table,
+            "source_tables": self.source_tables,
             "source_columns": self.source_columns,
             "sql": self.sql,
             "current_value": self.current_value,
             "calculation_method": self.calculation_method,
             "timestamp_col": self.timestamp_col,
             "confidence": self.confidence,
+            "join_path": self.join_path,
+            "aggregation": self.aggregation,
+            "grouping": self.grouping,
+            "filters": self.filters,
+            "evidence": self.evidence,
         }
 
 

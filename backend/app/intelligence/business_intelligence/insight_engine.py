@@ -84,10 +84,24 @@ def generate_business_intelligence_report(
 
     # 2. Discover Metrics
     metrics = discover_business_metrics(engine, db_type, context)
+    try:
+        from app.intelligence.business_intelligence.multitable_engine import discover_multitable_metrics
+        multi_metrics = discover_multitable_metrics(engine, db_type, context)
+        metrics.extend(multi_metrics)
+    except Exception as e:
+        logger.debug("Multi-table metrics discovery error: %s", str(e))
 
     insights: list[BusinessInsight] = []
 
     # 3. Generate Insight Types
+    try:
+        # Cross-Table Multi-Entity Insights (Phase 8.2)
+        from app.intelligence.business_intelligence.multitable_engine import generate_multitable_insights
+        cross_insights = generate_multitable_insights(engine, db_type, context, metrics)
+        insights.extend(cross_insights)
+    except Exception as e:
+        logger.debug("Multi-table insights error: %s", str(e))
+
     try:
         # A, B, C: Trend, Growth & Decline Insights
         temporal_insights = _generate_temporal_insights(engine, db_type, context)

@@ -422,3 +422,18 @@ export async function cancelAgentAction(actionId: string): Promise<AgentActionRe
 export async function getAuditHistory() {
   return apiFetch("/audit-history");
 }
+
+export async function getRelationships() {
+  return apiFetch("/intelligence/relationships");
+}
+
+export async function getJoinPaths(maxDepth: number = 3) {
+  return apiFetch(`/intelligence/join-paths?max_depth=${maxDepth}`);
+}
+
+export async function queryBi(question: string) {
+  return apiFetch("/intelligence/bi-query", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+}

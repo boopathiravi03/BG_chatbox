@@ -488,5 +488,38 @@ export interface BusinessInsightsResponse {
   };
 }
 
+export interface JoinStepInfo {
+  source_table: string;
+  source_column: string;
+  target_table: string;
+  target_column: string;
+  is_reverse: boolean;
+  join_type: string;
+}
+
+export interface JoinPathInfo {
+  source_table: string;
+  target_table: string;
+  depth: number;
+  steps: JoinStepInfo[];
+  lineage: string[];
+  generated_join_clause: string;
+}
+
+export interface BiQueryResponse {
+  status: "success" | "no_relationship" | "error";
+  question?: string;
+  key_insight?: string;
+  ai_explanation?: string;
+  data?: any[] | null;
+  lineage: string[];
+  sql?: string | null;
+  source_tables?: string[];
+  calculation?: string;
+  record_count?: number;
+  message?: string;
+  available_relationships?: string[];
+}
+
 
 

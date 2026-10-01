@@ -822,6 +822,82 @@ def business_insights_refresh_endpoint(
         }
 
 
+# ── Phase 8.2 Multi-Table Business Intelligence Endpoints ───────────────────
+
+class BiQueryRequest(BaseModel):
+    question: str
+
+
+@app.get("/intelligence/relationships")
+def get_relationships_endpoint(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        from app.database.database_manager import get_engine, get_current_db_type
+        from app.intelligence.schema_analyzer import analyze_schema
+        from app.intelligence.business_intelligence.join_path import build_relationship_graph
+        engine = get_engine()
+        db_type = get_current_db_type()
+        if engine is None or db_type == "none":
+            return {"status": "error", "message": "No database connected.", "relationships": []}
+        schema_info = analyze_schema(engine, db_type)
+        graph = build_relationship_graph(schema_info)
+        rel_list = []
+        for tbl, edges in graph.items():
+            for edge in edges:
+                if not edge.is_reverse:
+                    rel_list.append(edge.to_dict())
+        return {"status": "success", "relationships": rel_list, "total": len(rel_list)}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "relationships": []}
+
+
+@app.get("/intelligence/join-paths")
+def get_join_paths_endpoint(
+    source: str | None = None,
+    target: str | None = None,
+    max_depth: int = 3,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.database.database_manager import get_engine, get_current_db_type
+        from app.intelligence.schema_analyzer import analyze_schema
+        from app.intelligence.business_intelligence.join_path import (
+            build_relationship_graph,
+            find_join_path,
+            find_all_join_paths,
+        )
+        engine = get_engine()
+        db_type = get_current_db_type()
+        if engine is None or db_type == "none":
+            return {"status": "error", "message": "No database connected.", "paths": []}
+        schema_info = analyze_schema(engine, db_type)
+        graph = build_relationship_graph(schema_info)
+        if source and target:
+            path = find_join_path(graph, source, target, max_depth=max_depth, db_type=db_type)
+            return {"status": "success", "paths": [path.to_dict()] if path else []}
+        all_paths = find_all_join_paths(graph, max_depth=max_depth, db_type=db_type)
+        return {"status": "success", "paths": [p.to_dict() for p in all_paths]}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "paths": []}
+
+
+@app.post("/intelligence/bi-query")
+@limiter.limit("30/minute")
+def bi_query_endpoint(
+    request: Request,
+    req: BiQueryRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.business_intelligence.multitable_engine import query_multitable_bi
+        res = query_multitable_bi(req.question, user_id=user.user_id)
+        return res
+    except Exception as e:
+        return {"status": "error", "message": str(e), "data": None, "lineage": [], "sql": None}
+
+
 # ── Phase 5 Agent API ──────────────────────────────────────────────────────────
 
 from app.agents.registry import get_available_agents, run_agent_task, route_to_agent
