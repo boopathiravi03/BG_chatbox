@@ -825,4 +825,76 @@ export interface LearningSummaryResponse {
 }
 
 
+// ── Phase 8.6: Continuous Intelligence & Executive Monitoring ────────────────
+
+export type MonitoringSeverity = "critical" | "warning" | "info";
+export type MonitoringItemType =
+  | "anomaly"
+  | "proactive_alert"
+  | "bi_insight"
+  | "cross_table";
+
+export interface MonitoringItem {
+  item_id: string;
+  item_type: MonitoringItemType;
+  severity: MonitoringSeverity;
+  title: string;
+  observed_change: string;
+  business_impact: string;
+  possible_explanation: string;
+  recommended_next_step: string;
+  evidence: Record<string, unknown>;
+  source_component: string;
+}
+
+export interface ExecutiveSummary {
+  overall_status: "healthy" | "attention_needed" | "critical" | string;
+  headline: string;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  top_risks: string[];
+  top_opportunities: string[];
+  generated_at: string;
+}
+
+export interface MonitoringReport {
+  user_id: string;
+  db_type: string;
+  scanned_at: string;
+  items: MonitoringItem[];
+  executive_summary: ExecutiveSummary | null;
+  scan_duration_ms: number;
+  status: string;
+  message: string;
+}
+
+export interface MonitoringEvaluateResponse {
+  status: "success" | "disconnected" | "error" | string;
+  message?: string;
+  report: MonitoringReport | null;
+}
+
+export interface MonitoringStatusResponse {
+  status: "ok" | "no_scan" | "error" | string;
+  message?: string;
+  last_scanned_at: string | null;
+  db_type?: string;
+  scan_duration_ms?: number;
+  item_counts?: {
+    total: number;
+    critical: number;
+    warning: number;
+    info: number;
+  };
+  overall_status?: string;
+}
+
+export interface MonitoringSummaryResponse {
+  status: "success" | "no_scan" | "error" | string;
+  message?: string;
+  summary: ExecutiveSummary | null;
+  items?: MonitoringItem[];
+  scanned_at?: string;
+}
 

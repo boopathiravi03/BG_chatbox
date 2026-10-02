@@ -1437,5 +1437,100 @@ def learning_summary_endpoint(
         return {"status": "error", "message": str(e), "summary": None}
 
 
+# ── Phase 8.6: Continuous Intelligence & Executive Monitoring ─────────────────
+# Per-user in-memory cache: { user_id -> MonitoringReport }
+# No persistence needed; each scan returns fresh data.
+import threading as _threading
+_monitoring_cache: Dict[str, Any] = {}
+_monitoring_lock = _threading.Lock()
+
+
+@app.post("/intelligence/monitoring/evaluate")
+@limiter.limit("5/minute")
+def monitoring_evaluate_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Trigger an on-demand intelligence scan for the connected database."""
+    _activate(user)
+    try:
+        engine = get_engine()
+        db_type = get_current_db_type()
+        if engine is None or db_type == "none":
+            return {
+                "status": "disconnected",
+                "message": "No database is currently connected. Please connect a database first.",
+                "report": None,
+            }
+        from app.intelligence.monitoring.monitor_engine import run_monitoring_scan
+        report = run_monitoring_scan(engine=engine, db_type=db_type, user_id=user.user_id)
+        with _monitoring_lock:
+            _monitoring_cache[user.user_id] = report
+        return {"status": "success", "report": report.to_dict()}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "report": None}
+
+
+@app.get("/intelligence/monitoring/status")
+@limiter.limit("20/minute")
+def monitoring_status_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return the last scan timestamp and item counts for the authenticated user."""
+    _activate(user)
+    try:
+        with _monitoring_lock:
+            report = _monitoring_cache.get(user.user_id)
+        if report is None:
+            return {
+                "status": "no_scan",
+                "message": "No monitoring scan has been run yet. Use POST /intelligence/monitoring/evaluate.",
+                "last_scanned_at": None,
+                "item_counts": None,
+            }
+        es = report.executive_summary
+        return {
+            "status": "ok",
+            "last_scanned_at": report.scanned_at,
+            "db_type": report.db_type,
+            "scan_duration_ms": report.scan_duration_ms,
+            "item_counts": {
+                "total": len(report.items),
+                "critical": es.critical_count if es else 0,
+                "warning": es.warning_count if es else 0,
+                "info": es.info_count if es else 0,
+            },
+            "overall_status": es.overall_status if es else "unknown",
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/monitoring/summary")
+@limiter.limit("20/minute")
+def monitoring_summary_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return the executive summary from the last scan for the authenticated user."""
+    _activate(user)
+    try:
+        with _monitoring_lock:
+            report = _monitoring_cache.get(user.user_id)
+        if report is None:
+            return {
+                "status": "no_scan",
+                "message": "No monitoring scan has been run yet.",
+                "summary": None,
+            }
+        return {
+            "status": "success",
+            "summary": report.executive_summary.to_dict() if report.executive_summary else None,
+            "items": [i.to_dict() for i in report.items],
+            "scanned_at": report.scanned_at,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "summary": None}
 
 

@@ -34,6 +34,7 @@ import type { BusinessInsight } from "../../../types";
 import ProactiveIntelligenceSection from "../proactive/ProactiveIntelligenceSection";
 import DecisionIntelligenceSection from "../decision/DecisionIntelligenceSection";
 import OutcomeLearningSection from "../learning/OutcomeLearningSection";
+import ContinuousIntelligenceSection from "../monitoring/ContinuousIntelligenceSection";
 
 
 
@@ -361,7 +362,11 @@ export default function OverviewView({
         dbConnected={dbConnected}
       />
 
-
+      {/* Phase 8.6: Continuous Intelligence & Executive Monitoring */}
+      <ContinuousIntelligenceSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+      />
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}
       {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (

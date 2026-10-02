@@ -16,6 +16,9 @@ import type {
   FeedbackRecord,
   RecordFeedbackPayload,
   LearningSummaryResponse,
+  MonitoringEvaluateResponse,
+  MonitoringStatusResponse,
+  MonitoringSummaryResponse,
 } from "../types";
 
 export const API_BASE = (
@@ -545,4 +548,19 @@ export async function getLearningSummary(): Promise<LearningSummaryResponse> {
 }
 
 
+// ── Phase 8.6: Continuous Intelligence & Executive Monitoring ─────────────────
 
+export async function runMonitoringScan(): Promise<MonitoringEvaluateResponse> {
+  return apiFetch<MonitoringEvaluateResponse>("/intelligence/monitoring/evaluate", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getMonitoringStatus(): Promise<MonitoringStatusResponse> {
+  return apiFetch<MonitoringStatusResponse>("/intelligence/monitoring/status");
+}
+
+export async function getMonitoringSummary(): Promise<MonitoringSummaryResponse> {
+  return apiFetch<MonitoringSummaryResponse>("/intelligence/monitoring/summary");
+}
