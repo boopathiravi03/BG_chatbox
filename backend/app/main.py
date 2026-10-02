@@ -1263,3 +1263,65 @@ def propose_action_for_proactive_alert(
         return {"available": False, "reason": str(e)}
 
 
+# ── Phase 8.4 AI Decision & Planning Intelligence Endpoints ────────────────
+
+class DecisionQueryRequest(BaseModel):
+    question: str
+
+
+@app.post("/intelligence/decision")
+@limiter.limit("10/minute")
+def decision_intelligence_endpoint(
+    request: Request,
+    body: DecisionQueryRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.decision.decision_engine import run_decision_analysis
+        from app.database.database_manager import get_engine, get_current_db_type
+
+        engine = get_engine()
+        db_type = get_current_db_type()
+
+        if engine is None or db_type == "none":
+            return {
+                "status": "disconnected",
+                "message": "No active database connected. Please connect a database to run decision intelligence.",
+                "question": body.question,
+                "problem_statement": "No database connected.",
+                "findings": [],
+                "evidence": [],
+                "hypotheses": [],
+                "recommended_investigations": [],
+                "decision_plan": [],
+                "confidence": None,
+                "source_tables": [],
+            }
+
+        analysis = run_decision_analysis(
+            question=body.question,
+            user_id=user.user_id,
+            engine=engine,
+            db_type=db_type,
+        )
+        return analysis.to_dict()
+    except Exception as e:
+        import traceback
+        logging.getLogger("bgai").error("Decision analysis error: %s\n%s", str(e), traceback.format_exc())
+        return {
+            "status": "error",
+            "message": str(e),
+            "question": body.question,
+            "problem_statement": f"Error running decision analysis: {str(e)}",
+            "findings": [],
+            "evidence": [],
+            "hypotheses": [],
+            "recommended_investigations": [],
+            "decision_plan": [],
+            "confidence": None,
+            "source_tables": [],
+        }
+
+
+

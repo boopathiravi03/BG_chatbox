@@ -627,3 +627,87 @@ export interface ProactiveActionProposalResponse {
   reason?: string;
 }
 
+// ── Phase 8.4: AI Decision & Planning Intelligence Models ──────────────────
+
+export interface DecisionEvidenceItem {
+  evidence_id: string;
+  metric: string;
+  title: string;
+  current_value: any;
+  previous_value?: any;
+  delta?: number | null;
+  delta_percent?: number | null;
+  source_tables: string[];
+  source_columns: string[];
+  sql?: string | null;
+  calculation: string;
+  source_system: string;
+  metadata?: Record<string, any>;
+}
+
+export interface DecisionFinding {
+  finding_id: string;
+  statement: string;
+  evidence_ids: string[];
+  severity: "CRITICAL" | "WARNING" | "INFO" | string;
+  category: string;
+  source_tables: string[];
+}
+
+export interface DecisionHypothesis {
+  hypothesis_id: string;
+  statement: string;
+  status: "UNCONFIRMED_HYPOTHESIS" | string;
+  supporting_evidence_ids: string[];
+  likelihood: "PROBABLE" | "POSSIBLE" | "UNCERTAIN" | string;
+  causality_caveat: string;
+}
+
+export interface DecisionRecommendedInvestigation {
+  investigation_id: string;
+  title: string;
+  rationale: string;
+  target_table?: string | null;
+  suggested_focus?: string | null;
+  priority: number;
+}
+
+export interface DecisionPlanStep {
+  step_number: number;
+  title: string;
+  description: string;
+  action_type: "INVESTIGATE" | "AUDIT" | "COMPARE" | "REMEDIATE" | string;
+  target_table?: string | null;
+  requires_confirmation: boolean;
+  safe_action_eligible: boolean;
+  suggested_action_id?: string | null;
+}
+
+export interface DecisionConfidenceAssessment {
+  level: "HIGH" | "MODERATE" | "LIMITED" | string;
+  signal_count: number;
+  corroborating_sources: string[];
+  rationale: string;
+  limitations: string[];
+}
+
+export interface DecisionAnalysisResponse {
+  status: "success" | "disconnected" | "error" | string;
+  question: string;
+  intent?: string;
+  problem_statement: string;
+  findings: DecisionFinding[];
+  evidence: DecisionEvidenceItem[];
+  hypotheses: DecisionHypothesis[];
+  recommended_investigations: DecisionRecommendedInvestigation[];
+  decision_plan: DecisionPlanStep[];
+  confidence?: DecisionConfidenceAssessment | null;
+  source_tables: string[];
+  generated_at?: string;
+  database_name?: string;
+  database_type?: string;
+  message?: string;
+  analysis?: any;
+}
+
+

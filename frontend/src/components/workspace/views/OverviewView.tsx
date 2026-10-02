@@ -32,6 +32,8 @@ import {
 } from "../../../services/api";
 import type { BusinessInsight } from "../../../types";
 import ProactiveIntelligenceSection from "../proactive/ProactiveIntelligenceSection";
+import DecisionIntelligenceSection from "../decision/DecisionIntelligenceSection";
+
 
 interface OverviewViewProps {
   dbConnected: boolean;
@@ -344,6 +346,14 @@ export default function OverviewView({
         onConnectDatabase={onConnectDatabase}
         onNavigateToAgents={onNavigateToAgents}
       />
+
+      {/* Phase 8.4: AI Decision & Planning Intelligence Section */}
+      <DecisionIntelligenceSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+        onNavigateToAgents={onNavigateToAgents}
+      />
+
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}
       {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (

@@ -9,6 +9,7 @@ import type {
   ProactiveAlertListResponse,
   ProactiveEvaluationResponse,
   ProactiveActionProposalResponse,
+  DecisionAnalysisResponse,
 } from "../types";
 
 export const API_BASE = (
@@ -488,4 +489,16 @@ export async function proposeProactiveAction(alertId: string): Promise<Proactive
     method: "POST",
   });
 }
+
+// ── Phase 8.4 AI Decision & Planning Intelligence Endpoints ────────────────
+
+export async function queryDecisionIntelligence(
+  question: string
+): Promise<DecisionAnalysisResponse> {
+  return apiFetch<DecisionAnalysisResponse>("/intelligence/decision", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+}
+
 
