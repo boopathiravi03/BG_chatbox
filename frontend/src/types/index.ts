@@ -710,4 +710,119 @@ export interface DecisionAnalysisResponse {
   analysis?: any;
 }
 
+// ── Phase 8.5: Outcome & Learning Intelligence Models ──────────────────────
+
+export type OutcomeStatusType = "SUCCESSFUL" | "PARTIAL" | "FAILED" | "UNKNOWN";
+
+export interface OutcomeRecord {
+  outcome_id: string;
+  user_id: string;
+  action_type: string;
+  expected_outcome: string;
+  actual_outcome: string;
+  status: OutcomeStatusType;
+  decision_id?: string | null;
+  question?: string | null;
+  action_id?: string | null;
+  plan_step?: number | null;
+  evidence?: any;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface RecordOutcomePayload {
+  action_type: string;
+  expected_outcome: string;
+  actual_outcome: string;
+  status: OutcomeStatusType;
+  decision_id?: string | null;
+  question?: string | null;
+  action_id?: string | null;
+  plan_step?: number | null;
+  evidence?: any;
+  notes?: string | null;
+}
+
+export interface OutcomeListResponse {
+  status: "success" | "error" | string;
+  outcomes: OutcomeRecord[];
+  total: number;
+  message?: string;
+}
+
+export type FeedbackTargetType = "DECISION" | "PLAN" | "ALERT" | "RECOMMENDATION" | "INVESTIGATION";
+
+export interface FeedbackRecord {
+  feedback_id: string;
+  user_id: string;
+  target_type: FeedbackTargetType;
+  target_id?: string | null;
+  question?: string | null;
+  useful?: boolean | null;
+  accepted?: boolean | null;
+  comment?: string | null;
+  created_at: string;
+}
+
+export interface RecordFeedbackPayload {
+  target_type: FeedbackTargetType;
+  target_id?: string | null;
+  question?: string | null;
+  useful?: boolean | null;
+  accepted?: boolean | null;
+  comment?: string | null;
+}
+
+export interface LearningPattern {
+  pattern_id: string;
+  action_type?: string;
+  target_type?: string;
+  description: string;
+  total_occurrences?: number;
+  success_rate?: number;
+  failure_rate?: number;
+  accepted_count?: number;
+  rejected_count?: number;
+  acceptance_rate?: number;
+  rejection_rate?: number;
+  evidence_support?: string;
+  summary?: string;
+  caveat?: string;
+}
+
+export interface LearningSummary {
+  user_id: string;
+  total_outcomes: number;
+  successful_count: number;
+  partial_count: number;
+  failed_count: number;
+  unknown_count: number;
+  total_feedbacks: number;
+  useful_count: number;
+  not_useful_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  successful_patterns: LearningPattern[];
+  rejected_patterns: LearningPattern[];
+  frequently_accepted_actions: LearningPattern[];
+  frequently_rejected_actions: LearningPattern[];
+  evidence_coverage: {
+    outcomes_with_evidence_count: number;
+    total_outcomes: number;
+    coverage_ratio: number;
+    documented_percentage: string;
+  };
+  areas_with_insufficient_data: string[];
+  insufficient_data: boolean;
+  disclaimer: string;
+  generated_at: string;
+}
+
+export interface LearningSummaryResponse {
+  status: "success" | "error" | string;
+  summary: LearningSummary | null;
+  message?: string;
+}
+
+
 

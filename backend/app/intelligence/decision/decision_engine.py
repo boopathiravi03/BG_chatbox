@@ -255,6 +255,18 @@ def synthesize_decision_analysis(
         hypotheses=hypotheses,
     )
 
+    # 5b. Phase 8.5: Enrich recommendations with real historical outcome context
+    try:
+        from app.intelligence.learning.recommendation import enrich_recommendations_with_history
+        investigations, plan_steps = enrich_recommendations_with_history(
+            investigations=investigations,
+            plan_steps=plan_steps,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.debug("Outcome recommendation enrichment skipped: %s", str(e))
+
+
     # 6. Assess Confidence
     confidence_assessment = assess_confidence(
         evidence_items=evidence_items,

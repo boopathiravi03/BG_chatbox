@@ -33,6 +33,8 @@ import {
 import type { BusinessInsight } from "../../../types";
 import ProactiveIntelligenceSection from "../proactive/ProactiveIntelligenceSection";
 import DecisionIntelligenceSection from "../decision/DecisionIntelligenceSection";
+import OutcomeLearningSection from "../learning/OutcomeLearningSection";
+
 
 
 interface OverviewViewProps {
@@ -353,6 +355,12 @@ export default function OverviewView({
         onConnectDatabase={onConnectDatabase}
         onNavigateToAgents={onNavigateToAgents}
       />
+
+      {/* Phase 8.5: Outcome & Learning Intelligence Section */}
+      <OutcomeLearningSection
+        dbConnected={dbConnected}
+      />
+
 
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}

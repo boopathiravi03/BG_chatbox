@@ -9,6 +9,7 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from typing import Optional, Any, Union, Dict, List
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -1322,6 +1323,119 @@ def decision_intelligence_endpoint(
             "confidence": None,
             "source_tables": [],
         }
+
+
+# ── Phase 8.5 Outcome & Learning Intelligence Endpoints ─────────────────────
+
+class RecordOutcomeRequest(BaseModel):
+    action_type: str = "GENERAL"
+    expected_outcome: str = ""
+    actual_outcome: str = ""
+    status: str = "UNKNOWN"
+    decision_id: Optional[str] = None
+    question: Optional[str] = None
+    action_id: Optional[str] = None
+    plan_step: Optional[int] = None
+    evidence: Optional[Any] = None
+    notes: Optional[str] = None
+
+
+class RecordFeedbackRequest(BaseModel):
+    target_type: str = "DECISION"
+    target_id: Optional[str] = None
+    question: Optional[str] = None
+    useful: Optional[bool] = None
+    accepted: Optional[bool] = None
+    comment: Optional[str] = None
+
+
+@app.post("/intelligence/outcomes")
+@limiter.limit("20/minute")
+def record_outcome_endpoint(
+    request: Request,
+    body: RecordOutcomeRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.learning.models import OutcomeRecord
+        from app.intelligence.learning.outcome_store import save_outcome
+
+        record = OutcomeRecord(
+            user_id=user.user_id,
+            action_type=body.action_type,
+            expected_outcome=body.expected_outcome,
+            actual_outcome=body.actual_outcome,
+            status=body.status,
+            decision_id=body.decision_id,
+            question=body.question,
+            action_id=body.action_id,
+            plan_step=body.plan_step,
+            evidence=body.evidence,
+            notes=body.notes,
+        )
+        saved = save_outcome(record)
+        return {"status": "success", "outcome": saved.to_dict()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/outcomes")
+@limiter.limit("30/minute")
+def list_outcomes_endpoint(
+    request: Request,
+    limit: int = 50,
+    action_type: Optional[str] = None,
+    status: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.learning.outcome_store import list_outcomes
+        outcomes = list_outcomes(user_id=user.user_id, limit=limit, action_type=action_type, status=status)
+        return {"status": "success", "outcomes": [o.to_dict() for o in outcomes], "total": len(outcomes)}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "outcomes": [], "total": 0}
+
+
+@app.post("/intelligence/feedback")
+@limiter.limit("20/minute")
+def record_feedback_endpoint(
+    request: Request,
+    body: RecordFeedbackRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.learning.feedback import record_user_feedback
+        saved = record_user_feedback(
+            user_id=user.user_id,
+            target_type=body.target_type,
+            target_id=body.target_id,
+            question=body.question,
+            useful=body.useful,
+            accepted=body.accepted,
+            comment=body.comment,
+        )
+        return {"status": "success", "feedback": saved.to_dict()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/learning-summary")
+@limiter.limit("20/minute")
+def learning_summary_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.learning.outcome_engine import synthesize_learning_summary
+        summary = synthesize_learning_summary(user_id=user.user_id)
+        return {"status": "success", "summary": summary.to_dict()}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "summary": None}
+
 
 
 

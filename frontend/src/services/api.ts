@@ -10,6 +10,12 @@ import type {
   ProactiveEvaluationResponse,
   ProactiveActionProposalResponse,
   DecisionAnalysisResponse,
+  OutcomeRecord,
+  RecordOutcomePayload,
+  OutcomeListResponse,
+  FeedbackRecord,
+  RecordFeedbackPayload,
+  LearningSummaryResponse,
 } from "../types";
 
 export const API_BASE = (
@@ -500,5 +506,43 @@ export async function queryDecisionIntelligence(
     body: JSON.stringify({ question }),
   });
 }
+
+// ── Phase 8.5 Outcome & Learning Intelligence Endpoints ─────────────────────
+
+export async function recordOutcome(
+  payload: RecordOutcomePayload
+): Promise<{ status: string; outcome?: OutcomeRecord; message?: string }> {
+  return apiFetch<{ status: string; outcome?: OutcomeRecord; message?: string }>("/intelligence/outcomes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getOutcomes(params?: {
+  limit?: number;
+  action_type?: string;
+  status?: string;
+}): Promise<OutcomeListResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.action_type) query.set("action_type", params.action_type);
+  if (params?.status) query.set("status", params.status);
+  const qs = query.toString();
+  return apiFetch<OutcomeListResponse>(`/intelligence/outcomes${qs ? `?${qs}` : ""}`);
+}
+
+export async function recordFeedback(
+  payload: RecordFeedbackPayload
+): Promise<{ status: string; feedback?: FeedbackRecord; message?: string }> {
+  return apiFetch<{ status: string; feedback?: FeedbackRecord; message?: string }>("/intelligence/feedback", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getLearningSummary(): Promise<LearningSummaryResponse> {
+  return apiFetch<LearningSummaryResponse>("/intelligence/learning-summary");
+}
+
 
 
