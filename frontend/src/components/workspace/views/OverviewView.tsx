@@ -31,6 +31,7 @@ import {
   getAuthToken,
 } from "../../../services/api";
 import type { BusinessInsight } from "../../../types";
+import ProactiveIntelligenceSection from "../proactive/ProactiveIntelligenceSection";
 
 interface OverviewViewProps {
   dbConnected: boolean;
@@ -336,6 +337,13 @@ export default function OverviewView({
           <p className="text-[11px] text-zinc-400">SQLAlchemy driver</p>
         </div>
       </div>
+
+      {/* Phase 8.3: Proactive Intelligence Section */}
+      <ProactiveIntelligenceSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+        onNavigateToAgents={onNavigateToAgents}
+      />
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}
       {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (

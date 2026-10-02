@@ -1081,3 +1081,185 @@ def clear_db(user: AuthenticatedUser = Depends(get_current_user)):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
+# ── Phase 8.3 Proactive Intelligence Endpoints ───────────────────────────────
+
+from datetime import datetime
+from app.intelligence.proactive.models import AlertStatus
+from app.intelligence.proactive.alert_store import (
+    get_alerts,
+    get_alert,
+    update_alert_status,
+)
+from app.intelligence.proactive.evaluator import evaluate_proactive_metrics
+from app.intelligence.proactive.action_bridge import prepare_action_proposal
+
+
+class ProactiveEvaluateRequest(BaseModel):
+    force: bool = False
+
+
+@app.get("/proactive/alerts")
+def list_proactive_alerts(
+    status: str | None = None,
+    severity: str | None = None,
+    category: str | None = None,
+    limit: int = 50,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        bounded_limit = max(1, min(limit, 100))
+        alerts = get_alerts(
+            user_id=user.user_id,
+            status=status,
+            severity=severity,
+            category=category,
+            limit=bounded_limit,
+        )
+        return {
+            "alerts": [a.to_dict() for a in alerts],
+            "count": len(alerts),
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "alerts": [], "count": 0}
+
+
+@app.post("/proactive/evaluate")
+@limiter.limit("10/minute")
+def evaluate_proactive_intelligence(
+    request: Request,
+    req: ProactiveEvaluateRequest | None = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        engine = get_engine()
+        db_type = get_current_db_type()
+        if engine is None or db_type == "none":
+            return {
+                "status": "disconnected",
+                "message": "No database currently connected.",
+                "alerts": [],
+                "count": 0,
+                "database_name": "none",
+                "database_type": "none",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        res = evaluate_proactive_metrics(
+            engine=engine,
+            db_type=db_type,
+            user_id=user.user_id,
+            deduplicate=True,
+            save_to_store=True,
+        )
+
+        db_info = get_database_connection_info()
+        db_name = db_info.get("database") or "database"
+        alerts = res.get("alerts", [])
+
+        return {
+            "status": res.get("status", "success"),
+            "alerts": alerts,
+            "count": len(alerts),
+            "database_name": db_name,
+            "database_type": db_type,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logging.getLogger("bgai.proactive").error("Proactive evaluate error: %s", str(e), exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "alerts": [],
+            "count": 0,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+
+@app.get("/proactive/alerts/{alert_id}")
+def get_proactive_alert(
+    alert_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        alert = get_alert(alert_id, user_id=user.user_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        return {"alert": alert.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e), "alert": None}
+
+
+@app.post("/proactive/alerts/{alert_id}/acknowledge")
+def acknowledge_proactive_alert(
+    alert_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        alert = get_alert(alert_id, user_id=user.user_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        if alert.status == AlertStatus.RESOLVED:
+            raise HTTPException(status_code=400, detail="Cannot acknowledge a resolved alert")
+        if alert.status == AlertStatus.ACKNOWLEDGED:
+            return {"alert": alert.to_dict()}
+        updated = update_alert_status(alert_id, AlertStatus.ACKNOWLEDGED, user_id=user.user_id)
+        return {"alert": updated.to_dict() if updated else alert.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e), "alert": None}
+
+
+@app.post("/proactive/alerts/{alert_id}/resolve")
+def resolve_proactive_alert(
+    alert_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        alert = get_alert(alert_id, user_id=user.user_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        updated = update_alert_status(alert_id, AlertStatus.RESOLVED, user_id=user.user_id)
+        return {"alert": updated.to_dict() if updated else alert.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e), "alert": None}
+
+
+@app.post("/proactive/alerts/{alert_id}/propose-action")
+def propose_action_for_proactive_alert(
+    alert_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        alert = get_alert(alert_id, user_id=user.user_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        engine = get_engine()
+        db_type = get_current_db_type()
+        proposal = prepare_action_proposal(alert, user_id=user.user_id, engine=engine, db_type=db_type)
+        if proposal is None:
+            return {
+                "available": False,
+                "reason": "No supported safe action is available for this alert.",
+            }
+        return {
+            "available": True,
+            "proposal": proposal,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+

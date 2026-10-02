@@ -5,6 +5,10 @@ import type {
   AgentActionResponse,
   BusinessInsight,
   BusinessInsightsResponse,
+  ProactiveAlert,
+  ProactiveAlertListResponse,
+  ProactiveEvaluationResponse,
+  ProactiveActionProposalResponse,
 } from "../types";
 
 export const API_BASE = (
@@ -437,3 +441,51 @@ export async function queryBi(question: string) {
     body: JSON.stringify({ question }),
   });
 }
+
+// ── Phase 8.3 Proactive Intelligence Endpoints ───────────────────────────────
+
+export async function getProactiveAlerts(params?: {
+  status?: string;
+  severity?: string;
+  category?: string;
+  limit?: number;
+}): Promise<ProactiveAlertListResponse> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.severity) query.set("severity", params.severity);
+  if (params?.category) query.set("category", params.category);
+  if (params?.limit) query.set("limit", String(params.limit));
+
+  const qs = query.toString();
+  return apiFetch<ProactiveAlertListResponse>(`/proactive/alerts${qs ? `?${qs}` : ""}`);
+}
+
+export async function evaluateProactive(req?: { force?: boolean }): Promise<ProactiveEvaluationResponse> {
+  return apiFetch<ProactiveEvaluationResponse>("/proactive/evaluate", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  });
+}
+
+export async function getProactiveAlert(alertId: string): Promise<{ alert: ProactiveAlert }> {
+  return apiFetch<{ alert: ProactiveAlert }>(`/proactive/alerts/${encodeURIComponent(alertId)}`);
+}
+
+export async function acknowledgeProactiveAlert(alertId: string): Promise<{ alert: ProactiveAlert }> {
+  return apiFetch<{ alert: ProactiveAlert }>(`/proactive/alerts/${encodeURIComponent(alertId)}/acknowledge`, {
+    method: "POST",
+  });
+}
+
+export async function resolveProactiveAlert(alertId: string): Promise<{ alert: ProactiveAlert }> {
+  return apiFetch<{ alert: ProactiveAlert }>(`/proactive/alerts/${encodeURIComponent(alertId)}/resolve`, {
+    method: "POST",
+  });
+}
+
+export async function proposeProactiveAction(alertId: string): Promise<ProactiveActionProposalResponse> {
+  return apiFetch<ProactiveActionProposalResponse>(`/proactive/alerts/${encodeURIComponent(alertId)}/propose-action`, {
+    method: "POST",
+  });
+}
+

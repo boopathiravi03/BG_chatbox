@@ -58,10 +58,13 @@ export interface Message {
     values: number[];
   } | null;
 
-  diagram?: string | {
-    nodes: any[];
-    edges: any[];
-  } | null;
+  diagram?:
+    | string
+    | {
+        nodes: any[];
+        edges: any[];
+      }
+    | null;
 
   analytics?: AnalyticsData | null;
 
@@ -521,5 +524,106 @@ export interface BiQueryResponse {
   available_relationships?: string[];
 }
 
+// ── Phase 8.3: Proactive Data Intelligence Models ──────────────────────────
 
+export type ProactiveAlertSeverity = "CRITICAL" | "WARNING" | "INFO" | string;
+
+export type ProactiveAlertStatus = "NEW" | "ACKNOWLEDGED" | "INVESTIGATING" | "RESOLVED" | string;
+
+export type ProactiveAlertCategory =
+  | "METRIC_SPIKE"
+  | "METRIC_DROP"
+  | "ANOMALY_DETECTED"
+  | "DATA_QUALITY_DEGRADATION"
+  | "INVENTORY_RISK"
+  | "FORECAST_DEVIATION"
+  | "METRIC_CHANGE"
+  | "DATA_QUALITY"
+  | "ANOMALY"
+  | "RELATIONAL_INTEGRITY"
+  | string;
+
+export interface ProactiveAlert {
+  alert_id: string;
+  title: string;
+  category: ProactiveAlertCategory;
+  severity: ProactiveAlertSeverity;
+  status: ProactiveAlertStatus;
+  metric: string;
+  metric_name?: string;
+  user_id?: string;
+  timestamp?: string;
+  previous_value?: number | null;
+  current_value?: number | null;
+  delta?: number | null;
+  delta_percent?: number | null;
+  threshold_applied?: string | null;
+  threshold_used?: string | null;
+  source_tables: string[];
+  source_columns: string[];
+  lineage_steps?: string[];
+  lineage?: string[];
+  sql?: string | null;
+  sql_used?: string | null;
+  evidence: Record<string, any>;
+  explanation: string;
+  recommendation: string;
+  action_suggestion?: any;
+  action_supported?: boolean;
+  created_at: string;
+  updated_at?: string;
+  resolved_at?: string | null;
+}
+
+export interface ProactiveAlertListResponse {
+  alerts: ProactiveAlert[];
+  count: number;
+  total?: number;
+  active_count?: number;
+  status?: string;
+  message?: string;
+}
+
+export interface ProactiveEvaluationResponse {
+  status: string;
+  alerts: ProactiveAlert[];
+  count: number;
+  database_name?: string;
+  database_type?: string;
+  timestamp?: string;
+  message?: string;
+  alerts_evaluated?: number;
+  new_alerts?: number;
+  active_alerts?: number;
+}
+
+export interface ProactiveActionProposal {
+  action_id?: string;
+  task_id?: string;
+  action_type: string;
+  description?: string;
+  target_table: string;
+  target_columns?: string[];
+  proposed_sql?: string;
+  preview_sql?: string;
+  verification_sql?: string;
+  parameters?: Record<string, any>;
+  estimated_affected_rows: number;
+  dry_run?: boolean;
+  requires_confirmation: boolean;
+  safety_notes?: string;
+  consequences?: string;
+  risk_level?: string;
+  recommended_agent?: string;
+  source_alert_id?: string;
+  action_plan?: any;
+}
+
+export interface ProactiveActionProposalResponse {
+  available: boolean;
+  proposal?: ProactiveActionProposal;
+  action_proposal?: ProactiveActionProposal;
+  alert_id?: string;
+  reason?: string;
+}
 
