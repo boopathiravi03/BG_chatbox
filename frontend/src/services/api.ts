@@ -677,3 +677,64 @@ export async function cancelAction(
   );
 }
 
+
+// ── Phase 8.9: Closed-Loop Outcome Optimization & Adaptive Recommendations ────
+
+export async function measureOutcome(payload: {
+  action_id: string;
+  window?: string;
+  force_remeasure?: boolean;
+}): Promise<{ status: string; analysis: any; message?: string }> {
+  return apiFetch<{ status: string; analysis: any; message?: string }>(
+    "/intelligence/outcomes/measure",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function getOutcomeMeasurement(
+  outcomeId: string
+): Promise<{ status: string; measurement: any; message?: string }> {
+  return apiFetch<{ status: string; measurement: any; message?: string }>(
+    `/intelligence/outcomes/${encodeURIComponent(outcomeId)}`
+  );
+}
+
+export async function getOutcomeAnalysis(
+  outcomeId: string
+): Promise<{ status: string; analysis: any; message?: string }> {
+  return apiFetch<{ status: string; analysis: any; message?: string }>(
+    `/intelligence/outcomes/${encodeURIComponent(outcomeId)}/analysis`
+  );
+}
+
+export async function getAdaptiveRecommendations(): Promise<{
+  status: string;
+  recommendations: any[];
+  total: number;
+  note?: string;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    recommendations: any[];
+    total: number;
+    note?: string;
+    message?: string;
+  }>("/intelligence/recommendations/adaptive");
+}
+
+export async function explainRecommendation(
+  recommendationId: string
+): Promise<{ status: string; recommendation_id: string; explanation: any; message?: string }> {
+  return apiFetch<{
+    status: string;
+    recommendation_id: string;
+    explanation: any;
+    message?: string;
+  }>(`/intelligence/recommendations/${encodeURIComponent(recommendationId)}/explain`, {
+    method: "POST",
+  });
+}

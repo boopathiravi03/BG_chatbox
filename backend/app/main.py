@@ -1881,4 +1881,190 @@ def action_cancel_endpoint(
     return {"status": "cancelled", "action": action.to_dict()}
 
 
+# ── Phase 8.9: Closed-Loop Outcome Optimization & Adaptive Recommendations ────
 
+class MeasureOutcomeRequest(BaseModel):
+    action_id: str
+    metric_name: Optional[str] = None
+    source_table: Optional[str] = None
+    source_column: Optional[str] = None
+    aggregation: Optional[str] = "SUM"
+    window: Optional[str] = "7d"
+    force_remeasure: Optional[bool] = False
+
+
+@app.post("/intelligence/outcomes/measure")
+@limiter.limit("10/minute")
+def measure_outcome_endpoint(
+    req: MeasureOutcomeRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Trigger outcome measurement for a Phase 8.8 action.
+    Measures before/after metric changes using real database data.
+    Returns observed associations — causation is NOT claimed.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.outcome_optimization.analysis_engine import run_outcome_analysis
+        from app.intelligence.outcome_optimization.models import MeasurementWindow
+
+        engine = get_engine()
+        db_type = get_current_db_type()
+
+        window = req.window or MeasurementWindow.D7
+        if window not in MeasurementWindow.ALL:
+            window = MeasurementWindow.D7
+
+        analysis = run_outcome_analysis(
+            user_id=user.user_id,
+            action_id=req.action_id,
+            engine=engine,
+            db_type=db_type,
+            window=window,
+            force_remeasure=bool(req.force_remeasure),
+        )
+
+        return {
+            "status": "success" if analysis.measurements else "insufficient_data",
+            "analysis": analysis.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Outcome measure error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "analysis": None}
+
+
+@app.get("/intelligence/outcomes/{outcome_id}")
+@limiter.limit("30/minute")
+def get_outcome_by_id_endpoint(
+    outcome_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieve a specific Phase 8.9 outcome measurement by ID.
+    Strict user isolation: returns 404 if measurement belongs to another user.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.outcome_optimization.outcome_tracker import get_measurement
+        m = get_measurement(measurement_id=outcome_id, user_id=user.user_id)
+        if m is None:
+            raise HTTPException(status_code=404, detail=f"Outcome measurement '{outcome_id}' not found.")
+        return {"status": "success", "measurement": m.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e), "measurement": None}
+
+
+@app.get("/intelligence/outcomes/{outcome_id}/analysis")
+@limiter.limit("20/minute")
+def get_outcome_analysis_endpoint(
+    outcome_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieve all measurements for a given action_id (treated as outcome_id here).
+    Builds and returns a full OutcomeAnalysis for the action.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.outcome_optimization.outcome_tracker import list_measurements
+        from app.intelligence.outcome_optimization.analysis_engine import (
+            _aggregate_effectiveness, _aggregate_confidence, _aggregate_attribution, _build_summary
+        )
+        from app.intelligence.outcome_optimization.models import OutcomeAnalysis
+
+        measurements = list_measurements(
+            user_id=user.user_id,
+            action_id=outcome_id,
+            limit=50,
+        )
+
+        analysis = OutcomeAnalysis(
+            action_id=outcome_id,
+            user_id=user.user_id,
+            measurements=measurements,
+        )
+
+        if measurements:
+            analysis.overall_effectiveness = _aggregate_effectiveness(measurements)
+            analysis.overall_confidence = _aggregate_confidence(measurements)
+            analysis.attribution_summary = _aggregate_attribution(measurements)
+            analysis.summary = _build_summary(analysis, measurements)
+
+        return {
+            "status": "success" if measurements else "no_measurements",
+            "analysis": analysis.to_dict(),
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "analysis": None}
+
+
+@app.get("/intelligence/recommendations/adaptive")
+@limiter.limit("20/minute")
+def get_adaptive_recommendations_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Generate adaptive recommendations from real historical outcomes and measurements.
+    Returns evidence-based recommendations. Never auto-executes.
+    All recommendations require Phase 8.8 confirmation flow.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.outcome_optimization.recommendation_engine import (
+            generate_adaptive_recommendations,
+        )
+        recs = generate_adaptive_recommendations(user_id=user.user_id)
+        return {
+            "status": "success",
+            "recommendations": [r.to_dict() for r in recs],
+            "total": len(recs),
+            "note": (
+                "Recommendations are based on observed historical patterns only. "
+                "All actions require human confirmation via Phase 8.8."
+            ),
+        }
+    except Exception as e:
+        logging.error(f"Adaptive recommendations error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "recommendations": [], "total": 0}
+
+
+@app.post("/intelligence/recommendations/{recommendation_id}/explain")
+@limiter.limit("20/minute")
+def explain_recommendation_endpoint(
+    recommendation_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Generate a structured explanation for a specific adaptive recommendation.
+    Groq may rephrase pre-computed explanation text (no new facts generated).
+    """
+    _activate(user)
+    try:
+        from app.intelligence.outcome_optimization.outcome_tracker import get_recommendation
+        from app.intelligence.outcome_optimization.explainer import explain_recommendation
+
+        rec = get_recommendation(recommendation_id=recommendation_id, user_id=user.user_id)
+        if rec is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Recommendation '{recommendation_id}' not found.",
+            )
+
+        explanation = explain_recommendation(rec=rec, use_groq=False)
+        return {
+            "status": "success",
+            "recommendation_id": recommendation_id,
+            "explanation": explanation.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e), "explanation": None}

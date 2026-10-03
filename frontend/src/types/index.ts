@@ -1129,3 +1129,84 @@ export interface ExecuteActionPayload {
   confirmation_token?: string;
 }
 
+// ── Phase 8.9: Closed-Loop Outcome Optimization Types ─────────────────────────
+
+export interface OutcomeMeasurement {
+  measurement_id: string;
+  user_id: string;
+  action_id?: string;
+  metric_name: string;
+  source_table: string;
+  source_column: string;
+  measurement_sql: string;
+  baseline_value: number | null;
+  baseline_period?: string;
+  observed_value: number | null;
+  delta: number | null;
+  delta_pct: number | null;
+  window: string;
+  effectiveness: string;
+  confidence: string;
+  attribution: string;
+  confounders: string[];
+  sample_size: number;
+  baseline_sample_size: number;
+  measured_at: string;
+  action_executed_at?: string;
+  epistemic_note: string;
+}
+
+export interface OutcomeAnalysis {
+  analysis_id: string;
+  action_id: string;
+  user_id: string;
+  action_type?: string;
+  target_table?: string;
+  measurements: OutcomeMeasurement[];
+  overall_effectiveness: string;
+  overall_confidence: string;
+  attribution_summary: string;
+  summary: string;
+  data_gaps: string[];
+  analyzed_at: string;
+  disclaimer: string;
+}
+
+export interface AdaptiveRecommendation {
+  recommendation_id: string;
+  user_id: string;
+  title: string;
+  description: string;
+  action_type: string;
+  target_table: string;
+  rationale: string;
+  source: string;
+  historical_success_rate: number | null;
+  historical_sample_size: number;
+  confidence: string;
+  supporting_outcome_ids: string[];
+  requires_human_confirmation: boolean;
+  execution_path: string;
+  caveat: string;
+  generated_at: string;
+}
+
+export interface RecommendationExplanation {
+  recommendation_id: string;
+  user_id: string;
+  explanation_points: string[];
+  evidence_references: Record<string, unknown>[];
+  limitations: string[];
+  generated_at: string;
+}
+
+export interface MeasureOutcomeRequest {
+  action_id: string;
+  metric_name?: string;
+  source_table?: string;
+  source_column?: string;
+  aggregation?: string;
+  window?: string;
+  force_remeasure?: boolean;
+}
+

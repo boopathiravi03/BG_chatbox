@@ -37,6 +37,7 @@ import OutcomeLearningSection from "../learning/OutcomeLearningSection";
 import ContinuousIntelligenceSection from "../monitoring/ContinuousIntelligenceSection";
 import RootCauseInvestigationSection from "../investigation/RootCauseInvestigationSection";
 import ActionProposalSection from "../actions/ActionProposalSection";
+import OutcomeOptimizationSection from "../outcomes/OutcomeOptimizationSection";
 
 
 
@@ -399,6 +400,12 @@ export default function OverviewView({
           onConnectDatabase={onConnectDatabase}
         />
       </div>
+
+      {/* Phase 8.9: Closed-Loop Outcome Optimization & Adaptive Recommendations */}
+      <OutcomeOptimizationSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+      />
 
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}
