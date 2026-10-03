@@ -999,3 +999,133 @@ export interface InvestigateSignalPayload {
   table?: string;
   context?: Record<string, unknown>;
 }
+
+
+// ── Phase 8.8: Controlled Business Actions & Action Intelligence ──────────────
+
+export type ActionProposalType = "INSERT" | "UPDATE" | "DELETE" | string;
+
+export type ActionProposalStatus =
+  | "PROPOSED"
+  | "VALIDATING"
+  | "READY_FOR_CONFIRMATION"
+  | "CONFIRMED"
+  | "EXECUTING"
+  | "EXECUTED"
+  | "VERIFIED"
+  | "REJECTED"
+  | "EXPIRED"
+  | "BLOCKED"
+  | "EXECUTION_FAILED"
+  | "VERIFICATION_FAILED"
+  | "CANCELLED"
+  | string;
+
+export type ActionProposalRisk = "LOW" | "MEDIUM" | "HIGH" | "BLOCKED" | string;
+
+export interface ActionProposalTarget {
+  table: string;
+  columns: string[];
+  condition_sql?: string | null;
+  condition_params?: Record<string, any>;
+  primary_keys?: string[];
+}
+
+export interface ActionProposalChange {
+  column: string;
+  current_value?: any;
+  proposed_value?: any;
+  value_type?: string | null;
+}
+
+export interface ActionProposalImpact {
+  estimated_rows: number;
+  actual_preview_rows: number;
+  current_sample_records: Record<string, any>[];
+  proposed_sample_records: Record<string, any>[];
+  related_records_count: Record<string, number>;
+  warnings: string[];
+  is_excessive: boolean;
+}
+
+export interface ActionProposalValidation {
+  is_valid: boolean;
+  reasons: string[];
+  blocked_reason?: string | null;
+  passed_checks: string[];
+}
+
+export interface ActionProposalConfirmation {
+  confirmation_token: string;
+  confirmed_by: string;
+  confirmed_at: string;
+  expires_at: string;
+  high_risk_acknowledged: boolean;
+  is_expired: boolean;
+}
+
+export interface ActionProposalExecutionResult {
+  success: boolean;
+  action_id: string;
+  status: string;
+  actual_rows_affected: number;
+  executed_at: string;
+  error?: string | null;
+  transaction_id: string;
+}
+
+export interface ActionProposalVerification {
+  verified: boolean;
+  verification_sql: string;
+  expected_value?: any;
+  actual_value?: any;
+  details: string;
+}
+
+export interface ActionProposal {
+  action_id: string;
+  user_id: string;
+  action_type: ActionProposalType;
+  status: ActionProposalStatus;
+  target: ActionProposalTarget;
+  changes: ActionProposalChange[];
+  reason: string;
+  source_signal_id?: string | null;
+  risk: ActionProposalRisk;
+  sql_preview: string;
+  parameterized_sql: string;
+  parameters: Record<string, any>;
+  verification_sql?: string | null;
+  expected_verification_result?: string | null;
+  validation?: ActionProposalValidation | null;
+  impact?: ActionProposalImpact | null;
+  confirmation?: ActionProposalConfirmation | null;
+  execution_result?: ActionProposalExecutionResult | null;
+  verification?: ActionProposalVerification | null;
+  created_at: string;
+  updated_at: string;
+  database_identity: string;
+}
+
+export interface ProposeActionPayload {
+  action_type: string;
+  target_table: string;
+  changes: {
+    column: string;
+    proposed_value: any;
+    current_value?: any;
+  }[];
+  condition_sql?: string;
+  condition_params?: Record<string, any>;
+  reason?: string;
+  source_signal_id?: string;
+}
+
+export interface ConfirmActionPayload {
+  high_risk_acknowledged?: boolean;
+}
+
+export interface ExecuteActionPayload {
+  confirmation_token?: string;
+}
+

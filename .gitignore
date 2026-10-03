@@ -13,4 +13,8 @@ dist/
 backend/venv_backup/
 bgai_users.db
 bgai_audit.db
+bgai_*.db
+backend/bgai_*.db
+backend/app/agents/audit_log.json
 *.sqlite
+

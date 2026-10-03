@@ -36,6 +36,7 @@ import DecisionIntelligenceSection from "../decision/DecisionIntelligenceSection
 import OutcomeLearningSection from "../learning/OutcomeLearningSection";
 import ContinuousIntelligenceSection from "../monitoring/ContinuousIntelligenceSection";
 import RootCauseInvestigationSection from "../investigation/RootCauseInvestigationSection";
+import ActionProposalSection from "../actions/ActionProposalSection";
 
 
 
@@ -390,6 +391,15 @@ export default function OverviewView({
           onClearSelectedSignal={() => setSelectedInvestigationSignal(null)}
         />
       </div>
+
+      {/* Phase 8.8: Controlled Business Actions & Action Intelligence */}
+      <div id="controlled-actions-section">
+        <ActionProposalSection
+          dbConnected={dbConnected}
+          onConnectDatabase={onConnectDatabase}
+        />
+      </div>
+
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}
       {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (

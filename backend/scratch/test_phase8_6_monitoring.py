@@ -20,8 +20,11 @@ from app.main import app
 from app.security.auth import create_access_token
 
 client = TestClient(app, raise_server_exceptions=False)
+if hasattr(app.state, "limiter"):
+    app.state.limiter.enabled = False
 
 results: list[tuple] = []
+
 
 
 def test(name: str, fn):
@@ -35,8 +38,9 @@ def test(name: str, fn):
 
 
 def _auth(user_id: str) -> dict:
-    token = create_access_token({"sub": user_id})
+    token = create_access_token(user_id=user_id, username=user_id)
     return {"Authorization": f"Bearer {token}"}
+
 
 
 # ── 1. Package imports ────────────────────────────────────────────────────────
@@ -506,12 +510,13 @@ print("\n[8/10] Phase 8.1–8.5 regression guard")
 
 
 def t30():
-    from app.intelligence.proactive.evaluator import evaluate_database_for_alerts
+    from app.intelligence.proactive.evaluator import evaluate_proactive_metrics
     from app.intelligence.anomaly.detector import detect_anomalies
     from app.intelligence.business_intelligence.insight_engine import generate_business_intelligence_report
     from app.intelligence.decision import run_decision_analysis
     from app.intelligence.learning.outcome_engine import synthesize_learning_summary
-    assert evaluate_database_for_alerts
+    assert evaluate_proactive_metrics
+
     assert detect_anomalies
     assert generate_business_intelligence_report
     assert run_decision_analysis

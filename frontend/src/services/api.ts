@@ -21,6 +21,10 @@ import type {
   MonitoringSummaryResponse,
   InvestigationResult,
   InvestigateSignalPayload,
+  ActionProposal,
+  ProposeActionPayload,
+  ConfirmActionPayload,
+  ExecuteActionPayload,
 } from "../types";
 
 export const API_BASE = (
@@ -580,3 +584,96 @@ export async function investigateSignal(
     }
   );
 }
+
+// ── Phase 8.8: Controlled Business Actions & Action Intelligence ────────────
+
+export async function proposeAction(
+  payload: ProposeActionPayload
+): Promise<{ status: string; action: ActionProposal; message?: string }> {
+  return apiFetch<{ status: string; action: ActionProposal; message?: string }>(
+    "/intelligence/actions/propose",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function previewAction(
+  actionId: string
+): Promise<{ status: string; action: ActionProposal; impact?: any; message?: string }> {
+  return apiFetch<{ status: string; action: ActionProposal; impact?: any; message?: string }>(
+    `/intelligence/actions/${encodeURIComponent(actionId)}/preview`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function confirmAction(
+  actionId: string,
+  payload?: ConfirmActionPayload
+): Promise<{ status: string; action: ActionProposal; confirmation?: any; message?: string }> {
+  return apiFetch<{ status: string; action: ActionProposal; confirmation?: any; message?: string }>(
+    `/intelligence/actions/${encodeURIComponent(actionId)}/confirm`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    }
+  );
+}
+
+export async function executeAction(
+  actionId: string,
+  payload?: ExecuteActionPayload
+): Promise<{
+  status: string;
+  action: ActionProposal;
+  execution?: any;
+  verification?: any;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    action: ActionProposal;
+    execution?: any;
+    verification?: any;
+    message?: string;
+  }>(`/intelligence/actions/${encodeURIComponent(actionId)}/execute`, {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getAction(
+  actionId: string
+): Promise<{ status: string; action: ActionProposal; message?: string }> {
+  return apiFetch<{ status: string; action: ActionProposal; message?: string }>(
+    `/intelligence/actions/${encodeURIComponent(actionId)}`
+  );
+}
+
+export async function listActions(params?: {
+  status?: string;
+  limit?: number;
+}): Promise<{ status: string; actions: ActionProposal[]; count: number; message?: string }> {
+  const query = new URLSearchParams();
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.status) query.set("status", params.status);
+  const qs = query.toString();
+  return apiFetch<{ status: string; actions: ActionProposal[]; count: number; message?: string }>(
+    `/intelligence/actions${qs ? `?${qs}` : ""}`
+  );
+}
+
+export async function cancelAction(
+  actionId: string
+): Promise<{ status: string; action: ActionProposal; message?: string }> {
+  return apiFetch<{ status: string; action: ActionProposal; message?: string }>(
+    `/intelligence/actions/${encodeURIComponent(actionId)}/cancel`,
+    {
+      method: "POST",
+    }
+  );
+}
+

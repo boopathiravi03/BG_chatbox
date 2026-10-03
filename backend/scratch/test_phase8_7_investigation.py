@@ -721,14 +721,15 @@ def t33_user_isolation_cannot_investigate_other_user_alert():
         alert_id=alert_id,
         user_id=user_a,
         metric="Revenue",
-        table="orders",
+        source_tables=["orders"],
         title="User A Secret Alert",
-        description="Private metric shift",
+        explanation="Private metric shift",
         severity=AlertSeverity.CRITICAL,
         category=AlertCategory.METRIC_DROP,
         status=AlertStatus.NEW,
     )
     save_alert(alert_a)
+
 
     # User B attempts to investigate User A's alert
     res_b = client.post(

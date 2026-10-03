@@ -1610,3 +1610,275 @@ def investigate_signal_endpoint(
         }
 
 
+# ── Phase 8.8: Controlled Business Actions & Action Intelligence ──────────────
+from app.intelligence.actions import (
+    build_action_proposal,
+    calculate_impact_preview,
+    generate_confirmation_token,
+    execute_action,
+    save_action,
+    get_action as get_action_proposal,
+    list_actions as list_action_proposals,
+    ActionStatus,
+    ActionRisk,
+    ActionExecutionConflict,
+    ActionExecutionError,
+)
+
+def _get_active_db_identity() -> str:
+    from app.database.database_manager import get_engine
+    eng = get_engine()
+    if eng is None:
+        return "none"
+    try:
+        return eng.url.render_as_string(hide_password=True)
+    except Exception:
+        return "unknown"
+
+class ProposeActionRequest(BaseModel):
+    action_type: str  # INSERT, UPDATE, DELETE
+    target_table: str
+    changes: list[dict[str, Any]]
+    condition_sql: Optional[str] = None
+    condition_params: Optional[dict[str, Any]] = None
+    reason: Optional[str] = None
+    source_signal_id: Optional[str] = None
+
+class ConfirmActionRequest(BaseModel):
+    high_risk_acknowledged: Optional[bool] = False
+
+class ExecuteActionRequest(BaseModel):
+    confirmation_token: Optional[str] = None
+
+@app.post("/intelligence/actions/propose")
+@limiter.limit("10/minute")
+def action_propose_endpoint(
+    req: ProposeActionRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Propose a safe, structured business action with initial multi-layer validation."""
+    _activate(user)
+    try:
+        from app.database.database_manager import get_engine, get_current_db_type
+        engine = get_engine()
+        db_type = get_current_db_type() or "sqlite"
+        db_ident = _get_active_db_identity()
+
+        proposal = build_action_proposal(
+            user_id=user.user_id,
+            action_type=req.action_type,
+            target_table=req.target_table,
+            changes=req.changes,
+            condition_sql=req.condition_sql,
+            condition_params=req.condition_params,
+            reason=req.reason or "",
+            source_signal_id=req.source_signal_id,
+            engine=engine,
+            db_type=db_type,
+            database_identity=db_ident,
+        )
+
+        save_action(proposal)
+        return {
+            "status": proposal.status,
+            "action": proposal.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Action proposal error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "action": None}
+
+
+@app.post("/intelligence/actions/{action_id}/preview")
+@limiter.limit("20/minute")
+def action_preview_endpoint(
+    action_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Dry-run impact preview calculating affected rows and dependent references."""
+    _activate(user)
+    action = get_action_proposal(action_id, user_id=user.user_id)
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found.")
+
+    try:
+        from app.database.database_manager import get_engine, get_current_db_type
+        engine = get_engine()
+        db_type = get_current_db_type() or "sqlite"
+
+        impact, risk = calculate_impact_preview(action, engine=engine, db_type=db_type)
+        action.impact = impact
+        action.risk = risk.value
+
+        if risk == ActionRisk.BLOCKED or impact.is_excessive:
+            action.status = ActionStatus.BLOCKED.value
+        elif action.status not in (ActionStatus.CONFIRMED.value, ActionStatus.EXECUTED.value, ActionStatus.VERIFIED.value):
+            action.status = ActionStatus.READY_FOR_CONFIRMATION.value
+
+        save_action(action)
+        return {
+            "status": action.status,
+            "impact": impact.to_dict(),
+            "risk": risk.value,
+            "action": action.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Action preview error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "action": action.to_dict()}
+
+
+@app.post("/intelligence/actions/{action_id}/confirm")
+@limiter.limit("10/minute")
+def action_confirm_endpoint(
+    action_id: str,
+    req: ConfirmActionRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Explicit human confirmation generating an HMAC-SHA256 confirmation token."""
+    _activate(user)
+    action = get_action_proposal(action_id, user_id=user.user_id)
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found.")
+
+    if action.status in (ActionStatus.EXECUTED.value, ActionStatus.VERIFIED.value):
+        raise HTTPException(status_code=409, detail="Action has already been executed.")
+
+    if action.status == ActionStatus.BLOCKED.value:
+        raise HTTPException(status_code=400, detail="Cannot confirm a blocked action.")
+
+    if action.risk == ActionRisk.HIGH.value and not req.high_risk_acknowledged:
+        raise HTTPException(
+            status_code=400,
+            detail="High-risk actions require explicit high-risk acknowledgement checkbox."
+        )
+
+    db_ident = _get_active_db_identity()
+    conf = generate_confirmation_token(
+        proposal=action,
+        user_id=user.user_id,
+        db_identity=db_ident,
+        high_risk_acknowledged=bool(req.high_risk_acknowledged),
+    )
+
+    action.confirmation = conf
+    action.status = ActionStatus.CONFIRMED.value
+    save_action(action)
+
+    return {
+        "status": "confirmed",
+        "confirmation_token": conf.confirmation_token,
+        "expires_at": conf.expires_at,
+        "action": action.to_dict(),
+    }
+
+
+@app.post("/intelligence/actions/{action_id}/execute")
+@limiter.limit("5/minute")
+def action_execute_endpoint(
+    action_id: str,
+    req: ExecuteActionRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Atomic transactional execution with verification and audit logging."""
+    _activate(user)
+    action = get_action_proposal(action_id, user_id=user.user_id)
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found.")
+
+    if action.status in (ActionStatus.EXECUTED.value, ActionStatus.VERIFIED.value):
+        raise HTTPException(status_code=409, detail="Action has already been executed (duplicate execution blocked).")
+
+    if action.status != ActionStatus.CONFIRMED.value:
+        raise HTTPException(status_code=400, detail=f"Action is in state '{action.status}'. Explicit confirmation required before execution.")
+
+    from app.database.database_manager import get_engine, get_current_db_type
+    engine = get_engine()
+    if engine is None:
+        return {"status": "disconnected", "message": "No active database connection.", "action": action.to_dict()}
+
+    db_type = get_current_db_type() or "sqlite"
+    db_ident = _get_active_db_identity()
+
+    token = req.confirmation_token or (action.confirmation.confirmation_token if action.confirmation else "")
+
+    try:
+        res = execute_action(
+            proposal=action,
+            engine=engine,
+            user_id=user.user_id,
+            confirmation_token=token,
+            current_db_identity=db_ident,
+            db_type=db_type,
+        )
+        return {
+            "status": action.status,
+            "result": res.to_dict(),
+            "action": action.to_dict(),
+        }
+    except ActionExecutionConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ActionExecutionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.error(f"Unexpected execution error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "action": action.to_dict()}
+
+
+@app.get("/intelligence/actions/{action_id}")
+@limiter.limit("30/minute")
+def action_get_endpoint(
+    action_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Fetch action proposal details for the requesting user."""
+    _activate(user)
+    action = get_action_proposal(action_id, user_id=user.user_id)
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found.")
+    return {"status": "success", "action": action.to_dict()}
+
+
+@app.get("/intelligence/actions")
+@limiter.limit("30/minute")
+def action_list_endpoint(
+    request: Request,
+    status: Optional[str] = None,
+    limit: int = 50,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """List action proposals for the authenticated user."""
+    _activate(user)
+    actions = list_action_proposals(user_id=user.user_id, status=status, limit=limit)
+    return {
+        "status": "success",
+        "actions": [a.to_dict() for a in actions],
+        "count": len(actions),
+    }
+
+
+@app.post("/intelligence/actions/{action_id}/cancel")
+@limiter.limit("10/minute")
+def action_cancel_endpoint(
+    action_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Cancel a proposed or confirmed action."""
+    _activate(user)
+    action = get_action_proposal(action_id, user_id=user.user_id)
+    if not action:
+        raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found.")
+
+    if action.status in (ActionStatus.EXECUTED.value, ActionStatus.VERIFIED.value):
+        raise HTTPException(status_code=400, detail="Cannot cancel an already executed action.")
+
+    action.status = ActionStatus.CANCELLED.value
+    save_action(action)
+    return {"status": "cancelled", "action": action.to_dict()}
+
+
+
