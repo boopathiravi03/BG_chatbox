@@ -738,3 +738,107 @@ export async function explainRecommendation(
     method: "POST",
   });
 }
+
+
+// ── Phase 9.0: Advanced Predictive & Simulation Intelligence ──────────────────
+
+export async function getPredictCandidates(): Promise<{
+  status: string;
+  candidates: any[];
+  total: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    candidates: any[];
+    total: number;
+    message?: string;
+  }>("/intelligence/predict/candidates");
+}
+
+export async function predictMetric(payload: {
+  table: string;
+  date_column?: string;
+  metric_column?: string;
+  metric_name?: string;
+  aggregation?: string;
+  frequency?: string;
+  horizon_days?: number;
+  force_method?: string;
+}): Promise<{ status: string; prediction?: any; message?: string }> {
+  return apiFetch<{ status: string; prediction?: any; message?: string }>(
+    "/intelligence/predict",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function simulateScenario(payload: {
+  prediction_id: string;
+  change_percent?: number;
+  absolute_change?: number;
+  scenario_name?: string;
+  scenario_type?: string;
+}): Promise<{ status: string; scenario?: any; message?: string }> {
+  return apiFetch<{ status: string; scenario?: any; message?: string }>(
+    "/intelligence/predict/scenario",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function compareScenarios(payload: {
+  prediction_id: string;
+  scenarios: Array<{
+    scenario_name: string;
+    change_percent?: number;
+    absolute_change?: number;
+    scenario_type?: string;
+  }>;
+}): Promise<{ status: string; comparison?: any; message?: string }> {
+  return apiFetch<{ status: string; comparison?: any; message?: string }>(
+    "/intelligence/predict/compare",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function getPredictionHistory(): Promise<{
+  status: string;
+  predictions: any[];
+  total: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    predictions: any[];
+    total: number;
+    message?: string;
+  }>("/intelligence/predict/history");
+}
+
+export async function getPredictionById(
+  predictionId: string
+): Promise<{ status: string; prediction?: any; message?: string }> {
+  return apiFetch<{ status: string; prediction?: any; message?: string }>(
+    `/intelligence/predict/${encodeURIComponent(predictionId)}`
+  );
+}
+
+export async function explainPrediction(
+  predictionId: string
+): Promise<{ status: string; explanation?: any; message?: string }> {
+  return apiFetch<{ status: string; explanation?: any; message?: string }>(
+    `/intelligence/predict/${encodeURIComponent(predictionId)}/explain`,
+    {
+      method: "POST",
+    }
+  );
+}
+

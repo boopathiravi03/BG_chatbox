@@ -2068,3 +2068,276 @@ def explain_recommendation_endpoint(
         raise
     except Exception as e:
         return {"status": "error", "message": str(e), "explanation": None}
+
+
+# ── Phase 9.0: Advanced Predictive & Simulation Intelligence ──────────────────
+
+class PredictRequest(BaseModel):
+    table: str
+    date_column: Optional[str] = None
+    metric_column: Optional[str] = None
+    metric_name: Optional[str] = None
+    aggregation: Optional[str] = "SUM"
+    frequency: Optional[str] = "monthly"
+    horizon_days: Optional[int] = 30
+    force_method: Optional[str] = None
+
+
+class ScenarioSimRequest(BaseModel):
+    prediction_id: str
+    change_percent: Optional[float] = None
+    absolute_change: Optional[float] = None
+    scenario_name: Optional[str] = None
+    scenario_type: Optional[str] = "CUSTOM"
+
+
+class ScenarioCompareRequest(BaseModel):
+    prediction_id: str
+    scenarios: list[dict[str, Any]] = []
+
+
+@app.post("/intelligence/predict")
+@limiter.limit("20/minute")
+def run_predict_endpoint(
+    req: PredictRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Executes statistical forecasting across candidate models with holdout backtesting
+    and prediction intervals on real connected database data.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.predictor import run_prediction
+
+        result = run_prediction(
+            user_id=user.user_id,
+            table=req.table,
+            date_column=req.date_column,
+            metric_column=req.metric_column,
+            metric_name=req.metric_name,
+            aggregation=req.aggregation or "SUM",
+            frequency=req.frequency or "monthly",
+            horizon_days=req.horizon_days if req.horizon_days is not None else 30,
+            force_method=req.force_method,
+            engine=get_engine(),
+            db_type=get_current_db_type(),
+        )
+
+        return {
+            "status": result.status,
+            "prediction": result.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Prediction error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "prediction": None}
+
+
+@app.get("/intelligence/predict/candidates")
+@limiter.limit("30/minute")
+def get_predict_candidates_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Discovers candidate metrics and date columns eligible for time-series forecasting.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.data_quality import discover_predictive_candidates
+
+        candidates = discover_predictive_candidates(
+            engine=get_engine(), db_type=get_current_db_type()
+        )
+        return {
+            "status": "success",
+            "candidates": [
+                {
+                    "table": c.table,
+                    "date_column": c.date_column,
+                    "metric_column": c.metric_column,
+                    "metric_name": c.metric_name,
+                    "aggregation": c.aggregation,
+                    "frequency": c.frequency,
+                }
+                for c in candidates
+            ],
+            "total": len(candidates),
+        }
+    except Exception as e:
+        logging.error(f"Prediction candidates discovery error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "candidates": [], "total": 0}
+
+
+@app.post("/intelligence/predict/scenario")
+@limiter.limit("20/minute")
+def run_scenario_endpoint(
+    req: ScenarioSimRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Simulates a what-if scenario on a pre-existing baseline forecast.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.store import get_prediction
+        from app.intelligence.predictive.scenario_engine import simulate_what_if_scenario
+
+        pred = get_prediction(req.prediction_id, user_id=user.user_id)
+        if not pred:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Baseline prediction '{req.prediction_id}' not found.",
+            )
+
+        scenario = simulate_what_if_scenario(
+            baseline_result=pred,
+            change_percent=req.change_percent,
+            absolute_change=req.absolute_change,
+            scenario_name=req.scenario_name,
+            scenario_type=req.scenario_type or "CUSTOM",
+        )
+
+        return {
+            "status": "success",
+            "scenario": scenario.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logging.error(f"Scenario simulation error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "scenario": None}
+
+
+@app.post("/intelligence/predict/compare")
+@limiter.limit("20/minute")
+def run_compare_endpoint(
+    req: ScenarioCompareRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Conducts multi-scenario comparative simulation against baseline forecast.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.store import get_prediction
+        from app.intelligence.predictive.scenario_engine import compare_scenarios
+
+        pred = get_prediction(req.prediction_id, user_id=user.user_id)
+        if not pred:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Baseline prediction '{req.prediction_id}' not found.",
+            )
+
+        comparison = compare_scenarios(
+            baseline_result=pred,
+            scenario_specs=req.scenarios,
+        )
+
+        return {
+            "status": "success",
+            "comparison": comparison.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Scenario comparison error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "comparison": None}
+
+
+@app.get("/intelligence/predict/history")
+@limiter.limit("30/minute")
+def list_predictions_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists recent forecast results generated by the user.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.store import list_predictions
+
+        results = list_predictions(user_id=user.user_id, limit=20)
+        return {
+            "status": "success",
+            "predictions": [p.to_dict() for p in results],
+            "total": len(results),
+        }
+    except Exception as e:
+        logging.error(f"Predictions list error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "predictions": [], "total": 0}
+
+
+@app.get("/intelligence/predict/{prediction_id}")
+@limiter.limit("30/minute")
+def get_prediction_endpoint(
+    prediction_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieves a specific prediction verifying user ownership.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.store import get_prediction
+
+        pred = get_prediction(prediction_id=prediction_id, user_id=user.user_id)
+        if not pred:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Prediction '{prediction_id}' not found.",
+            )
+
+        return {
+            "status": "success",
+            "prediction": pred.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Prediction get error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "prediction": None}
+
+
+@app.post("/intelligence/predict/{prediction_id}/explain")
+@limiter.limit("20/minute")
+def explain_prediction_endpoint(
+    prediction_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Generates a structured, transparent explanation of predictive evidence lineage,
+    method selection rationale, and uncertainty constraints.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.predictive.store import get_prediction
+        from app.intelligence.predictive.explainer import explain_prediction_narrative
+
+        pred = get_prediction(prediction_id=prediction_id, user_id=user.user_id)
+        if not pred:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Prediction '{prediction_id}' not found.",
+            )
+
+        explanation = explain_prediction_narrative(pred=pred, use_groq=False)
+        return {
+            "status": "success",
+            "explanation": explanation.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Prediction explanation error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "explanation": None}
+

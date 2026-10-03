@@ -1210,3 +1210,160 @@ export interface MeasureOutcomeRequest {
   force_remeasure?: boolean;
 }
 
+// ── Phase 9.0: Advanced Predictive & Simulation Intelligence Types ───────────
+
+export interface ForecastPoint {
+  period: string;
+  value: number;
+  is_forecast: boolean;
+  lower_bound?: number | null;
+  upper_bound?: number | null;
+  uncertainty_width?: number | null;
+}
+
+export interface ModelEvaluationMetric {
+  method: string;
+  mae?: number | null;
+  rmse?: number | null;
+  mape?: number | null;
+  mape_note?: string | null;
+  selected: boolean;
+  reason: string;
+}
+
+export interface PredictionEvidence {
+  source_table: string;
+  date_column: string;
+  metric_column?: string | null;
+  aggregation: string;
+  historical_count: number;
+  min_date: string;
+  max_date: string;
+  sql_lineage: string;
+  historical_outcome_support: Array<{
+    source?: string;
+    id?: string;
+    result?: string;
+    status?: string;
+    note?: string;
+    delta_pct?: number;
+  }>;
+}
+
+export interface PredictionResult {
+  prediction_id: string;
+  user_id: string;
+  database_identity?: string;
+  metric_name: string;
+  source_table: string;
+  date_column: string;
+  metric_column?: string | null;
+  frequency: string;
+  forecast_horizon_days: number;
+  horizon_periods: number;
+  points: ForecastPoint[];
+  selected_method: string;
+  trend_direction: string;
+  seasonality_detected: boolean;
+  seasonality_summary: string;
+  confidence_tier: string;
+  confidence_rationale: string;
+  data_quality_status: string;
+  model_evaluations: ModelEvaluationMetric[];
+  evidence?: PredictionEvidence | null;
+  assumptions: string[];
+  limitations: string[];
+  ai_summary?: string | null;
+  status: string;
+  error_message?: string | null;
+  created_at: string;
+}
+
+export interface ScenarioResult {
+  scenario_id: string;
+  prediction_id: string;
+  scenario_name: string;
+  scenario_type: string;
+  change_percent?: number | null;
+  absolute_change?: number | null;
+  baseline_projected_total: number;
+  scenario_projected_total: number;
+  delta_total: number;
+  delta_percent: number;
+  scenario_points: ForecastPoint[];
+  assumption_statement: string;
+  causal_disclaimer: string;
+  limitations: string[];
+  created_at: string;
+}
+
+export interface ScenarioComparison {
+  comparison_id: string;
+  metric_name: string;
+  forecast_horizon_days: number;
+  baseline_total: number;
+  scenarios: ScenarioResult[];
+  summary_table: Array<{
+    scenario_name: string;
+    type: string;
+    projected_total: number;
+    delta_from_baseline: number;
+    delta_percent: number;
+    assumption: string;
+  }>;
+  guidance: string;
+  created_at: string;
+}
+
+export interface PredictionExplanation {
+  prediction_id: string;
+  metric_name: string;
+  historical_summary: string;
+  method_rationale: string;
+  backtest_evaluation: string;
+  trend_and_seasonality: string;
+  uncertainty_explanation: string;
+  limitations: string[];
+  phase89_historical_signals: string[];
+  generated_at: string;
+}
+
+export interface PredictCandidate {
+  table: string;
+  date_column: string;
+  metric_column?: string | null;
+  metric_name: string;
+  aggregation: string;
+  frequency: string;
+}
+
+export interface PredictRequestPayload {
+  table: string;
+  date_column?: string;
+  metric_column?: string;
+  metric_name?: string;
+  aggregation?: string;
+  frequency?: string;
+  horizon_days?: number;
+  force_method?: string;
+}
+
+export interface ScenarioSimPayload {
+  prediction_id: string;
+  change_percent?: number;
+  absolute_change?: number;
+  scenario_name?: string;
+  scenario_type?: string;
+}
+
+export interface ScenarioComparePayload {
+  prediction_id: string;
+  scenarios: Array<{
+    scenario_name: string;
+    change_percent?: number;
+    absolute_change?: number;
+    scenario_type?: string;
+  }>;
+}
+
+

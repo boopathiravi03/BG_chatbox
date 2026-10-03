@@ -38,6 +38,7 @@ import ContinuousIntelligenceSection from "../monitoring/ContinuousIntelligenceS
 import RootCauseInvestigationSection from "../investigation/RootCauseInvestigationSection";
 import ActionProposalSection from "../actions/ActionProposalSection";
 import OutcomeOptimizationSection from "../outcomes/OutcomeOptimizationSection";
+import PredictiveIntelligenceSection from "../predictive/PredictiveIntelligenceSection";
 
 
 
@@ -403,6 +404,12 @@ export default function OverviewView({
 
       {/* Phase 8.9: Closed-Loop Outcome Optimization & Adaptive Recommendations */}
       <OutcomeOptimizationSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+      />
+
+      {/* Phase 9.0: Advanced Predictive & Simulation Intelligence */}
+      <PredictiveIntelligenceSection
         dbConnected={dbConnected}
         onConnectDatabase={onConnectDatabase}
       />
