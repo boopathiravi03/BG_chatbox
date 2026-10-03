@@ -1626,6 +1626,12 @@ from app.intelligence.actions import (
 )
 
 def _get_active_db_identity() -> str:
+    from app.database.connection_context import get_request_user_id, get_user_context
+    uid = get_request_user_id()
+    if uid:
+        ctx = get_user_context(uid)
+        if ctx and ctx.database_identity and ctx.database_identity != "none":
+            return ctx.database_identity
     from app.database.database_manager import get_engine
     eng = get_engine()
     if eng is None:
@@ -1634,6 +1640,7 @@ def _get_active_db_identity() -> str:
         return eng.url.render_as_string(hide_password=True)
     except Exception:
         return "unknown"
+
 
 class ProposeActionRequest(BaseModel):
     action_type: str  # INSERT, UPDATE, DELETE
@@ -2340,4 +2347,523 @@ def explain_prediction_endpoint(
     except Exception as e:
         logging.error(f"Prediction explanation error: {e}", exc_info=True)
         return {"status": "error", "message": str(e), "explanation": None}
+
+
+# ── Phase 9.1: Enterprise Knowledge & Context Intelligence Endpoints ──────────
+
+class ContextParseRequest(BaseModel):
+    statement: str
+
+
+class DefinitionCreateRequest(BaseModel):
+    item_type: str  # "METRIC", "ENTITY", "RULE"
+    name: str
+    description: Optional[str] = ""
+    table_name: str
+    column_name: Optional[str] = None
+    aggregation: Optional[str] = "SUM"
+    filter_expression: Optional[str] = None
+    rule_type: Optional[str] = "EXCLUSION"
+    expression: Optional[str] = None
+    status: Optional[str] = "PROPOSED"
+
+
+class ConflictResolveRequest(BaseModel):
+    resolution_choice: str  # "CHOOSE_A", "CHOOSE_B", "CUSTOM"
+    resolution_notes: Optional[str] = ""
+
+
+@app.get("/intelligence/knowledge")
+@limiter.limit("30/minute")
+def get_knowledge_summary_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Returns an aggregated summary of the Enterprise Knowledge base for the active database.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_store import (
+            get_knowledge_summary,
+            list_entities,
+            list_metrics,
+            list_rules,
+            list_conflicts,
+        )
+        from app.intelligence.knowledge.entity_registry import discover_and_sync_entities
+        from app.intelligence.knowledge.metric_registry import discover_and_sync_metrics
+
+        db_id = _get_active_db_identity()
+        eng = get_engine()
+        db_t = get_current_db_type()
+
+        # Discover & sync entities and metrics if connected
+        if eng is not None and db_t != "none":
+            discover_and_sync_entities(engine=eng, db_type=db_t, user_id=user.user_id, database_identity=db_id)
+            discover_and_sync_metrics(engine=eng, db_type=db_t, user_id=user.user_id, database_identity=db_id)
+
+        summary = get_knowledge_summary(user_id=user.user_id, database_identity=db_id)
+        entities = list_entities(user_id=user.user_id, database_identity=db_id)
+        metrics = list_metrics(user_id=user.user_id, database_identity=db_id)
+        rules = list_rules(user_id=user.user_id, database_identity=db_id)
+        conflicts = list_conflicts(user_id=user.user_id, database_identity=db_id)
+
+        return {
+            "status": "success",
+            "summary": summary.to_dict(),
+            "entities": [e.to_dict() for e in entities],
+            "metrics": [m.to_dict() for m in metrics],
+            "rules": [r.to_dict() for r in rules],
+            "conflicts": [c.to_dict() for c in conflicts],
+        }
+    except Exception as e:
+        logging.error(f"Knowledge summary error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/knowledge/entities")
+@limiter.limit("30/minute")
+def get_knowledge_entities_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists discovered and user-confirmed business entities for the active database.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.entity_registry import discover_and_sync_entities
+        db_id = _get_active_db_identity()
+        eng = get_engine()
+        db_t = get_current_db_type()
+
+        entities = discover_and_sync_entities(
+            engine=eng,
+            db_type=db_t,
+            user_id=user.user_id,
+            database_identity=db_id,
+        )
+        return {
+            "status": "success",
+            "entities": [e.to_dict() for e in entities],
+            "total": len(entities),
+        }
+    except Exception as e:
+        logging.error(f"Knowledge entities error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "entities": [], "total": 0}
+
+
+@app.get("/intelligence/knowledge/metrics")
+@limiter.limit("30/minute")
+def get_knowledge_metrics_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists business metrics, definitions, and active rule bindings.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.metric_registry import discover_and_sync_metrics
+        db_id = _get_active_db_identity()
+        eng = get_engine()
+        db_t = get_current_db_type()
+
+        metrics = discover_and_sync_metrics(
+            engine=eng,
+            db_type=db_t,
+            user_id=user.user_id,
+            database_identity=db_id,
+        )
+        return {
+            "status": "success",
+            "metrics": [m.to_dict() for m in metrics],
+            "total": len(metrics),
+        }
+    except Exception as e:
+        logging.error(f"Knowledge metrics error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "metrics": [], "total": 0}
+
+
+@app.get("/intelligence/knowledge/rules")
+@limiter.limit("30/minute")
+def get_knowledge_rules_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists business rules and their confirmation lifecycle status.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_store import list_rules
+        db_id = _get_active_db_identity()
+
+        rules = list_rules(user_id=user.user_id, database_identity=db_id)
+        return {
+            "status": "success",
+            "rules": [r.to_dict() for r in rules],
+            "total": len(rules),
+        }
+    except Exception as e:
+        logging.error(f"Knowledge rules error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e), "rules": [], "total": 0}
+
+
+@app.post("/intelligence/knowledge/context")
+@limiter.limit("20/minute")
+def parse_context_endpoint(
+    req: ContextParseRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Parses a natural-language business context statement and proposes a structured rule.
+    Requires explicit confirmation before taking effect.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.context_engine import parse_and_propose_context
+        db_id = _get_active_db_identity()
+        eng = get_engine()
+        db_t = get_current_db_type()
+
+        result = parse_and_propose_context(
+            statement=req.statement,
+            user_id=user.user_id,
+            database_identity=db_id,
+            engine=eng,
+            db_type=db_t,
+        )
+        return {
+            "status": "success" if result.parsed_successfully else "failed",
+            "parse_result": result.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Context parse error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/knowledge/definitions")
+@limiter.limit("20/minute")
+def create_or_update_definition_endpoint(
+    req: DefinitionCreateRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Directly creates or updates a business definition, metric, or rule.
+    Validates schema conformance and SQL safety.
+    """
+    _activate(user)
+    try:
+        import uuid
+        from app.intelligence.knowledge.business_rules import validate_rule_safety
+        from app.intelligence.knowledge.knowledge_store import save_rule, save_metric, save_entity
+        from app.intelligence.knowledge.models import (
+            BusinessRule, BusinessMetric, BusinessEntity,
+            KnowledgeProvenance, KnowledgeStatus, RuleScope
+        )
+        from app.intelligence.schema_analyzer import analyze_schema
+
+        db_id = _get_active_db_identity()
+        eng = get_engine()
+        db_t = get_current_db_type()
+        schema_info = analyze_schema(eng, db_t) if eng and db_t != "none" else {}
+
+        item_type = req.item_type.upper()
+        if item_type == "RULE":
+            expr = req.expression or req.filter_expression or ""
+            is_valid, err = validate_rule_safety(
+                expression=expr,
+                target_table=req.table_name,
+                target_column=req.column_name,
+                schema_info=schema_info,
+            )
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=f"Rule safety validation failed: {err}")
+
+            rule = BusinessRule(
+                rule_id=f"rule_{uuid.uuid4().hex[:12]}",
+                name=req.name,
+                description=req.description or "",
+                scope=RuleScope.METRIC.value,
+                target_table=req.table_name,
+                target_column=req.column_name,
+                rule_type=req.rule_type or "EXCLUSION",
+                expression=expr,
+                status=req.status or KnowledgeStatus.CONFIRMED.value,
+                provenance=KnowledgeProvenance.USER_PROVIDED.value,
+                version=1,
+                affected_metrics=[req.name],
+                user_id=user.user_id,
+                database_identity=db_id,
+            )
+            saved = save_rule(rule)
+            return {"status": "success", "item": saved.to_dict(), "item_type": "RULE"}
+
+        elif item_type == "METRIC":
+            metric = BusinessMetric(
+                metric_id=f"met_{uuid.uuid4().hex[:12]}",
+                name=req.name,
+                description=req.description or "",
+                table_name=req.table_name,
+                column_name=req.column_name,
+                aggregation=req.aggregation or "SUM",
+                filter_expression=req.filter_expression,
+                conditions=[req.filter_expression] if req.filter_expression else [],
+                rules_applied=[],
+                version=1,
+                provenance=KnowledgeProvenance.USER_PROVIDED.value,
+                status=req.status or KnowledgeStatus.CONFIRMED.value,
+                confidence=1.0,
+                user_id=user.user_id,
+                database_identity=db_id,
+            )
+            saved = save_metric(metric)
+            return {"status": "success", "item": saved.to_dict(), "item_type": "METRIC"}
+
+        else:
+            entity = BusinessEntity(
+                entity_id=f"ent_{req.table_name}",
+                name=req.name,
+                plural_name=req.name + "s",
+                table_name=req.table_name,
+                description=req.description or "",
+                provenance=KnowledgeProvenance.USER_PROVIDED.value,
+                status=req.status or KnowledgeStatus.CONFIRMED.value,
+                confidence=1.0,
+                user_id=user.user_id,
+                database_identity=db_id,
+            )
+            saved = save_entity(entity)
+            return {"status": "success", "item": saved.to_dict(), "item_type": "ENTITY"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Knowledge definition creation error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/knowledge/{knowledge_id}/confirm")
+@limiter.limit("30/minute")
+def confirm_knowledge_endpoint(
+    knowledge_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Confirms an unconfirmed or proposed knowledge item (rule, entity, or metric).
+    Transitions status to CONFIRMED.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_store import confirm_knowledge_item
+        db_id = _get_active_db_identity()
+
+        success = confirm_knowledge_item(
+            item_id=knowledge_id,
+            user_id=user.user_id,
+            database_identity=db_id,
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Knowledge item '{knowledge_id}' not found.")
+
+        return {"status": "success", "message": f"Knowledge item '{knowledge_id}' confirmed."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Knowledge confirm error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/knowledge/{knowledge_id}/disable")
+@limiter.limit("30/minute")
+def disable_knowledge_endpoint(
+    knowledge_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Disables an active or proposed knowledge item.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_store import disable_knowledge_item
+        db_id = _get_active_db_identity()
+
+        success = disable_knowledge_item(
+            item_id=knowledge_id,
+            user_id=user.user_id,
+            database_identity=db_id,
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Knowledge item '{knowledge_id}' not found.")
+
+        return {"status": "success", "message": f"Knowledge item '{knowledge_id}' disabled."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Knowledge disable error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/knowledge/{knowledge_id}/resolve")
+@limiter.limit("20/minute")
+def resolve_conflict_endpoint(
+    knowledge_id: str,
+    req: ConflictResolveRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Resolves a recorded conflict by choosing definition A or B, updating conflict status.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_store import resolve_knowledge_conflict
+        db_id = _get_active_db_identity()
+
+        success = resolve_knowledge_conflict(
+            conflict_id=knowledge_id,
+            resolution_choice=req.resolution_choice,
+            resolution_notes=req.resolution_notes or "",
+            user_id=user.user_id,
+            database_identity=db_id,
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Conflict '{knowledge_id}' not found.")
+
+        return {"status": "success", "message": f"Conflict '{knowledge_id}' resolved."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Conflict resolve error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/knowledge/search")
+@limiter.limit("30/minute")
+def search_knowledge_endpoint(
+    q: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Searches the knowledge registry for entities, metrics, or rules.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_resolver import search_knowledge
+        db_id = _get_active_db_identity()
+
+        result = search_knowledge(query=q, user_id=user.user_id, database_identity=db_id)
+        return {"status": "success", **result}
+    except Exception as e:
+        logging.error(f"Knowledge search error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/knowledge/{knowledge_id}")
+@limiter.limit("30/minute")
+def get_knowledge_item_endpoint(
+    knowledge_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieves details for a specific metric, rule, or entity.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_store import (
+            get_metric, get_rule, get_entity
+        )
+        db_id = _get_active_db_identity()
+
+        item = get_metric(knowledge_id, user_id=user.user_id, database_identity=db_id)
+        item_type = "METRIC"
+        if not item:
+            item = get_rule(knowledge_id, user_id=user.user_id, database_identity=db_id)
+            item_type = "RULE"
+        if not item:
+            item = get_entity(knowledge_id, user_id=user.user_id, database_identity=db_id)
+            item_type = "ENTITY"
+
+        if not item:
+            raise HTTPException(status_code=404, detail=f"Knowledge item '{knowledge_id}' not found.")
+
+        return {
+            "status": "success",
+            "item_type": item_type,
+            "item": item.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Knowledge item get error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/knowledge/{knowledge_id}/lineage")
+@limiter.limit("30/minute")
+def get_knowledge_lineage_endpoint(
+    knowledge_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieves complete end-to-end lineage for a business metric or concept.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_resolver import build_metric_lineage
+        db_id = _get_active_db_identity()
+        db_t = get_current_db_type()
+
+        lineage = build_metric_lineage(
+            metric_id_or_name=knowledge_id,
+            user_id=user.user_id,
+            database_identity=db_id,
+            db_type=db_t,
+        )
+        return {
+            "status": "success",
+            "lineage": lineage.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Knowledge lineage error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/knowledge/{knowledge_id}/explain")
+@limiter.limit("30/minute")
+def explain_knowledge_item_endpoint(
+    knowledge_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Produces transparent facts vs inferences vs assumptions explanation for a knowledge item.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.knowledge.knowledge_explainer import explain_knowledge_item
+        db_id = _get_active_db_identity()
+
+        explanation = explain_knowledge_item(
+            knowledge_id=knowledge_id,
+            user_id=user.user_id,
+            database_identity=db_id,
+        )
+        return {
+            "status": "success",
+            "explanation": explanation.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Knowledge explainer error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
 

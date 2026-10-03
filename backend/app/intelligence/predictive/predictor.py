@@ -142,6 +142,15 @@ def run_prediction(
     else:  # monthly
         horizon_periods = max(1, min(horizon_days // 30 or 1, 12))
 
+    # Phase 9.1: Knowledge & Context check for confirmed business rules
+    active_filters: list[str] = []
+    try:
+        from app.intelligence.knowledge.business_rules import get_active_filters_for_table
+        active_filters = get_active_filters_for_table(table, user_id=user_id, database_identity=db_identity)
+    except Exception:
+        pass
+    knowledge_filter = " AND ".join(active_filters) if active_filters else None
+
     # 2. Extract and evaluate data quality
     quality_report = extract_and_evaluate_time_series(
         engine=engine,
@@ -151,6 +160,7 @@ def run_prediction(
         metric_column=metric_column,
         aggregation=aggregation,
         frequency=frequency,
+        additional_where=knowledge_filter,
     )
 
     if not quality_report.is_sufficient:
@@ -258,6 +268,8 @@ def run_prediction(
         f"Assumes historical data generating process continues over the next {horizon_days} days.",
         f"Model selected: {selected_method.replace('_', ' ').title()}.",
     ]
+    if active_filters:
+        assumptions.append(f"Applied {len(active_filters)} confirmed business rule(s): {knowledge_filter}.")
     if learning_info.get("has_history"):
         assumptions.append(learning_info["summary"])
 
@@ -293,3 +305,4 @@ def run_prediction(
     )
 
     return save_prediction(result)
+

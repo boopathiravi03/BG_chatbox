@@ -1367,3 +1367,178 @@ export interface ScenarioComparePayload {
 }
 
 
+// ── Phase 9.1: Enterprise Knowledge & Context Intelligence Models ─────────────
+
+export type KnowledgeProvenance =
+  | "SCHEMA_DERIVED"
+  | "DATA_OBSERVED"
+  | "USER_PROVIDED"
+  | "SYSTEM_DEFINED"
+  | "AI_INFERRED";
+
+export type KnowledgeStatus =
+  | "DRAFT"
+  | "PROPOSED"
+  | "CONFIRMED"
+  | "ACTIVE"
+  | "DISABLED"
+  | "CONFLICTED";
+
+export interface BusinessEntity {
+  entity_id: string;
+  name: string;
+  plural_name: string;
+  table_name: string;
+  description: string;
+  importance: "PRIMARY" | "SECONDARY" | "SUPPORTING" | string;
+  primary_key?: string | null;
+  foreign_keys: Array<{ column: string; target_table: string; target_column: string }>;
+  provenance: KnowledgeProvenance;
+  status: KnowledgeStatus;
+  confidence: number;
+  user_id: string;
+  database_identity: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessRule {
+  rule_id: string;
+  name: string;
+  description: string;
+  scope: "METRIC" | "ENTITY" | "TABLE" | "COLUMN" | "GLOBAL" | string;
+  target_table: string;
+  target_column?: string | null;
+  rule_type: "EXCLUSION" | "INCLUSION" | "MAPPING" | "THRESHOLD" | "TEMPORAL" | string;
+  expression: string;
+  status: KnowledgeStatus;
+  provenance: KnowledgeProvenance;
+  version: number;
+  affected_metrics: string[];
+  user_id: string;
+  database_identity: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessMetric {
+  metric_id: string;
+  name: string;
+  description: string;
+  table_name: string;
+  column_name?: string | null;
+  aggregation: string;
+  filter_expression?: string | null;
+  conditions: string[];
+  rules_applied: string[];
+  version: number;
+  provenance: KnowledgeProvenance;
+  status: KnowledgeStatus;
+  confidence: number;
+  user_id: string;
+  database_identity: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeConflict {
+  conflict_id: string;
+  knowledge_type: string;
+  item_id_a: string;
+  item_id_b: string;
+  target_name: string;
+  description: string;
+  statement_a: string;
+  statement_b: string;
+  source_a: string;
+  source_b: string;
+  status: "UNRESOLVED" | "RESOLVED" | string;
+  resolution_notes?: string | null;
+  resolved_by?: string | null;
+  user_id: string;
+  database_identity: string;
+  created_at: string;
+  resolved_at?: string | null;
+}
+
+export interface KnowledgeVersionRecord {
+  version_id: string;
+  item_id: string;
+  item_type: string;
+  version: number;
+  snapshot: Record<string, any>;
+  change_summary: string;
+  created_at: string;
+}
+
+export interface KnowledgeLineageNode {
+  step: string;
+  type: "ENTITY" | "METRIC" | "DEFINITION" | "RULE" | "TABLE" | "COLUMN" | "SQL" | string;
+  label: string;
+  details: Record<string, any>;
+}
+
+export interface KnowledgeLineage {
+  target_id: string;
+  target_name: string;
+  nodes: KnowledgeLineageNode[];
+  provenance: KnowledgeProvenance;
+  status: KnowledgeStatus;
+  sql_expression: string;
+}
+
+export interface KnowledgeExplanation {
+  knowledge_id: string;
+  title: string;
+  provenance: KnowledgeProvenance;
+  status: KnowledgeStatus;
+  version: number;
+  facts: string[];
+  inferences: string[];
+  assumptions: string[];
+  rules_applied: string[];
+  source_description: string;
+}
+
+export interface KnowledgeSummary {
+  total_entities: number;
+  total_metrics: number;
+  total_rules: number;
+  confirmed_rules_count: number;
+  proposed_rules_count: number;
+  conflicts_count: number;
+  unconfirmed_count: number;
+}
+
+export interface ContextParseResult {
+  raw_statement: string;
+  parsed_successfully: boolean;
+  proposed_rule?: BusinessRule | null;
+  referenced_tables: string[];
+  referenced_columns: string[];
+  affected_metrics: string[];
+  assumptions: string[];
+  ambiguity_notes: string[];
+  requires_user_confirmation: boolean;
+}
+
+export interface DefinitionCreatePayload {
+  item_type: "METRIC" | "ENTITY" | "RULE" | string;
+  name: string;
+  description?: string;
+  table_name: string;
+  column_name?: string;
+  aggregation?: string;
+  filter_expression?: string;
+  rule_type?: string;
+  expression?: string;
+  status?: string;
+}
+
+export interface ConflictResolvePayload {
+  resolution_choice: "CHOOSE_A" | "CHOOSE_B" | "CUSTOM" | string;
+  resolution_notes?: string;
+}
+
+
+

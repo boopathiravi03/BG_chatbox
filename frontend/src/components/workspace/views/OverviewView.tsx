@@ -39,6 +39,7 @@ import RootCauseInvestigationSection from "../investigation/RootCauseInvestigati
 import ActionProposalSection from "../actions/ActionProposalSection";
 import OutcomeOptimizationSection from "../outcomes/OutcomeOptimizationSection";
 import PredictiveIntelligenceSection from "../predictive/PredictiveIntelligenceSection";
+import EnterpriseKnowledgeSection from "../knowledge/EnterpriseKnowledgeSection";
 
 
 
@@ -410,6 +411,12 @@ export default function OverviewView({
 
       {/* Phase 9.0: Advanced Predictive & Simulation Intelligence */}
       <PredictiveIntelligenceSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+      />
+
+      {/* Phase 9.1: Enterprise Knowledge & Context Intelligence */}
+      <EnterpriseKnowledgeSection
         dbConnected={dbConnected}
         onConnectDatabase={onConnectDatabase}
       />

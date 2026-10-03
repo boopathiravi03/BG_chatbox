@@ -144,9 +144,11 @@ def extract_and_evaluate_time_series(
     metric_column: Optional[str] = None,
     aggregation: str = "SUM",
     frequency: str = "monthly",
+    additional_where: Optional[str] = None,
 ) -> DataQualityReport:
     """
     Extracts chronological series using dialect-safe grouping and validates quality.
+    Supports Phase 9.1 confirmed business rules via additional_where.
     """
     if engine is None or db_type == "none":
         return DataQualityReport(
@@ -173,6 +175,9 @@ def extract_and_evaluate_time_series(
     else:
         val_expr = "COUNT(*)"
         where_clause = f"WHERE {d_quoted} IS NOT NULL"
+
+    if additional_where and additional_where.strip():
+        where_clause += f" AND ({additional_where.strip()})"
 
     sql = f"""
         SELECT 
@@ -257,3 +262,4 @@ def extract_and_evaluate_time_series(
         issues=issues,
         sql_executed=sql,
     )
+

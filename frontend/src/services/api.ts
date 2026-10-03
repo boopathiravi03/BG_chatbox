@@ -842,3 +842,186 @@ export async function explainPrediction(
   );
 }
 
+
+// ── Phase 9.1: Enterprise Knowledge & Context Intelligence ────────────────────
+
+export async function getKnowledgeSummary(): Promise<{
+  status: string;
+  summary?: any;
+  entities?: any[];
+  metrics?: any[];
+  rules?: any[];
+  conflicts?: any[];
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    summary?: any;
+    entities?: any[];
+    metrics?: any[];
+    rules?: any[];
+    conflicts?: any[];
+    message?: string;
+  }>("/intelligence/knowledge");
+}
+
+export async function getKnowledgeEntities(): Promise<{
+  status: string;
+  entities: any[];
+  total: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    entities: any[];
+    total: number;
+    message?: string;
+  }>("/intelligence/knowledge/entities");
+}
+
+export async function getKnowledgeMetrics(): Promise<{
+  status: string;
+  metrics: any[];
+  total: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    metrics: any[];
+    total: number;
+    message?: string;
+  }>("/intelligence/knowledge/metrics");
+}
+
+export async function getKnowledgeRules(): Promise<{
+  status: string;
+  rules: any[];
+  total: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    rules: any[];
+    total: number;
+    message?: string;
+  }>("/intelligence/knowledge/rules");
+}
+
+export async function parseBusinessContext(statement: string): Promise<{
+  status: string;
+  parse_result?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; parse_result?: any; message?: string }>(
+    "/intelligence/knowledge/context",
+    {
+      method: "POST",
+      body: JSON.stringify({ statement }),
+    }
+  );
+}
+
+export async function createOrUpdateDefinition(payload: any): Promise<{
+  status: string;
+  item?: any;
+  item_type?: string;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; item?: any; item_type?: string; message?: string }>(
+    "/intelligence/knowledge/definitions",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function confirmKnowledgeItem(knowledgeId: string): Promise<{
+  status: string;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; message?: string }>(
+    `/intelligence/knowledge/${encodeURIComponent(knowledgeId)}/confirm`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function disableKnowledgeItem(knowledgeId: string): Promise<{
+  status: string;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; message?: string }>(
+    `/intelligence/knowledge/${encodeURIComponent(knowledgeId)}/disable`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function resolveKnowledgeConflict(
+  knowledgeId: string,
+  payload: { resolution_choice: string; resolution_notes?: string }
+): Promise<{ status: string; message?: string }> {
+  return apiFetch<{ status: string; message?: string }>(
+    `/intelligence/knowledge/${encodeURIComponent(knowledgeId)}/resolve`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function getKnowledgeItem(knowledgeId: string): Promise<{
+  status: string;
+  item?: any;
+  item_type?: string;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; item?: any; item_type?: string; message?: string }>(
+    `/intelligence/knowledge/${encodeURIComponent(knowledgeId)}`
+  );
+}
+
+export async function getKnowledgeLineage(knowledgeId: string): Promise<{
+  status: string;
+  lineage?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; lineage?: any; message?: string }>(
+    `/intelligence/knowledge/${encodeURIComponent(knowledgeId)}/lineage`
+  );
+}
+
+export async function explainKnowledgeItem(knowledgeId: string): Promise<{
+  status: string;
+  explanation?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; explanation?: any; message?: string }>(
+    `/intelligence/knowledge/${encodeURIComponent(knowledgeId)}/explain`
+  );
+}
+
+export async function searchKnowledge(query: string): Promise<{
+  status: string;
+  found: boolean;
+  answer: string;
+  metrics?: any[];
+  rules?: any[];
+  entities?: any[];
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    found: boolean;
+    answer: string;
+    metrics?: any[];
+    rules?: any[];
+    entities?: any[];
+    message?: string;
+  }>(`/intelligence/knowledge/search?q=${encodeURIComponent(query)}`);
+}
+
+
