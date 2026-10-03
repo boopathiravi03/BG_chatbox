@@ -3050,4 +3050,394 @@ def cancel_orchestration_endpoint(
         return {"status": "error", "message": str(e)}
 
 
+# ── Phase 9.3: Enterprise Governance & Observability Endpoints ───────────────
+from app.intelligence.governance import (
+    ActorType,
+    GovernanceEventType,
+    PolicyCategory,
+    PolicyScope,
+    PolicyDecision,
+    RiskLevel,
+    SecurityEventType,
+    SecurityEventSeverity,
+    GovernanceAuditEvent,
+    SecurityEventRecord,
+    GovernancePolicy,
+    RiskAssessment,
+    DataAccessEvent,
+    AgentTraceRecord,
+    AgentObservabilityMetric,
+    GovernanceSummary,
+    ComplianceReport,
+    get_audit_store,
+    list_policies,
+    get_policy,
+    set_policy_status,
+    PolicyModificationError,
+    PolicyEngine,
+    GovernanceRiskEngine,
+    DataAccessTracker,
+    SecurityEventManager,
+    AgentTraceStore,
+    get_governance_summary,
+    get_agent_observability_metrics,
+    generate_compliance_report,
+    get_governance_engine,
+)
+
+
+class EvaluatePolicyRequest(BaseModel):
+    category: str
+    operation: str
+    context: Optional[dict[str, Any]] = None
+    operation_type: Optional[str] = "READ_ONLY"
+    affected_rows: Optional[int] = 0
+    agent_permission: Optional[str] = "READ_ONLY"
+
+
+class AssessRiskRequest(BaseModel):
+    operation: str
+    operation_type: Optional[str] = "READ_ONLY"
+    affected_rows: Optional[int] = 0
+    agent_permission: Optional[str] = "READ_ONLY"
+    context: Optional[dict[str, Any]] = None
+
+
+class SetPolicyStatusRequest(BaseModel):
+    policy_id: str
+    enabled: bool
+
+
+@app.get("/intelligence/governance/summary")
+@limiter.limit("30/minute")
+def get_governance_summary_endpoint(
+    request: Request,
+    days: int = 7,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieves synthesized operational governance metrics and hash chain verification status."""
+    _activate(user)
+    try:
+        db_id = _get_active_db_identity()
+        summary = get_governance_summary(user_id=user.user_id, database_identity=db_id, days=days)
+        return {
+            "status": "success",
+            "summary": summary.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Governance summary error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/audit")
+@limiter.limit("60/minute")
+def list_governance_audit_endpoint(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    event_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieves paginated audit log events from the tamper-evident hash chain."""
+    _activate(user)
+    try:
+        db_id = _get_active_db_identity()
+        store = get_audit_store()
+        bounded_limit = min(max(1, limit), 200)
+
+        ev_enum = GovernanceEventType(event_type) if event_type else None
+        risk_enum = RiskLevel(risk_level) if risk_level else None
+
+        events = store.list_audit_events(
+            user_id=user.user_id,
+            database_identity=db_id,
+            event_type=ev_enum,
+            risk_level=risk_enum,
+            start_time=start_time,
+            end_time=end_time,
+            limit=bounded_limit,
+            offset=offset,
+        )
+        is_valid, count, error_detail = store.verify_audit_chain(user_id=user.user_id)
+
+        return {
+            "status": "success",
+            "events": [e.to_dict() for e in events],
+            "total_returned": len(events),
+            "chain_verified": is_valid,
+            "chain_events_verified": count,
+            "chain_verification_error": error_detail,
+        }
+    except Exception as e:
+        logging.error(f"Governance audit list error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/security-events")
+@limiter.limit("60/minute")
+def list_governance_security_events_endpoint(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieves logged security events (blocked DDL, injection attempts, etc.)."""
+    _activate(user)
+    try:
+        db_id = _get_active_db_identity()
+        store = get_audit_store()
+        bounded_limit = min(max(1, limit), 200)
+
+        sev_enum = SecurityEventSeverity(severity) if severity else None
+        ev_enum = SecurityEventType(event_type) if event_type else None
+
+        events = store.list_security_events(
+            user_id=user.user_id,
+            database_identity=db_id,
+            severity=sev_enum,
+            event_type=ev_enum,
+            limit=bounded_limit,
+            offset=offset,
+        )
+        return {
+            "status": "success",
+            "security_events": [e.to_dict() for e in events],
+            "total_returned": len(events),
+        }
+    except Exception as e:
+        logging.error(f"Governance security events error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/agents")
+@limiter.limit("60/minute")
+def get_governance_agent_observability_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieves factual execution telemetry for all registered agents."""
+    _activate(user)
+    try:
+        db_id = _get_active_db_identity()
+        metrics = get_agent_observability_metrics(user_id=user.user_id, database_identity=db_id)
+        return {
+            "status": "success",
+            "agents": [m.to_dict() for m in metrics],
+        }
+    except Exception as e:
+        logging.error(f"Agent observability error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/policies")
+@limiter.limit("60/minute")
+def list_governance_policies_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Lists registered governance policies including protected system policies."""
+    _activate(user)
+    try:
+        policies = list_policies(user_id=user.user_id)
+        return {
+            "status": "success",
+            "policies": [p.to_dict() for p in policies],
+        }
+    except Exception as e:
+        logging.error(f"List policies error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/governance/policies/status")
+@limiter.limit("30/minute")
+def set_policy_status_endpoint(
+    req: SetPolicyStatusRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Updates status of a user-defined policy. Rejects attempts to modify SYSTEM policies."""
+    _activate(user)
+    try:
+        updated = set_policy_status(policy_id=req.policy_id, enabled=req.enabled, user_id=user.user_id)
+        return {
+            "status": "success" if updated else "not_found",
+            "policy_id": req.policy_id,
+            "enabled": req.enabled,
+        }
+    except PolicyModificationError as pme:
+        raise HTTPException(status_code=403, detail=str(pme))
+    except Exception as e:
+        logging.error(f"Set policy status error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/governance/policies/evaluate")
+@limiter.limit("30/minute")
+def evaluate_policy_endpoint(
+    req: EvaluatePolicyRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Deterministic policy evaluation and audit logging."""
+    _activate(user)
+    try:
+        db_id = _get_active_db_identity()
+        engine = get_governance_engine()
+
+        cat_enum = PolicyCategory(req.category) if req.category in [c.value for c in PolicyCategory] else PolicyCategory.SECURITY
+
+        decision, risk, audit_event = engine.evaluate_and_record(
+            category=cat_enum,
+            operation=req.operation,
+            actor_type=ActorType.USER,
+            actor_id=user.user_id,
+            user_id=user.user_id,
+            database_identity=db_id,
+            context=req.context or {},
+            operation_type=req.operation_type or "READ_ONLY",
+            affected_rows=req.affected_rows or 0,
+            agent_permission=req.agent_permission or "READ_ONLY",
+        )
+
+        return {
+            "status": "success",
+            "decision": decision.value,
+            "risk": risk.to_dict(),
+            "audit_event_id": audit_event.event_id,
+        }
+    except Exception as e:
+        logging.error(f"Policy evaluation error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/governance/risk")
+@limiter.limit("30/minute")
+def assess_risk_endpoint(
+    req: AssessRiskRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Computes transparent risk tier, contributing factors, and required controls."""
+    _activate(user)
+    try:
+        risk = GovernanceRiskEngine.assess_risk(
+            operation=req.operation,
+            operation_type=req.operation_type or "READ_ONLY",
+            affected_rows=req.affected_rows or 0,
+            agent_permission=req.agent_permission or "READ_ONLY",
+            context=req.context or {},
+        )
+        return {
+            "status": "success",
+            "risk": risk.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Risk assessment error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/traces/{trace_id}")
+@limiter.limit("60/minute")
+def get_trace_endpoint(
+    trace_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieves an individual agent execution trace record."""
+    _activate(user)
+    try:
+        from app.intelligence.governance.audit_store import get_agent_trace
+        trace = get_agent_trace(trace_id, user_id=user.user_id)
+        if not trace:
+            raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found.")
+        return {
+            "status": "success",
+            "trace": trace.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Get trace error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/orchestrations/{orchestration_id}")
+@limiter.limit("60/minute")
+def get_orchestration_traces_endpoint(
+    orchestration_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieves all agent execution traces correlated with an orchestration run."""
+    _activate(user)
+    try:
+        traces = AgentTraceStore.get_traces_for_orchestration(
+            orchestration_id=orchestration_id,
+            user_id=user.user_id,
+        )
+        return {
+            "status": "success",
+            "orchestration_id": orchestration_id,
+            "traces": [t.to_dict() for t in traces],
+            "total_traces": len(traces),
+        }
+    except Exception as e:
+        logging.error(f"Get orchestration traces error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/governance/report")
+@limiter.limit("20/minute")
+def get_compliance_report_endpoint(
+    request: Request,
+    period_hours: int = 24,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Generates an audit-ready compliance report."""
+    _activate(user)
+    try:
+        db_id = _get_active_db_identity()
+        bounded_hours = min(max(1, period_hours), 720)  # Max 30 days
+        report = generate_compliance_report(
+            user_id=user.user_id,
+            database_identity=db_id,
+            period_hours=bounded_hours,
+        )
+        return {
+            "status": "success",
+            "report": report.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Compliance report error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/governance/audit/verify")
+@limiter.limit("30/minute")
+def verify_audit_chain_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Performs real-time cryptographic hash verification over the audit event log."""
+    _activate(user)
+    try:
+        store = get_audit_store()
+        is_valid, count, error_detail = store.verify_audit_chain(user_id=user.user_id)
+        return {
+            "status": "success",
+            "verified": is_valid,
+            "events_verified": count,
+            "error_detail": error_detail,
+        }
+    except Exception as e:
+        logging.error(f"Verify audit chain error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+
 

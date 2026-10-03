@@ -40,9 +40,6 @@ import ActionProposalSection from "../actions/ActionProposalSection";
 import OutcomeOptimizationSection from "../outcomes/OutcomeOptimizationSection";
 import PredictiveIntelligenceSection from "../predictive/PredictiveIntelligenceSection";
 import EnterpriseKnowledgeSection from "../knowledge/EnterpriseKnowledgeSection";
-import AgentOrchestrationSection from "../orchestration/AgentOrchestrationSection";
-
-
 
 interface OverviewViewProps {
   dbConnected: boolean;
@@ -89,10 +86,12 @@ export default function OverviewView({
   // Phase 8.1 Automated Business Intelligence
   const [insights, setInsights] = useState<BusinessInsight[]>([]);
   const [insightsLoading, setInsightsLoading] = useState<boolean>(false);
-  const [selectedInsight, setSelectedInsight] = useState<BusinessInsight | null>(null);
+  const [selectedInsight, setSelectedInsight] =
+    useState<BusinessInsight | null>(null);
 
   // Phase 8.7 Root-Cause Investigation
-  const [selectedInvestigationSignal, setSelectedInvestigationSignal] = useState<MonitoringItem | null>(null);
+  const [selectedInvestigationSignal, setSelectedInvestigationSignal] =
+    useState<MonitoringItem | null>(null);
 
   const handleInvestigateSignal = (item: MonitoringItem) => {
     setSelectedInvestigationSignal(item);
@@ -126,18 +125,23 @@ export default function OverviewView({
           ? Promise.resolve(initialDbInfo)
           : getDatabaseInfo();
 
-        const [info, schema, report, anomaly, biResp] = await Promise.allSettled([
-          fetchInfoPromise,
-          getSchema(),
-          getIntelligenceReport(),
-          getAnomalySummary(),
-          getBusinessInsights(),
-        ]);
+        const [info, schema, report, anomaly, biResp] =
+          await Promise.allSettled([
+            fetchInfoPromise,
+            getSchema(),
+            getIntelligenceReport(),
+            getAnomalySummary(),
+            getBusinessInsights(),
+          ]);
 
         if (info.status === "fulfilled" && info.value) {
           setDbInfo(info.value as any);
         }
-        if (schema.status === "fulfilled" && schema.value && typeof schema.value === "object") {
+        if (
+          schema.status === "fulfilled" &&
+          schema.value &&
+          typeof schema.value === "object"
+        ) {
           const names = Object.keys(schema.value).filter((k) => k !== "status");
           setTablesList(names);
           setTableCount(names.length);
@@ -147,19 +151,24 @@ export default function OverviewView({
           setHealthScore(r.health_score ?? null);
           setQualityIssues(
             (r.data_quality?.null_heavy_columns?.length || 0) +
-            (r.data_quality?.orphan_foreign_keys?.length || 0) +
-            (r.data_quality?.empty_tables?.length || 0)
+              (r.data_quality?.orphan_foreign_keys?.length || 0) +
+              (r.data_quality?.empty_tables?.length || 0),
           );
           setPerfIssues(r.performance_findings?.length || 0);
         }
         if (anomaly.status === "fulfilled" && anomaly.value) {
           setAnomalySummary({
             total: anomaly.value.total_count ?? anomaly.value.total ?? 0,
-            critical: anomaly.value.critical_count ?? anomaly.value.critical ?? 0,
+            critical:
+              anomaly.value.critical_count ?? anomaly.value.critical ?? 0,
             warning: anomaly.value.warning_count ?? anomaly.value.warning ?? 0,
           });
         }
-        if (biResp.status === "fulfilled" && biResp.value && biResp.value.insights) {
+        if (
+          biResp.status === "fulfilled" &&
+          biResp.value &&
+          biResp.value.insights
+        ) {
           setInsights(biResp.value.insights);
         }
       } catch (err) {
@@ -205,9 +214,9 @@ export default function OverviewView({
             </h2>
 
             <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-              BG AI automatically profiles your tables, detects key business metrics,
-              discovers revenue and volume trends, and allows you to run natural-language queries
-              with complete enterprise safety.
+              BG AI automatically profiles your tables, detects key business
+              metrics, discovers revenue and volume trends, and allows you to
+              run natural-language queries with complete enterprise safety.
             </p>
 
             <div className="pt-2 flex flex-wrap items-center gap-3">
@@ -233,7 +242,8 @@ export default function OverviewView({
               Data Explorer
             </h3>
             <p className="text-xs text-zinc-400 leading-normal">
-              Visual schema hierarchy, column types, null densities, and relationship graphs.
+              Visual schema hierarchy, column types, null densities, and
+              relationship graphs.
             </p>
           </div>
 
@@ -257,7 +267,8 @@ export default function OverviewView({
               Data Health Doctor
             </h3>
             <p className="text-xs text-zinc-400 leading-normal">
-              Continuous audit of nulls, duplicates, empty tables, and orphan foreign keys.
+              Continuous audit of nulls, duplicates, empty tables, and orphan
+              foreign keys.
             </p>
           </div>
 
@@ -269,7 +280,8 @@ export default function OverviewView({
               AI SQL Lab
             </h3>
             <p className="text-xs text-zinc-400 leading-normal">
-              Interactive query IDE with AI optimizer, validator, and results viewer.
+              Interactive query IDE with AI optimizer, validator, and results
+              viewer.
             </p>
           </div>
         </div>
@@ -346,7 +358,9 @@ export default function OverviewView({
             {healthScore !== null ? `${healthScore}/100` : "Healthy"}
           </p>
           <p className="text-[11px] text-zinc-400">
-            {qualityIssues > 0 ? `${qualityIssues} items flagged` : "Zero critical issues"}
+            {qualityIssues > 0
+              ? `${qualityIssues} items flagged`
+              : "Zero critical issues"}
           </p>
         </div>
 
@@ -375,9 +389,7 @@ export default function OverviewView({
       />
 
       {/* Phase 8.5: Outcome & Learning Intelligence Section */}
-      <OutcomeLearningSection
-        dbConnected={dbConnected}
-      />
+      <OutcomeLearningSection dbConnected={dbConnected} />
 
       {/* Phase 8.6: Continuous Intelligence & Executive Monitoring */}
       <ContinuousIntelligenceSection
@@ -422,13 +434,6 @@ export default function OverviewView({
         onConnectDatabase={onConnectDatabase}
       />
 
-      {/* Phase 9.2: Advanced Agent Orchestration */}
-      <AgentOrchestrationSection
-        dbConnected={dbConnected}
-        onConnectDatabase={onConnectDatabase}
-      />
-
-
       {/* Phase 8.2: Cross-Table Intelligence Section */}
       {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (
         <div className="space-y-4">
@@ -455,8 +460,8 @@ export default function OverviewView({
                   ins.severity === "CRITICAL"
                     ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
                     : ins.severity === "WARNING"
-                    ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
-                    : "bg-blue-500/15 border-blue-500/30 text-blue-300";
+                      ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
+                      : "bg-blue-500/15 border-blue-500/30 text-blue-300";
 
                 return (
                   <div
@@ -467,12 +472,17 @@ export default function OverviewView({
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {ins.source_tables.map((t) => (
-                            <span key={t} className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300">
+                            <span
+                              key={t}
+                              className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300"
+                            >
                               {t}
                             </span>
                           ))}
                         </div>
-                        <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}>
+                        <span
+                          className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}
+                        >
                           {ins.severity}
                         </span>
                       </div>
@@ -485,26 +495,34 @@ export default function OverviewView({
                         {ins.summary}
                       </p>
 
-                      {ins.evidence?.lineage && ins.evidence.lineage.length > 0 && (
-                        <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05] space-y-1">
-                          <span className="text-[10px] font-mono uppercase text-zinc-400 font-semibold flex items-center gap-1">
-                            <GitMerge size={11} className="text-indigo-400" />
-                            Join Lineage
-                          </span>
-                          <div className="text-[11px] font-mono text-zinc-300 space-y-0.5">
-                            {ins.evidence.lineage.map((step: string, idx: number) => (
-                              <div key={idx} className="flex items-center gap-1">
-                                <span className="text-indigo-400">↳</span>
-                                <span>{step}</span>
-                              </div>
-                            ))}
+                      {ins.evidence?.lineage &&
+                        ins.evidence.lineage.length > 0 && (
+                          <div className="p-2.5 rounded-xl bg-black/40 border border-white/[0.05] space-y-1">
+                            <span className="text-[10px] font-mono uppercase text-zinc-400 font-semibold flex items-center gap-1">
+                              <GitMerge size={11} className="text-indigo-400" />
+                              Join Lineage
+                            </span>
+                            <div className="text-[11px] font-mono text-zinc-300 space-y-0.5">
+                              {ins.evidence.lineage.map(
+                                (step: string, idx: number) => (
+                                  <div
+                                    key={idx}
+                                    className="flex items-center gap-1"
+                                  >
+                                    <span className="text-indigo-400">↳</span>
+                                    <span>{step}</span>
+                                  </div>
+                                ),
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )}
 
                       {ins.recommended_next_step && (
                         <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400">
-                          <strong className="text-zinc-200">Recommended Action: </strong>
+                          <strong className="text-zinc-200">
+                            Recommended Action:{" "}
+                          </strong>
                           {ins.recommended_next_step}
                         </div>
                       )}
@@ -523,7 +541,7 @@ export default function OverviewView({
                         <button
                           onClick={() =>
                             onNavigateToAgents(
-                              `Investigate multi-table insight: ${ins.title}. Lineage: ${ins.evidence?.lineage?.join(", ") || ins.source_tables.join(" -> ")}`
+                              `Investigate multi-table insight: ${ins.title}. Lineage: ${ins.evidence?.lineage?.join(", ") || ins.source_tables.join(" -> ")}`,
                             )
                           }
                           className="text-[11px] text-zinc-400 hover:text-white inline-flex items-center gap-1 cursor-pointer transition-colors"
@@ -541,7 +559,9 @@ export default function OverviewView({
       )}
 
       {/* Phase 8.1: Single-Table Automated Business Insights */}
-      {insights.some((i) => !i.source_tables || i.source_tables.length <= 1) && (
+      {insights.some(
+        (i) => !i.source_tables || i.source_tables.length <= 1,
+      ) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -552,7 +572,12 @@ export default function OverviewView({
                 Automated Business Insights
               </h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">
-                {insights.filter((i) => !i.source_tables || i.source_tables.length <= 1).length} Verified
+                {
+                  insights.filter(
+                    (i) => !i.source_tables || i.source_tables.length <= 1,
+                  ).length
+                }{" "}
+                Verified
               </span>
             </div>
 
@@ -561,7 +586,12 @@ export default function OverviewView({
               disabled={insightsLoading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-300 text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw size={12} className={insightsLoading ? "animate-spin text-indigo-400" : ""} />
+              <RefreshCw
+                size={12}
+                className={
+                  insightsLoading ? "animate-spin text-indigo-400" : ""
+                }
+              />
               <span>Refresh Insights</span>
             </button>
           </div>
@@ -575,8 +605,8 @@ export default function OverviewView({
                   ins.severity === "CRITICAL"
                     ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
                     : ins.severity === "WARNING"
-                    ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
-                    : "bg-blue-500/15 border-blue-500/30 text-blue-300";
+                      ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
+                      : "bg-blue-500/15 border-blue-500/30 text-blue-300";
 
                 return (
                   <div
@@ -588,7 +618,9 @@ export default function OverviewView({
                         <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300">
                           {ins.category}
                         </span>
-                        <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}>
+                        <span
+                          className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${severityColor}`}
+                        >
                           {ins.severity}
                         </span>
                       </div>
@@ -603,7 +635,9 @@ export default function OverviewView({
 
                       {ins.recommended_next_step && (
                         <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400">
-                          <strong className="text-zinc-200">Recommended Next Step: </strong>
+                          <strong className="text-zinc-200">
+                            Recommended Next Step:{" "}
+                          </strong>
                           {ins.recommended_next_step}
                         </div>
                       )}
@@ -622,7 +656,7 @@ export default function OverviewView({
                         <button
                           onClick={() =>
                             onNavigateToAgents(
-                              `Analyze and act on insight: ${ins.title}. Recommended action: ${ins.recommended_next_step}`
+                              `Analyze and act on insight: ${ins.title}. Recommended action: ${ins.recommended_next_step}`,
                             )
                           }
                           className="text-[11px] text-zinc-400 hover:text-white inline-flex items-center gap-1 cursor-pointer transition-colors"
@@ -650,45 +684,72 @@ export default function OverviewView({
             onClick={onRunAnalysis}
             className="p-3.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] hover:border-indigo-500/30 text-left transition-all cursor-pointer group"
           >
-            <Sparkles size={16} className="text-indigo-400 mb-2 group-hover:scale-110 transition-transform" />
+            <Sparkles
+              size={16}
+              className="text-indigo-400 mb-2 group-hover:scale-110 transition-transform"
+            />
             <p className="text-xs font-bold text-white truncate">AI Analyst</p>
-            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">Full business audit</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+              Full business audit
+            </p>
           </button>
 
           <button
             onClick={() => onTabChange("explorer")}
             className="p-3.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] hover:border-indigo-500/30 text-left transition-all cursor-pointer group"
           >
-            <Search size={16} className="text-sky-400 mb-2 group-hover:scale-110 transition-transform" />
-            <p className="text-xs font-bold text-white truncate">Explore Data</p>
-            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">Inspect tables & columns</p>
+            <Search
+              size={16}
+              className="text-sky-400 mb-2 group-hover:scale-110 transition-transform"
+            />
+            <p className="text-xs font-bold text-white truncate">
+              Explore Data
+            </p>
+            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+              Inspect tables & columns
+            </p>
           </button>
 
           <button
             onClick={() => onTabChange("analytics")}
             className="p-3.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] hover:border-indigo-500/30 text-left transition-all cursor-pointer group"
           >
-            <BarChart3 size={16} className="text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
+            <BarChart3
+              size={16}
+              className="text-emerald-400 mb-2 group-hover:scale-110 transition-transform"
+            />
             <p className="text-xs font-bold text-white truncate">Dashboards</p>
-            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">Visual charts & metrics</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+              Visual charts & metrics
+            </p>
           </button>
 
           <button
             onClick={() => onTabChange("sqllab")}
             className="p-3.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] hover:border-indigo-500/30 text-left transition-all cursor-pointer group"
           >
-            <Terminal size={16} className="text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
+            <Terminal
+              size={16}
+              className="text-amber-400 mb-2 group-hover:scale-110 transition-transform"
+            />
             <p className="text-xs font-bold text-white truncate">SQL Lab</p>
-            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">Write & optimize SQL</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+              Write & optimize SQL
+            </p>
           </button>
 
           <button
             onClick={() => onTabChange("health")}
             className="p-3.5 rounded-xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.06] hover:border-indigo-500/30 text-left transition-all cursor-pointer group"
           >
-            <Activity size={16} className="text-rose-400 mb-2 group-hover:scale-110 transition-transform" />
+            <Activity
+              size={16}
+              className="text-rose-400 mb-2 group-hover:scale-110 transition-transform"
+            />
             <p className="text-xs font-bold text-white truncate">Data Health</p>
-            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">Diagnostics & clean up</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
+              Diagnostics & clean up
+            </p>
           </button>
         </div>
       </div>
@@ -762,32 +823,43 @@ export default function OverviewView({
             </p>
 
             {/* Visual Data Lineage */}
-            {selectedInsight.evidence?.lineage && selectedInsight.evidence.lineage.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <GitMerge size={12} className="text-indigo-400" />
-                  <span>Verified Data Lineage</span>
-                </p>
-                <div className="p-3.5 rounded-xl bg-black/50 border border-white/[0.06] font-mono text-xs text-indigo-300 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-zinc-400 text-[11px]">Tables:</span>
-                    {selectedInsight.source_tables.map((t) => (
-                      <span key={t} className="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-indigo-200 text-[11px]">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="space-y-1 border-t border-white/[0.06] pt-2">
-                    {selectedInsight.evidence.lineage.map((step: string, idx: number) => (
-                      <div key={idx} className="flex items-center gap-2 text-zinc-300">
-                        <span className="text-indigo-400 font-bold">[{idx + 1}]</span>
-                        <span>{step}</span>
-                      </div>
-                    ))}
+            {selectedInsight.evidence?.lineage &&
+              selectedInsight.evidence.lineage.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <GitMerge size={12} className="text-indigo-400" />
+                    <span>Verified Data Lineage</span>
+                  </p>
+                  <div className="p-3.5 rounded-xl bg-black/50 border border-white/[0.06] font-mono text-xs text-indigo-300 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-zinc-400 text-[11px]">Tables:</span>
+                      {selectedInsight.source_tables.map((t) => (
+                        <span
+                          key={t}
+                          className="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-indigo-200 text-[11px]"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="space-y-1 border-t border-white/[0.06] pt-2">
+                      {selectedInsight.evidence.lineage.map(
+                        (step: string, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 text-zinc-300"
+                          >
+                            <span className="text-indigo-400 font-bold">
+                              [{idx + 1}]
+                            </span>
+                            <span>{step}</span>
+                          </div>
+                        ),
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
             {/* Lineage SQL */}
             {selectedInsight.sql && (
@@ -802,16 +874,17 @@ export default function OverviewView({
             )}
 
             {/* Structured Evidence */}
-            {selectedInsight.evidence && Object.keys(selectedInsight.evidence).length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-                  Verified Evidence
-                </p>
-                <div className="p-3 rounded-xl bg-black/40 border border-white/[0.06] font-mono text-[11px] text-zinc-300 overflow-x-auto whitespace-pre-wrap">
-                  {JSON.stringify(selectedInsight.evidence, null, 2)}
+            {selectedInsight.evidence &&
+              Object.keys(selectedInsight.evidence).length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Verified Evidence
+                  </p>
+                  <div className="p-3 rounded-xl bg-black/40 border border-white/[0.06] font-mono text-[11px] text-zinc-300 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(selectedInsight.evidence, null, 2)}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             <div className="pt-3 border-t border-white/[0.08] flex justify-end">
               <button

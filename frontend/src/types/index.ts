@@ -1664,6 +1664,160 @@ export interface OrchestrationRunItem {
   metadata: Record<string, any>;
 }
 
+// ── Phase 9.3: Enterprise Governance & Observability Types ───────────────────
+
+export type GovernanceEventType =
+  | "QUERY_EXECUTED"
+  | "MUTATION_PROPOSED"
+  | "MUTATION_CONFIRMED"
+  | "MUTATION_EXECUTED"
+  | "MUTATION_REJECTED"
+  | "ORCHESTRATION_STARTED"
+  | "ORCHESTRATION_COMPLETED"
+  | "ORCHESTRATION_FAILED"
+  | "AGENT_INVOKED"
+  | "AGENT_COMPLETED"
+  | "AGENT_FAILED"
+  | "AGENT_BLOCKED"
+  | "POLICY_EVALUATION"
+  | "POLICY_VIOLATION"
+  | "SECURITY_EVENT"
+  | "DATA_ACCESS"
+  | "CHAIN_INTEGRITY_VERIFIED"
+  | string;
+
+export type GovernancePolicyScope = "SYSTEM_POLICY" | "USER_POLICY" | string;
+
+export type GovernancePolicyDecision =
+  | "ALLOW"
+  | "DENY"
+  | "REQUIRE_CONFIRMATION"
+  | "REQUIRE_ELEVATED_REVIEW"
+  | string;
+
+export type GovernanceRiskLevel =
+  | "LOW"
+  | "MEDIUM"
+  | "HIGH"
+  | "CRITICAL"
+  | "BLOCKED"
+  | string;
+
+export type SecurityEventSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | string;
+
+export interface GovernanceAuditEventItem {
+  event_id: string;
+  timestamp: string;
+  user_id: string;
+  database_identity: string;
+  event_type: GovernanceEventType;
+  resource_type: string;
+  resource_id: string;
+  actor_type: string;
+  action: string;
+  result: string;
+  risk_level: GovernanceRiskLevel;
+  policy_result: string;
+  agent_id?: string | null;
+  orchestration_id?: string | null;
+  request_id?: string | null;
+  metadata?: Record<string, any>;
+  previous_event_hash: string;
+  event_hash: string;
+}
+
+export interface SecurityEventItem {
+  event_id: string;
+  timestamp: string;
+  user_id: string;
+  database_identity: string;
+  event_type: string;
+  severity: SecurityEventSeverity;
+  source: string;
+  resource: string;
+  description: string;
+  status: string;
+  mitigation: string;
+  metadata?: Record<string, any>;
+}
+
+export interface GovernancePolicyItem {
+  policy_id: string;
+  name: string;
+  description: string;
+  category: string;
+  scope: GovernancePolicyScope;
+  decision: GovernancePolicyDecision;
+  enabled: boolean;
+  rule_expression?: string | null;
+  rationale: string;
+  user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RiskAssessmentItem {
+  assessment_id: string;
+  risk_level: GovernanceRiskLevel;
+  operation: string;
+  contributing_factors: string[];
+  applicable_policies: string[];
+  required_control: string;
+  explanation: string;
+  evaluated_at?: string;
+}
+
+export interface AgentObservabilityMetricItem {
+  agent_id: string;
+  name: string;
+  total_executions: number;
+  successful_executions: number;
+  failed_executions: number;
+  blocked_executions: number;
+  average_duration_ms: number;
+  last_execution_at?: string | null;
+  error_count: number;
+}
+
+export interface GovernanceSummaryItem {
+  user_id: string;
+  database_identity: string;
+  time_window: string;
+  total_audit_events: number;
+  total_orchestrations: number;
+  successful_orchestrations: number;
+  failed_orchestrations: number;
+  total_agent_executions: number;
+  agent_failures: number;
+  average_agent_duration_ms: number;
+  policy_evaluations_count: number;
+  policy_blocks_count: number;
+  security_events_count: number;
+  high_critical_security_count: number;
+  actions_proposed_count: number;
+  actions_confirmed_count: number;
+  actions_executed_count: number;
+  data_access_queries_count: number;
+  hash_chain_verified: boolean;
+  generated_at: string;
+}
+
+export interface ComplianceReportItem {
+  report_id: string;
+  user_id: string;
+  database_identity: string;
+  period_start: string;
+  period_end: string;
+  summary: GovernanceSummaryItem;
+  factual_observations: string[];
+  governance_interpretations: string[];
+  risk_distribution: Record<string, number>;
+  system_observations: string[];
+  persistence_disclosure: string;
+  generated_at: string;
+}
+
+
 
 
 

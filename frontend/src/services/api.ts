@@ -1099,5 +1099,213 @@ export async function cancelOrchestration(orchestrationId: string): Promise<{
   );
 }
 
+// ── Phase 9.3: Enterprise Governance & Observability APIs ─────────────────────
+
+export async function getGovernanceSummary(days: number = 7): Promise<{
+  status: string;
+  summary?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; summary?: any; message?: string }>(
+    `/intelligence/governance/summary?days=${days}`
+  );
+}
+
+export async function listGovernanceAudit(params: {
+  limit?: number;
+  offset?: number;
+  event_type?: string;
+  risk_level?: string;
+  start_time?: string;
+  end_time?: string;
+} = {}): Promise<{
+  status: string;
+  events?: any[];
+  total_returned?: number;
+  chain_verified?: boolean;
+  chain_events_verified?: number;
+  chain_verification_error?: string | null;
+  message?: string;
+}> {
+  const q = new URLSearchParams();
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.offset) q.set("offset", String(params.offset));
+  if (params.event_type) q.set("event_type", params.event_type);
+  if (params.risk_level) q.set("risk_level", params.risk_level);
+  if (params.start_time) q.set("start_time", params.start_time);
+  if (params.end_time) q.set("end_time", params.end_time);
+
+  return apiFetch<{
+    status: string;
+    events?: any[];
+    total_returned?: number;
+    chain_verified?: boolean;
+    chain_events_verified?: number;
+    chain_verification_error?: string | null;
+    message?: string;
+  }>(`/intelligence/governance/audit?${q.toString()}`);
+}
+
+export async function listGovernanceSecurityEvents(params: {
+  limit?: number;
+  offset?: number;
+  event_type?: string;
+  severity?: string;
+} = {}): Promise<{
+  status: string;
+  security_events?: any[];
+  total_returned?: number;
+  message?: string;
+}> {
+  const q = new URLSearchParams();
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.offset) q.set("offset", String(params.offset));
+  if (params.event_type) q.set("event_type", params.event_type);
+  if (params.severity) q.set("severity", params.severity);
+
+  return apiFetch<{
+    status: string;
+    security_events?: any[];
+    total_returned?: number;
+    message?: string;
+  }>(`/intelligence/governance/security-events?${q.toString()}`);
+}
+
+export async function getGovernanceAgents(): Promise<{
+  status: string;
+  agents?: any[];
+  message?: string;
+}> {
+  return apiFetch<{ status: string; agents?: any[]; message?: string }>(
+    "/intelligence/governance/agents"
+  );
+}
+
+export async function listGovernancePolicies(): Promise<{
+  status: string;
+  policies?: any[];
+  message?: string;
+}> {
+  return apiFetch<{ status: string; policies?: any[]; message?: string }>(
+    "/intelligence/governance/policies"
+  );
+}
+
+export async function setGovernancePolicyStatus(policyId: string, enabled: boolean): Promise<{
+  status: string;
+  policy_id?: string;
+  enabled?: boolean;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; policy_id?: string; enabled?: boolean; message?: string }>(
+    "/intelligence/governance/policies/status",
+    {
+      method: "POST",
+      body: JSON.stringify({ policy_id: policyId, enabled }),
+    }
+  );
+}
+
+export async function evaluateGovernancePolicy(req: {
+  category: string;
+  operation: string;
+  context?: Record<string, any>;
+  operation_type?: string;
+  affected_rows?: number;
+  agent_permission?: string;
+}): Promise<{
+  status: string;
+  decision?: string;
+  risk?: any;
+  audit_event_id?: string;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    decision?: string;
+    risk?: any;
+    audit_event_id?: string;
+    message?: string;
+  }>("/intelligence/governance/policies/evaluate", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function assessGovernanceRisk(req: {
+  operation: string;
+  operation_type?: string;
+  affected_rows?: number;
+  agent_permission?: string;
+  context?: Record<string, any>;
+}): Promise<{
+  status: string;
+  risk?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; risk?: any; message?: string }>(
+    "/intelligence/governance/risk",
+    {
+      method: "POST",
+      body: JSON.stringify(req),
+    }
+  );
+}
+
+export async function getGovernanceTrace(traceId: string): Promise<{
+  status: string;
+  trace?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; trace?: any; message?: string }>(
+    `/intelligence/governance/traces/${encodeURIComponent(traceId)}`
+  );
+}
+
+export async function getOrchestrationTraces(orchestrationId: string): Promise<{
+  status: string;
+  orchestration_id?: string;
+  traces?: any[];
+  total_traces?: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    orchestration_id?: string;
+    traces?: any[];
+    total_traces?: number;
+    message?: string;
+  }>(`/intelligence/governance/orchestrations/${encodeURIComponent(orchestrationId)}`);
+}
+
+export async function getComplianceReport(periodHours: number = 24): Promise<{
+  status: string;
+  report?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; report?: any; message?: string }>(
+    `/intelligence/governance/report?period_hours=${periodHours}`
+  );
+}
+
+export async function verifyAuditChain(): Promise<{
+  status: string;
+  verified?: boolean;
+  events_verified?: number;
+  error_detail?: string | null;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    verified?: boolean;
+    events_verified?: number;
+    error_detail?: string | null;
+    message?: string;
+  }>("/intelligence/governance/audit/verify", {
+    method: "POST",
+  });
+}
+
+
 
 
