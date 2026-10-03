@@ -1024,4 +1024,80 @@ export async function searchKnowledge(query: string): Promise<{
   }>(`/intelligence/knowledge/search?q=${encodeURIComponent(query)}`);
 }
 
+// ── Phase 9.2: Advanced Agent Orchestration API ──────────────────────────────
+
+export async function initiateOrchestration(goal: string): Promise<{
+  status: string;
+  orchestration?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; orchestration?: any; message?: string }>(
+    "/intelligence/orchestrate",
+    {
+      method: "POST",
+      body: JSON.stringify({ goal }),
+    }
+  );
+}
+
+export async function listOrchestrations(limit = 20): Promise<{
+  status: string;
+  runs?: any[];
+  message?: string;
+}> {
+  return apiFetch<{ status: string; runs?: any[]; message?: string }>(
+    `/intelligence/orchestrate?limit=${limit}`
+  );
+}
+
+export async function listOrchestrationAgents(): Promise<{
+  status: string;
+  agents?: any[];
+  message?: string;
+}> {
+  return apiFetch<{ status: string; agents?: any[]; message?: string }>(
+    "/intelligence/orchestrate/agents"
+  );
+}
+
+export async function getOrchestration(orchestrationId: string): Promise<{
+  status: string;
+  orchestration?: any;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; orchestration?: any; message?: string }>(
+    `/intelligence/orchestrate/${encodeURIComponent(orchestrationId)}`
+  );
+}
+
+export async function getOrchestrationEvidence(orchestrationId: string): Promise<{
+  status: string;
+  orchestration_id?: string;
+  evidence?: any[];
+  total_items?: number;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    orchestration_id?: string;
+    evidence?: any[];
+    total_items?: number;
+    message?: string;
+  }>(`/intelligence/orchestrate/${encodeURIComponent(orchestrationId)}/evidence`);
+}
+
+export async function cancelOrchestration(orchestrationId: string): Promise<{
+  status: string;
+  message?: string;
+  orchestration?: any;
+}> {
+  return apiFetch<{ status: string; message?: string; orchestration?: any }>(
+    `/intelligence/orchestrate/${encodeURIComponent(orchestrationId)}/cancel`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+
 

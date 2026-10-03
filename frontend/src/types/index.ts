@@ -1540,5 +1540,130 @@ export interface ConflictResolvePayload {
   resolution_notes?: string;
 }
 
+// ── Phase 9.2: Advanced Agent Orchestration Interfaces ──────────────────────
+
+export type AgentPermissionTier = "READ_ONLY" | "ANALYTICAL" | "PROPOSAL_ONLY" | "CONTROLLED_MUTATION";
+
+export type OrchestrationRunStatus =
+  | "PLANNING"
+  | "VALIDATING"
+  | "EXECUTING"
+  | "WAITING_FOR_INPUT"
+  | "WAITING_FOR_CONFIRMATION"
+  | "COMPLETED"
+  | "PARTIALLY_COMPLETED"
+  | "FAILED"
+  | "BLOCKED"
+  | "CANCELLED";
+
+export type TaskStepStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "BLOCKED" | "SKIPPED";
+
+export type OrchestrationEvidenceType =
+  | "DATABASE_FACT"
+  | "METRIC_RESULT"
+  | "BUSINESS_CONTEXT"
+  | "TREND"
+  | "ANOMALY"
+  | "INVESTIGATION_FINDING"
+  | "FORECAST"
+  | "DECISION_FINDING"
+  | "OUTCOME"
+  | "USER_CONTEXT"
+  | "ACTION_STATUS";
+
+export type OrchestrationConfidenceTier = "HIGH" | "MODERATE" | "LIMITED";
+
+export interface SpecialistAgentItem {
+  agent_id: string;
+  name: string;
+  description: string;
+  permission: AgentPermissionTier;
+  capabilities: string[];
+  supported_inputs: string[];
+  supported_outputs: string[];
+  is_read_only: boolean;
+}
+
+export interface PlanStepItem {
+  step_id: string;
+  agent_id: string;
+  name: string;
+  purpose: string;
+  dependencies: string[];
+  inputs: Record<string, any>;
+  status: TaskStepStatus;
+  output?: Record<string, any> | null;
+  error?: string | null;
+  duration_ms: number;
+  retry_count: number;
+}
+
+export interface TaskGraphItem {
+  graph_id: string;
+  steps: PlanStepItem[];
+  entry_steps: string[];
+  exit_steps: string[];
+  max_depth: number;
+  total_steps: number;
+}
+
+export interface OrchestrationEvidenceLedgerItem {
+  evidence_id: string;
+  evidence_type: OrchestrationEvidenceType;
+  title: string;
+  summary: string;
+  source_agent: string;
+  step_id: string;
+  data_facts: Record<string, any>;
+  confidence: OrchestrationConfidenceTier;
+  created_at: string;
+  lineage: string[];
+  table_references?: string[];
+  metric_references?: string[];
+}
+
+export interface OrchestrationConflictItem {
+  conflict_id: string;
+  conflict_type: string;
+  description: string;
+  involved_agents: string[];
+  involved_steps: string[];
+  resolution_strategy: string;
+  resolved: boolean;
+  resolution_details: string;
+}
+
+export interface ProposedActionSummaryItem {
+  action_type: string;
+  title: string;
+  description: string;
+  preview: Record<string, any>;
+  impact: Record<string, any>;
+  confirmation_required: boolean;
+  action_plan_id?: string | null;
+  status: string;
+}
+
+export interface OrchestrationRunItem {
+  orchestration_id: string;
+  user_id: string;
+  database_identity: string;
+  goal: string;
+  status: OrchestrationRunStatus;
+  task_graph?: TaskGraphItem | null;
+  evidence_ledger: OrchestrationEvidenceLedgerItem[];
+  conflicts: OrchestrationConflictItem[];
+  proposed_action?: ProposedActionSummaryItem | null;
+  executive_summary: string;
+  explanation: Record<string, any>;
+  confidence_tier: OrchestrationConfidenceTier;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  duration_ms: number;
+  metadata: Record<string, any>;
+}
+
+
 
 

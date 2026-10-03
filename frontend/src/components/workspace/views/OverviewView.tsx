@@ -40,6 +40,7 @@ import ActionProposalSection from "../actions/ActionProposalSection";
 import OutcomeOptimizationSection from "../outcomes/OutcomeOptimizationSection";
 import PredictiveIntelligenceSection from "../predictive/PredictiveIntelligenceSection";
 import EnterpriseKnowledgeSection from "../knowledge/EnterpriseKnowledgeSection";
+import AgentOrchestrationSection from "../orchestration/AgentOrchestrationSection";
 
 
 
@@ -417,6 +418,12 @@ export default function OverviewView({
 
       {/* Phase 9.1: Enterprise Knowledge & Context Intelligence */}
       <EnterpriseKnowledgeSection
+        dbConnected={dbConnected}
+        onConnectDatabase={onConnectDatabase}
+      />
+
+      {/* Phase 9.2: Advanced Agent Orchestration */}
+      <AgentOrchestrationSection
         dbConnected={dbConnected}
         onConnectDatabase={onConnectDatabase}
       />

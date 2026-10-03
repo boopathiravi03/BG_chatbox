@@ -2867,3 +2867,187 @@ def explain_knowledge_item_endpoint(
         return {"status": "error", "message": str(e)}
 
 
+# ── Phase 9.2: Advanced Agent Orchestration Endpoints ─────────────────────────
+
+class OrchestrateRequest(BaseModel):
+    goal: str
+
+
+@app.post("/intelligence/orchestrate")
+@limiter.limit("20/minute")
+def initiate_orchestration_endpoint(
+    req: OrchestrateRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Initiates full multi-agent orchestration for a natural language goal.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.orchestration.orchestrator import orchestrate_goal
+        db_id = _get_active_db_identity()
+        db_t = get_current_db_type()
+        engine = get_engine()
+
+        run = orchestrate_goal(
+            goal=req.goal,
+            user_id=user.user_id,
+            database_identity=db_id,
+            engine=engine,
+            db_type=db_t,
+        )
+        return {
+            "status": "success",
+            "orchestration": run.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Orchestration initiation error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/orchestrate")
+@limiter.limit("30/minute")
+def list_orchestrations_endpoint(
+    request: Request,
+    limit: int = 20,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists historical orchestration runs for current tenant and database.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.orchestration.store import list_orchestration_runs
+        db_id = _get_active_db_identity()
+
+        runs = list_orchestration_runs(user_id=user.user_id, database_identity=db_id, limit=limit)
+        return {
+            "status": "success",
+            "runs": [r.to_dict() for r in runs],
+        }
+    except Exception as e:
+        logging.error(f"List orchestrations error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/orchestrate/agents")
+@limiter.limit("30/minute")
+def list_orchestration_agents_endpoint(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists registered specialist agents and their permission tiers.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.orchestration.agent_registry import list_registered_agents
+        agents = list_registered_agents()
+        return {
+            "status": "success",
+            "agents": [a.to_dict() for a in agents],
+        }
+    except Exception as e:
+        logging.error(f"List orchestration agents error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/orchestrate/{orchestration_id}")
+@limiter.limit("30/minute")
+def get_orchestration_endpoint(
+    orchestration_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieves a specific orchestration run with its task graph, evidence ledger, and conflicts.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.orchestration.store import get_orchestration_run
+        db_id = _get_active_db_identity()
+
+        run = get_orchestration_run(orchestration_id, user_id=user.user_id, database_identity=db_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Orchestration '{orchestration_id}' not found.")
+
+        return {
+            "status": "success",
+            "orchestration": run.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Get orchestration error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/intelligence/orchestrate/{orchestration_id}/evidence")
+@limiter.limit("30/minute")
+def get_orchestration_evidence_endpoint(
+    orchestration_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Retrieves the verified evidence ledger for an orchestration run.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.orchestration.store import get_orchestration_run
+        db_id = _get_active_db_identity()
+
+        run = get_orchestration_run(orchestration_id, user_id=user.user_id, database_identity=db_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Orchestration '{orchestration_id}' not found.")
+
+        return {
+            "status": "success",
+            "orchestration_id": orchestration_id,
+            "evidence": [e.to_dict() for e in run.evidence_ledger],
+            "total_items": len(run.evidence_ledger),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Get orchestration evidence error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/intelligence/orchestrate/{orchestration_id}/cancel")
+@limiter.limit("20/minute")
+def cancel_orchestration_endpoint(
+    orchestration_id: str,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Cancels an active or waiting orchestration run.
+    """
+    _activate(user)
+    try:
+        from app.intelligence.orchestration.store import get_orchestration_run, save_orchestration_run
+        from app.intelligence.orchestration.models import OrchestrationStatus
+        db_id = _get_active_db_identity()
+
+        run = get_orchestration_run(orchestration_id, user_id=user.user_id, database_identity=db_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Orchestration '{orchestration_id}' not found.")
+
+        run.status = OrchestrationStatus.CANCELLED
+        save_orchestration_run(run)
+
+        return {
+            "status": "success",
+            "message": f"Orchestration '{orchestration_id}' cancelled.",
+            "orchestration": run.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Cancel orchestration error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+
