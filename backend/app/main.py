@@ -1534,3 +1534,79 @@ def monitoring_summary_endpoint(
         return {"status": "error", "message": str(e), "summary": None}
 
 
+# ── Phase 8.7: Root-Cause Investigation ───────────────────────────────────────
+from app.intelligence.investigation.investigator import investigate_signal
+
+class InvestigateSignalRequest(BaseModel):
+    signal_id: Optional[str] = None
+    signal_title: Optional[str] = None
+    signal_type: Optional[str] = None
+    metric_name: Optional[str] = None
+    source_table: Optional[str] = None
+    direction: Optional[str] = "drop"
+    magnitude_pct: Optional[float] = None
+    detected_at: Optional[str] = None
+    current_value: Optional[float] = None
+    previous_value: Optional[float] = None
+
+@app.post("/intelligence/investigate")
+@limiter.limit("10/minute")
+def investigate_signal_endpoint(
+    req: InvestigateSignalRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Deep-dive investigation of an observed business anomaly, drop, or spike."""
+    _activate(user)
+    try:
+        # Check signal ownership if signal_id is provided
+        if req.signal_id:
+            from app.intelligence.proactive.alert_store import _get_session, AlertRecord
+            session = _get_session()
+            try:
+                rec = session.query(AlertRecord).filter(AlertRecord.alert_id == req.signal_id).first()
+                if rec and rec.user_id != user.user_id:
+                    raise HTTPException(status_code=403, detail="Forbidden: You do not own this alert.")
+            finally:
+                session.close()
+
+        from app.database.database_manager import get_engine
+        engine = get_engine()
+        if engine is None:
+            return {
+                "status": "disconnected",
+                "message": "No active database connection.",
+                "investigation": None,
+            }
+
+        result = investigate_signal(
+            engine=engine,
+            signal_id=req.signal_id,
+            signal_title=req.signal_title,
+            signal_type=req.signal_type,
+            metric_name=req.metric_name,
+            source_table=req.source_table,
+            direction=req.direction or "drop",
+            magnitude_pct=req.magnitude_pct,
+            detected_at=req.detected_at,
+            current_value=req.current_value,
+            previous_value=req.previous_value,
+            user_id=user.user_id,
+        )
+        return {
+            "status": "success" if not result.insufficient_evidence else "insufficient_evidence",
+            "investigation": result.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        logging.error(f"Investigation error: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "investigation": None,
+        }
+
+

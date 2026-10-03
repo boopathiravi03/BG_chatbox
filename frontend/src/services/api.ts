@@ -19,6 +19,8 @@ import type {
   MonitoringEvaluateResponse,
   MonitoringStatusResponse,
   MonitoringSummaryResponse,
+  InvestigationResult,
+  InvestigateSignalPayload,
 } from "../types";
 
 export const API_BASE = (
@@ -563,4 +565,18 @@ export async function getMonitoringStatus(): Promise<MonitoringStatusResponse> {
 
 export async function getMonitoringSummary(): Promise<MonitoringSummaryResponse> {
   return apiFetch<MonitoringSummaryResponse>("/intelligence/monitoring/summary");
+}
+
+// ── Phase 8.7: Root-Cause & Investigation Intelligence ───────────────────────
+
+export async function investigateSignal(
+  payload: InvestigateSignalPayload
+): Promise<{ status: string; investigation?: InvestigationResult; message?: string }> {
+  return apiFetch<{ status: string; investigation?: InvestigationResult; message?: string }>(
+    "/intelligence/investigate",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }
+  );
 }

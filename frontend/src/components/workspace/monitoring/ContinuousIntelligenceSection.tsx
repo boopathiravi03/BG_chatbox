@@ -13,6 +13,7 @@ import {
   Zap,
   BarChart2,
   TrendingUp,
+  Search,
 } from "lucide-react";
 import {
   runMonitoringScan,
@@ -63,7 +64,13 @@ function formatDuration(ms: number): string {
 
 // ── Sub-component: single monitoring item card ────────────────────────────────
 
-function MonitoringItemCard({ item }: { item: MonitoringItem }) {
+function MonitoringItemCard({
+  item,
+  onInvestigate,
+}: {
+  item: MonitoringItem;
+  onInvestigate?: (item: MonitoringItem) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -128,12 +135,27 @@ function MonitoringItemCard({ item }: { item: MonitoringItem }) {
             </p>
           </div>
 
-          {/* Source */}
-          {item.source_component && (
-            <p className="text-[10px] font-mono text-zinc-600">
-              Source: {item.source_component.replace(/_/g, " ")}
-            </p>
-          )}
+          {/* Action Row */}
+          <div className="flex items-center justify-between pt-1">
+            {item.source_component && (
+              <p className="text-[10px] font-mono text-zinc-600">
+                Source: {item.source_component.replace(/_/g, " ")}
+              </p>
+            )}
+            {onInvestigate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onInvestigate(item);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 transition-all cursor-pointer ml-auto"
+              >
+                <Search size={12} />
+                Investigate Root Cause
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -244,11 +266,13 @@ function ExecutiveSummaryPanel({
 interface Props {
   dbConnected: boolean;
   onConnectDatabase?: () => void;
+  onInvestigateSignal?: (item: MonitoringItem) => void;
 }
 
 export default function ContinuousIntelligenceSection({
   dbConnected,
   onConnectDatabase,
+  onInvestigateSignal,
 }: Props) {
   const [scanning, setScanning] = useState(false);
   const [executiveSummary, setExecutiveSummary] =
@@ -424,7 +448,11 @@ export default function ContinuousIntelligenceSection({
               ) : (
                 <div className="space-y-2">
                   {filteredItems.map((item) => (
-                    <MonitoringItemCard key={item.item_id} item={item} />
+                    <MonitoringItemCard
+                      key={item.item_id}
+                      item={item}
+                      onInvestigate={onInvestigateSignal}
+                    />
                   ))}
                 </div>
               )}

@@ -30,11 +30,12 @@ import {
   refreshBusinessInsights,
   getAuthToken,
 } from "../../../services/api";
-import type { BusinessInsight } from "../../../types";
+import type { BusinessInsight, MonitoringItem } from "../../../types";
 import ProactiveIntelligenceSection from "../proactive/ProactiveIntelligenceSection";
 import DecisionIntelligenceSection from "../decision/DecisionIntelligenceSection";
 import OutcomeLearningSection from "../learning/OutcomeLearningSection";
 import ContinuousIntelligenceSection from "../monitoring/ContinuousIntelligenceSection";
+import RootCauseInvestigationSection from "../investigation/RootCauseInvestigationSection";
 
 
 
@@ -84,6 +85,17 @@ export default function OverviewView({
   const [insights, setInsights] = useState<BusinessInsight[]>([]);
   const [insightsLoading, setInsightsLoading] = useState<boolean>(false);
   const [selectedInsight, setSelectedInsight] = useState<BusinessInsight | null>(null);
+
+  // Phase 8.7 Root-Cause Investigation
+  const [selectedInvestigationSignal, setSelectedInvestigationSignal] = useState<MonitoringItem | null>(null);
+
+  const handleInvestigateSignal = (item: MonitoringItem) => {
+    setSelectedInvestigationSignal(item);
+    const el = document.getElementById("root-cause-investigation-section");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth" });
+    }
+  };
 
   useEffect(() => {
     if (!dbConnected || !getAuthToken()) {
@@ -366,7 +378,18 @@ export default function OverviewView({
       <ContinuousIntelligenceSection
         dbConnected={dbConnected}
         onConnectDatabase={onConnectDatabase}
+        onInvestigateSignal={handleInvestigateSignal}
       />
+
+      {/* Phase 8.7: Root-Cause & Investigation Intelligence */}
+      <div id="root-cause-investigation-section">
+        <RootCauseInvestigationSection
+          dbConnected={dbConnected}
+          onConnectDatabase={onConnectDatabase}
+          selectedSignal={selectedInvestigationSignal}
+          onClearSelectedSignal={() => setSelectedInvestigationSignal(null)}
+        />
+      </div>
 
       {/* Phase 8.2: Cross-Table Intelligence Section */}
       {insights.some((i) => i.source_tables && i.source_tables.length > 1) && (

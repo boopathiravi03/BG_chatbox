@@ -898,3 +898,104 @@ export interface MonitoringSummaryResponse {
   scanned_at?: string;
 }
 
+
+// ── Phase 8.7: Root-Cause & Investigation Intelligence ────────────────────────
+
+export type InvestigationConfidenceLevel = "HIGH" | "MODERATE" | "LIMITED";
+
+export interface InvestigationObservedChange {
+  metric: string;
+  current_value: unknown;
+  previous_value: unknown;
+  delta?: number | null;
+  delta_percent?: number | null;
+  time_period?: string;
+  formatted_change?: string;
+}
+
+export interface InvestigationEvidenceItem {
+  evidence_id: string;
+  metric: string;
+  current_value: unknown;
+  previous_value: unknown;
+  delta?: number | null;
+  delta_percent?: number | null;
+  time_range: string;
+  source_table: string;
+  source_columns: string[];
+  record_count?: number | null;
+  sql_lineage: string;
+  calculation_description: string;
+}
+
+export interface InvestigationContributingFactor {
+  factor_id: string;
+  dimension: string;
+  dimension_value: string;
+  impact_type: "negative" | "positive" | "neutral" | string;
+  contribution_percent?: number | null;
+  observed_change: string;
+  evidence_ids: string[];
+}
+
+export interface InvestigationHypothesis {
+  hypothesis_id: string;
+  statement: string;
+  supporting_evidence_ids: string[];
+  contradicting_evidence_ids: string[];
+  confidence_level: InvestigationConfidenceLevel;
+  status: string;
+  causality_caveat: string;
+}
+
+export interface InvestigationRecommendation {
+  recommendation_id: string;
+  action_title: string;
+  reason: string;
+  target_data: string;
+  expected_information_gained: string;
+  priority: "high" | "medium" | "low" | string;
+}
+
+export interface InvestigationConfidenceAssessment {
+  level: InvestigationConfidenceLevel;
+  score_rationale: string;
+  supporting_signals_count: number;
+  independent_sources_count: number;
+  limitations: string[];
+}
+
+export interface InvestigationLineage {
+  source_tables: string[];
+  join_path: string;
+  columns_analyzed: string[];
+  calculations: string[];
+  comparison_periods: string[];
+  record_counts: Record<string, number>;
+}
+
+export interface InvestigationResult {
+  investigation_id: string;
+  user_id: string;
+  signal_id: string;
+  signal_title: string;
+  status: "success" | "insufficient_evidence" | "disconnected" | "error" | string;
+  observed_change?: InvestigationObservedChange | null;
+  evidence: InvestigationEvidenceItem[];
+  contributing_factors: InvestigationContributingFactor[];
+  hypotheses: InvestigationHypothesis[];
+  confidence?: InvestigationConfidenceAssessment | null;
+  recommended_investigations: InvestigationRecommendation[];
+  lineage?: InvestigationLineage | null;
+  summary: string;
+  explanation: string;
+  missing_evidence?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface InvestigateSignalPayload {
+  signal_id?: string;
+  metric?: string;
+  table?: string;
+  context?: Record<string, unknown>;
+}
