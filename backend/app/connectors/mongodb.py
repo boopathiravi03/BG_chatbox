@@ -12,6 +12,7 @@ import json
 import re
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus
 
 from app.connectors.base import (
     BaseConnector,
@@ -56,11 +57,25 @@ class MongoDBConnector(BaseConnector):
         self._client: Any = None
 
     def _get_uri(self) -> str:
+        """Build a MongoDB URI with credentials safely percent-encoded.
+
+        MongoDB usernames/passwords may contain reserved URI characters such as
+        @, :, /, ?, #, and %. Encoding them prevents URI parsing/authentication
+        errors. A complete user-supplied URI is intentionally left unchanged.
+        """
         if self._connection_string:
             return self._connection_string
+
+        database = quote_plus(str(self.database or "admin"))
         if self.username and self._password:
-            return f"mongodb://{self.username}:{self._password}@{self.host}:{self.port}/{self.database}?authSource={self.auth_source}"
-        return f"mongodb://{self.host}:{self.port}/{self.database}"
+            username = quote_plus(str(self.username), safe="")
+            password = quote_plus(str(self._password), safe="")
+            auth_source = quote_plus(str(self.auth_source or "admin"), safe="")
+            return (
+                f"mongodb://{username}:{password}@{self.host}:{self.port}/"
+                f"{database}?authSource={auth_source}"
+            )
+        return f"mongodb://{self.host}:{self.port}/{database}"
 
     def connect(self) -> bool:
         try:
