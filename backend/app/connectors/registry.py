@@ -222,15 +222,17 @@ class ConnectionRegistry:
                 user_id=user_id,
             )
         elif c_type == "mongodb":
+            target_db = config.get("database") or "bg_ai_db"
+            auth_src = config.get("auth_source") or config.get("authSource") or target_db
             connector = MongoDBConnector(
                 connection_id=conn_id,
                 name=name,
                 host=config.get("host", "localhost"),
                 port=int(config.get("port", 27017)),
-                database=config.get("database", "admin"),
+                database=target_db,
                 username=config.get("username"),
                 password=config.get("password"),
-                auth_source=config.get("auth_source", "admin"),
+                auth_source=auth_src,
                 connection_string=config.get("connection_string"),
                 is_read_only=is_read_only,
                 user_id=user_id,

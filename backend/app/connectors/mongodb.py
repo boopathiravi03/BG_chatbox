@@ -31,10 +31,10 @@ class MongoDBConnector(BaseConnector):
         name: str,
         host: str = "localhost",
         port: int = 27017,
-        database: str = "admin",
+        database: str = "bg_ai_db",
         username: Optional[str] = None,
         password: Optional[str] = None,
-        auth_source: str = "admin",
+        auth_source: Optional[str] = None,
         connection_string: Optional[str] = None,
         is_read_only: bool = False,
         user_id: str = "default_user",
@@ -52,7 +52,7 @@ class MongoDBConnector(BaseConnector):
         self.database = database
         self.username = username
         self._password = password
-        self.auth_source = auth_source
+        self.auth_source = auth_source or database or "bg_ai_db"
         self._connection_string = connection_string
         self._client: Any = None
 
@@ -66,11 +66,12 @@ class MongoDBConnector(BaseConnector):
         if self._connection_string:
             return self._connection_string
 
-        database = quote_plus(str(self.database or "admin"))
+        database = quote_plus(str(self.database or "bg_ai_db"))
         if self.username and self._password:
             username = quote_plus(str(self.username), safe="")
             password = quote_plus(str(self._password), safe="")
-            auth_source = quote_plus(str(self.auth_source or "admin"), safe="")
+            effective_auth = self.auth_source or self.database or "bg_ai_db"
+            auth_source = quote_plus(str(effective_auth), safe="")
             return (
                 f"mongodb://{username}:{password}@{self.host}:{self.port}/"
                 f"{database}?authSource={auth_source}"

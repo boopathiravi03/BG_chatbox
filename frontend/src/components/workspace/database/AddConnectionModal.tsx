@@ -71,6 +71,7 @@ export default function AddConnectionModal({
     collectionName: "",
     tableName: "",
     dbIndex: 0,
+    authSource: "bg_ai_db",
     isReadOnly: true,
   });
 
@@ -122,7 +123,7 @@ export default function AddConnectionModal({
       defaultUser = "sa";
       defaultDb = "master";
     } else if (type === "mongodb") {
-      defaultDb = "test";
+      defaultDb = "bg_ai_db";
     } else if (type === "redis") {
       defaultPort = "6379";
       defaultDb = "0";
@@ -143,6 +144,7 @@ export default function AddConnectionModal({
       collectionName: "",
       tableName: "",
       dbIndex: 0,
+      authSource: type === "mongodb" ? (defaultDb || "bg_ai_db") : "admin",
       isReadOnly: true,
     });
   };
@@ -283,6 +285,7 @@ export default function AddConnectionModal({
           username: formData.username.trim(),
           password: formData.password,
           ssl: formData.ssl,
+          auth_source: formData.authSource || formData.database || "bg_ai_db",
         },
       });
 
@@ -322,6 +325,7 @@ export default function AddConnectionModal({
           password: formData.password,
           ssl: formData.ssl,
           file_path: formData.filePath.trim(),
+          auth_source: formData.authSource || formData.database || "bg_ai_db",
           db: formData.dbIndex,
           api_key: formData.apiKey ? formData.apiKey.trim() : undefined,
           collection_name: formData.collectionName.trim() || undefined,
@@ -889,6 +893,23 @@ export default function AddConnectionModal({
                         />
                       </div>
                     </div>
+
+                    {getConnType(selectedConnector) === "mongodb" && (
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-300 mb-1">
+                          Auth Source Database (authSource)
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.authSource}
+                          onChange={(e) =>
+                            setFormData({ ...formData, authSource: e.target.value })
+                          }
+                          placeholder="bg_ai_db"
+                          className="w-full px-3 py-2 bg-[#141418] border border-white/[0.08] focus:border-violet-500/50 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
 
                     <div className="flex items-center gap-2 pt-1">
                       <input

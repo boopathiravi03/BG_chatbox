@@ -270,7 +270,7 @@ export default function ConnectDatabaseModal({
       defaultUser = "sa";
       defaultDb = "master";
     } else if (selectedType === "mongodb") {
-      defaultDb = "test";
+      defaultDb = "bg_ai_db";
     }
 
     setForm((prev) => ({
@@ -279,6 +279,7 @@ export default function ConnectDatabaseModal({
       port: defaultPortStr,
       username: defaultUser,
       database: defaultDb,
+      authSource: selectedType === "mongodb" ? (defaultDb || "bg_ai_db") : "admin",
     }));
   }, [selectedType, catalog]);
 
@@ -409,7 +410,7 @@ export default function ConnectDatabaseModal({
         file_path: form.sqlitePath.trim(),
         delimiter: form.delimiter,
         driver: form.driver,
-        auth_source: form.authSource,
+        auth_source: form.authSource || form.database || "bg_ai_db",
         connection_string: form.connectionString.trim() || undefined,
         db: form.dbIndex,
         api_key: form.apiKey.trim() || undefined,
@@ -1161,7 +1162,7 @@ export default function ConnectDatabaseModal({
                       )}
 
                       {!form.connectionString && (
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           <div>
                             <label className="block text-xs font-semibold text-zinc-300 mb-1">
                               Database Name
@@ -1170,7 +1171,19 @@ export default function ConnectDatabaseModal({
                               type="text"
                               value={form.database}
                               onChange={(e) => updateField("database", e.target.value)}
-                              placeholder="admin or test"
+                              placeholder="bg_ai_db"
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Auth Source
+                            </label>
+                            <input
+                              type="text"
+                              value={form.authSource}
+                              onChange={(e) => updateField("authSource", e.target.value)}
+                              placeholder="bg_ai_db"
                               className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
                             />
                           </div>
@@ -1182,6 +1195,7 @@ export default function ConnectDatabaseModal({
                               type="text"
                               value={form.username}
                               onChange={(e) => updateField("username", e.target.value)}
+                              placeholder="db user"
                               className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
                             />
                           </div>
@@ -1194,6 +1208,7 @@ export default function ConnectDatabaseModal({
                                 type={showPassword ? "text" : "password"}
                                 value={form.password}
                                 onChange={(e) => updateField("password", e.target.value)}
+                                placeholder="••••••••"
                                 className="w-full pl-3 pr-8 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
                               />
                               <button
