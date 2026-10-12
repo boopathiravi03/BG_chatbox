@@ -23,6 +23,7 @@ import { useTheme } from "../../context/ThemeContext";
 
 export type WorkspaceTab =
   | "overview"
+  | "databases"
   | "explorer"
   | "analytics"
   | "forecasting"
@@ -41,14 +42,21 @@ interface WorkspaceSidebarProps {
   onToggleCollapse: () => void;
   dbConnected: boolean;
   dbType: string | null;
+  connectionsCount?: number;
   onConnectDatabase: () => void;
   onDisconnect: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
 
-const navItems: { id: WorkspaceTab; label: string; icon: React.ElementType; badge?: string }[] = [
+const getNavItems = (connectionsCount?: number): { id: WorkspaceTab; label: string; icon: React.ElementType; badge?: string }[] => [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
+  {
+    id: "databases",
+    label: "Data Sources",
+    icon: Database,
+    badge: connectionsCount ? String(connectionsCount) : undefined,
+  },
   { id: "explorer", label: "Data Explorer", icon: Search },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "forecasting", label: "Forecasting", icon: TrendingUp },
@@ -68,6 +76,7 @@ export default function WorkspaceSidebar({
   onToggleCollapse,
   dbConnected,
   dbType,
+  connectionsCount,
   onConnectDatabase,
   onDisconnect,
   mobileOpen,
@@ -83,6 +92,8 @@ export default function WorkspaceSidebar({
       : dbType === "sqlite"
       ? "SQLite"
       : null;
+
+  const navItems = getNavItems(connectionsCount);
 
   const sidebarContent = (
     <div className="flex flex-col h-full bg-[#0d0d11] border-r border-white/[0.08] text-zinc-300 select-none">

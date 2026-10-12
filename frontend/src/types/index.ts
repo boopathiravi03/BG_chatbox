@@ -1817,6 +1817,80 @@ export interface ComplianceReportItem {
   generated_at: string;
 }
 
+// ── BG AI 2.0: Multi-Database Types ──────────────────────────────────────────
+
+export type ConnectorCategory = "relational" | "document" | "vector" | "file";
+export type ConnectorStatus = "connected" | "disconnected" | "error";
+
+export interface ConnectorCatalogItem {
+  id: string;
+  name: string;
+  connector_type?: string;
+  display_name?: string;
+  category: ConnectorCategory;
+  description: string;
+  default_port: number | null;
+  badge: string;
+  status: "ready" | "preview" | "planned";
+  fields: string[];
+}
+
+export interface DatabaseConnectionItem {
+  connection_id: string;
+  name: string;
+  connector_type: string;
+  category: ConnectorCategory;
+  is_read_only: boolean;
+  status: ConnectorStatus;
+  created_at: string;
+  last_connected_at: string | null;
+  last_error: string | null;
+  is_active?: boolean;
+  config: Record<string, any>;
+  stats?: {
+    tables?: number;
+    rows?: number;
+    columns?: number;
+    collections?: number;
+    documents?: number;
+    total_points?: number;
+    size?: string;
+  };
+  schema?: Record<string, any>;
+}
+
+export interface CrossDatabaseSubResultItem {
+  source_id: string;
+  source_name: string;
+  connector_type: string;
+  query_text: string;
+  success: boolean;
+  columns: string[];
+  rows: Record<string, any>[];
+  rows_returned: number;
+  execution_time_ms: number;
+  error?: string | null;
+}
+
+export interface CrossDatabaseResponseItem {
+  intent: string;
+  sources_used: DatabaseConnectionItem[];
+  sub_results: CrossDatabaseSubResultItem[];
+  combined_result: {
+    columns: string[];
+    rows: Record<string, any>[];
+    rows_returned: number;
+    join_key?: string;
+    source?: string;
+  } | null;
+  explanation: string;
+  combination_strategy?: string | null;
+  chart?: any;
+  requires_disambiguation?: boolean;
+  disambiguation_options?: { source_id: string; name: string; type: string }[];
+  error?: string | null;
+}
+
 
 
 

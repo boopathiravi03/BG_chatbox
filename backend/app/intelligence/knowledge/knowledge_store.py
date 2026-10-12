@@ -192,10 +192,10 @@ def save_entity(entity: BusinessEntity, db_path: Optional[str] = None) -> Busine
         try:
             existing = session.query(EntityRecord).filter(
                 EntityRecord.entity_id == entity.entity_id,
-                EntityRecord.user_id == entity.user_id,
             ).first()
 
             if existing:
+                existing.user_id = entity.user_id
                 existing.name = entity.name
                 existing.plural_name = entity.plural_name
                 existing.table_name = entity.table_name
@@ -308,7 +308,6 @@ def save_rule(rule: BusinessRule, db_path: Optional[str] = None) -> BusinessRule
         try:
             existing = session.query(RuleRecord).filter(
                 RuleRecord.rule_id == rule.rule_id,
-                RuleRecord.user_id == rule.user_id,
             ).first()
 
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -318,6 +317,7 @@ def save_rule(rule: BusinessRule, db_path: Optional[str] = None) -> BusinessRule
                     version_id=f"ver_{rule.rule_id}_{existing.version}",
                     user_id=rule.user_id,
                     database_identity=rule.database_identity,
+                
                     item_id=rule.rule_id,
                     item_type="RULE",
                     version=existing.version,
@@ -332,6 +332,7 @@ def save_rule(rule: BusinessRule, db_path: Optional[str] = None) -> BusinessRule
                 )
                 session.add(ver_rec)
 
+                existing.user_id = rule.user_id
                 existing.name = rule.name
                 existing.description = rule.description
                 existing.scope = rule.scope
@@ -450,7 +451,6 @@ def save_metric(metric: BusinessMetric, db_path: Optional[str] = None) -> Busine
         try:
             existing = session.query(MetricRecord).filter(
                 MetricRecord.metric_id == metric.metric_id,
-                MetricRecord.user_id == metric.user_id,
             ).first()
 
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -474,6 +474,7 @@ def save_metric(metric: BusinessMetric, db_path: Optional[str] = None) -> Busine
                 )
                 session.add(ver_rec)
 
+                existing.user_id = metric.user_id
                 existing.name = metric.name
                 existing.description = metric.description
                 existing.table_name = metric.table_name

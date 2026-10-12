@@ -10,9 +10,13 @@ import {
 } from "lucide-react";
 import { getSchema } from "../../../services/api";
 
+import type { DatabaseConnectionItem } from "../../../types";
+
 interface DataExplorerViewProps {
   dbConnected: boolean;
-  onOpenSqlLabWithTable?: (tableName: string) => void;
+  connections?: DatabaseConnectionItem[];
+  activeConnectionId?: string | null;
+  onOpenSqlLabWithTable?: (tableName: string, connectionId?: string) => void;
   onConnectDatabase?: () => void;
 }
 
@@ -121,9 +125,14 @@ function parseColumnInfo(
 
 export default function DataExplorerView({
   dbConnected,
+  connections = [],
+  activeConnectionId,
   onOpenSqlLabWithTable,
   onConnectDatabase,
 }: DataExplorerViewProps) {
+  const [selectedConnId, setSelectedConnId] = useState<string | null>(
+    activeConnectionId || connections[0]?.connection_id || null
+  );
   const [schema, setSchema] = useState<Record<string, Record<string, ColumnDefinition>>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -131,7 +140,15 @@ export default function DataExplorerView({
   const [activeTab, setActiveTab] = useState<"columns" | "preview">("columns");
 
   useEffect(() => {
-    if (!dbConnected) {
+    if (activeConnectionId) {
+      setSelectedConnId(activeConnectionId);
+    } else if (connections.length > 0 && !selectedConnId) {
+      setSelectedConnId(connections[0].connection_id);
+    }
+  }, [activeConnectionId, connections]);
+
+  useEffect(() => {
+    if (!dbConnected && connections.length === 0) {
       setSchema({});
       setSelectedTable(null);
       setLoading(false);
@@ -143,7 +160,7 @@ export default function DataExplorerView({
     const fetchSchema = async () => {
       setLoading(true);
       try {
-        const data = await getSchema();
+        const data = await getSchema(selectedConnId || undefined);
         if (!isMounted) return;
         if (data && typeof data === "object" && !data.error && data.status !== "error") {
           setSchema(data);
@@ -156,7 +173,12 @@ export default function DataExplorerView({
           );
           if (tableNames.length > 0) {
             setSelectedTable(tableNames[0]);
+          } else {
+            setSelectedTable(null);
           }
+        } else {
+          setSchema({});
+          setSelectedTable(null);
         }
       } catch (err) {
         if (isMounted) {
@@ -174,7 +196,7 @@ export default function DataExplorerView({
     return () => {
       isMounted = false;
     };
-  }, [dbConnected]);
+  }, [dbConnected, selectedConnId]);
 
   if (!dbConnected) {
     return (
@@ -226,6 +248,26 @@ export default function DataExplorerView({
     <div className="h-full flex flex-col md:flex-row overflow-hidden bg-[#09090b]">
       {/* Left Tables Sidebar */}
       <div className="w-full md:w-64 lg:w-72 border-b md:border-b-0 md:border-r border-white/[0.08] bg-[#0d0d11] flex flex-col shrink-0">
+        {/* Source selector dropdown if multiple connections exist */}
+        {connections.length > 1 && (
+          <div className="p-3 border-b border-white/[0.06] bg-[#141418]/60">
+            <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">
+              Select Data Source
+            </label>
+            <select
+              value={selectedConnId || ""}
+              onChange={(e) => setSelectedConnId(e.target.value)}
+              className="w-full bg-[#0d0d12] border border-white/[0.08] rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-violet-500/50 cursor-pointer"
+            >
+              {connections.map((c) => (
+                <option key={c.connection_id} value={c.connection_id}>
+                  {c.name} ({c.connector_type})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="p-3.5 border-b border-white/[0.06]">
           <div className="relative">
             <Search
@@ -237,7 +279,7 @@ export default function DataExplorerView({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search tables..."
-              className="w-full bg-[#141418] border border-white/[0.08] rounded-xl pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-indigo-500/50"
+              className="w-full bg-[#141418] border border-white/[0.08] rounded-xl pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-500/50"
             />
           </div>
         </div>
@@ -310,8 +352,8 @@ export default function DataExplorerView({
 
               {onOpenSqlLabWithTable && (
                 <button
-                  onClick={() => onOpenSqlLabWithTable(selectedTable)}
-                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+                  onClick={() => onOpenSqlLabWithTable(selectedTable, selectedConnId || undefined)}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-md shadow-violet-600/20 transition-all cursor-pointer"
                 >
                   <Terminal size={14} />
                   <span>Query in SQL Lab</span>

@@ -1,21 +1,13 @@
 """
 backend/app/database/connection_context.py
 
-Phase 7: Per-user database context registry.
+Phase 7 & BG AI 2.0: Per-user database context registry and multi-connection bridge.
 
-Replaces the global engine pattern with user-scoped DatabaseContext objects.
+Replaces the global engine pattern with user-scoped DatabaseContext objects and
+integrates with the centralized ConnectionRegistry.
 Uses Python contextvars.ContextVar so existing get_engine() / get_current_db_type()
 calls transparently return the correct engine for the current request without
-requiring changes to every call site.
-
-Architecture:
-  _context_registry: dict[user_id → DatabaseContext]
-  _request_engine:   ContextVar  ← set per-request by set_user_context()
-  _request_db_type:  ContextVar  ← set per-request by set_user_context()
-
-Every FastAPI endpoint calls set_user_context(user_id) after authentication.
-All downstream code (scanner, CRUD, agents) calls get_engine() / get_current_db_type()
-which reads from the ContextVar — isolated per async task/thread.
+requiring changes to existing call sites.
 """
 from __future__ import annotations
 
@@ -23,21 +15,21 @@ import threading
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import create_engine, URL, text
 from sqlalchemy.engine import Engine
 
 # ── ContextVars (per-request isolation) ───────────────────────────────────────
-# These replace the global `engine` and `current_db_type` module variables.
 _request_engine: ContextVar[Optional[Engine]] = ContextVar("_request_engine", default=None)
 _request_db_type: ContextVar[str] = ContextVar("_request_db_type", default="none")
 _request_user_id: ContextVar[Optional[str]] = ContextVar("_request_user_id", default=None)
 _request_context_id: ContextVar[Optional[str]] = ContextVar("_request_context_id", default=None)
+_request_connection_id: ContextVar[Optional[str]] = ContextVar("_request_connection_id", default=None)
 
 
-# ── Per-user context dataclass ────────────────────────────────────────────────
+# ── Per-user context dataclass (Phase 7 backward-compatibility) ───────────────
 @dataclass
 class DatabaseContext:
     """Holds the per-user engine + metadata. Never stores raw password."""
@@ -46,11 +38,11 @@ class DatabaseContext:
     database_type: str                  # sqlite | mysql | postgres | none
     database_identity: str              # sanitized URL (no password)
     engine: Optional[Engine]
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    last_used_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    last_used_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def touch(self):
-        self.last_used_at = datetime.utcnow().isoformat()
+        self.last_used_at = datetime.now(timezone.utc).isoformat()
 
     def to_info(self) -> dict:
         """Serializable info — NEVER includes password."""
@@ -81,7 +73,7 @@ def _make_empty_context(user_id: str) -> DatabaseContext:
 
 
 def get_user_context(user_id: str) -> DatabaseContext:
-    """Return the user's DatabaseContext, creating an empty one if absent."""
+    """Return the user's active DatabaseContext, creating an empty one if absent."""
     with _registry_lock:
         if user_id not in _registry:
             _registry[user_id] = _make_empty_context(user_id)
@@ -93,21 +85,15 @@ def set_user_engine(
     engine: Engine,
     database_type: str,
     database_identity: str,
+    connection_id: Optional[str] = None,
 ) -> DatabaseContext:
     """
-    Register/replace the user's engine.
-    Called during connect/upload. Disposes the old engine safely.
+    Register/replace the user's active engine.
     """
     with _registry_lock:
-        old = _registry.get(user_id)
-        if old and old.engine is not None:
-            try:
-                old.engine.dispose()
-            except Exception:
-                pass
-
+        cid = connection_id or str(uuid.uuid4())
         ctx = DatabaseContext(
-            context_id=str(uuid.uuid4()),
+            context_id=cid,
             user_id=user_id,
             database_type=database_type,
             database_identity=database_identity,
@@ -117,11 +103,35 @@ def set_user_engine(
         return ctx
 
 
-def clear_user_context(user_id: str) -> None:
+def clear_user_context(user_id: str, connection_id: Optional[str] = None) -> None:
     """
-    Disconnect and remove a user's context. Called on /disconnect.
-    Does NOT affect any other user's context.
+    Disconnect a specific connection or all user connections.
     """
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        if connection_id:
+            reg.disconnect_connector(user_id, connection_id)
+            reg.remove_connector(user_id, connection_id)
+            # If removing active, update _registry with newly active or empty
+            active = reg.get_active_connector(user_id)
+            with _registry_lock:
+                if active and hasattr(active, "engine") and active.engine is not None:
+                    _registry[user_id] = DatabaseContext(
+                        context_id=active.connection_id,
+                        user_id=user_id,
+                        database_type=active.connector_type,
+                        database_identity=active.name,
+                        engine=active.engine,
+                    )
+                else:
+                    _registry.pop(user_id, None)
+            return
+        else:
+            reg.disconnect_all(user_id)
+    except Exception:
+        pass
+
     with _registry_lock:
         ctx = _registry.pop(user_id, None)
         if ctx and ctx.engine is not None:
@@ -132,20 +142,62 @@ def clear_user_context(user_id: str) -> None:
 
 
 # ── Request-scoped context activation ────────────────────────────────────────
-def set_user_context_for_request(user_id: str) -> DatabaseContext:
+def set_user_context_for_request(
+    user_id: str, connection_id: Optional[str] = None
+) -> DatabaseContext:
     """
     Called at the top of every authenticated endpoint handler.
-    Activates the user's engine in the current async task's ContextVar,
+    Activates the user's selected/active engine in the current async task's ContextVar,
     so downstream get_engine() / get_current_db_type() calls return
     the correct isolated engine without needing modification.
-
-    Returns the user's DatabaseContext.
     """
-    ctx = get_user_context(user_id)
-    ctx.touch()
+    engine: Optional[Engine] = None
+    db_type = "none"
+    ctx_id = None
 
-    _request_engine.set(ctx.engine)
-    _request_db_type.set(ctx.database_type)
+    # Check Multi-Connection Registry first
+    try:
+        from app.connectors.registry import get_connection_registry
+        from app.connectors.relational import RelationalConnector
+        reg = get_connection_registry()
+        connector = None
+        if connection_id:
+            reg.set_active_connector(user_id, connection_id)
+            connector = reg.get_connector(user_id, connection_id)
+        if not connector:
+            connector = reg.get_active_connector(user_id)
+
+        if connector:
+            ctx_id = connector.connection_id
+            db_type = connector.connector_type
+            if isinstance(connector, RelationalConnector):
+                engine = connector.engine
+
+            _request_connection_id.set(connector.connection_id)
+    except Exception:
+        pass
+
+    # If registry didn't have an engine, fall back to legacy user context
+    if engine is None and db_type == "none":
+        ctx = get_user_context(user_id)
+        ctx.touch()
+        engine = ctx.engine
+        db_type = ctx.database_type
+        ctx_id = ctx.context_id
+        _request_connection_id.set(ctx.context_id)
+    else:
+        ctx = DatabaseContext(
+            context_id=ctx_id or str(uuid.uuid4()),
+            user_id=user_id,
+            database_type=db_type,
+            database_identity=db_type,
+            engine=engine,
+        )
+        with _registry_lock:
+            _registry[user_id] = ctx
+
+    _request_engine.set(engine)
+    _request_db_type.set(db_type)
     _request_user_id.set(user_id)
     _request_context_id.set(ctx.context_id)
 
@@ -170,53 +222,101 @@ def get_request_context_id() -> Optional[str]:
     return _request_context_id.get()
 
 
-# ── Connect helpers ───────────────────────────────────────────────────────────
-def connect_sqlite_for_user(user_id: str, path: str) -> DatabaseContext:
-    engine = create_engine(
-        f"sqlite:///{path}",
-        connect_args={"check_same_thread": False},
-        pool_pre_ping=True,
+def get_request_connection_id() -> Optional[str]:
+    return _request_connection_id.get()
+
+
+# ── Connect helpers (Bridge to Multi-Connection Registry) ─────────────────────
+def connect_sqlite_for_user(
+    user_id: str, path: str, name: Optional[str] = None
+) -> DatabaseContext:
+    from app.connectors.registry import get_connection_registry
+    from app.connectors.relational import SQLiteConnector
+    reg = get_connection_registry()
+
+    conn_id = f"conn_sqlite_{uuid.uuid4().hex[:8]}"
+    disp_name = name or (f"SQLite: {Path(path).name}" if path != ":memory:" else "In-Memory SQLite")
+    connector = SQLiteConnector(
+        connection_id=conn_id,
+        name=disp_name,
+        database_path=path,
+        user_id=user_id,
     )
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
+    if not connector.connect():
+        raise RuntimeError(connector.last_error or "Failed to connect to SQLite")
+
+    reg.register_connector(connector)
+    reg.set_active_connector(user_id, conn_id)
 
     identity = f"sqlite:///{path}"
-    return set_user_engine(user_id, engine, "sqlite", identity)
+    return set_user_engine(user_id, connector.engine, "sqlite", identity, connection_id=conn_id)
 
 
 def connect_mysql_for_user(
-    user_id: str, host: str, port: int, database: str, username: str, password: str
+    user_id: str,
+    host: str,
+    port: int,
+    database: str,
+    username: str,
+    password: str,
+    name: Optional[str] = None,
 ) -> DatabaseContext:
-    mysql_url = URL.create(
-        drivername="mysql+pymysql",
+    from app.connectors.registry import get_connection_registry
+    from app.connectors.relational import MySQLConnector
+    reg = get_connection_registry()
+
+    conn_id = f"conn_mysql_{uuid.uuid4().hex[:8]}"
+    disp_name = name or f"MySQL: {database} ({host})"
+    connector = MySQLConnector(
+        connection_id=conn_id,
+        name=disp_name,
+        host=host,
+        port=port,
+        database=database,
         username=username,
         password=password,
-        host=host,
-        port=int(port),
-        database=database,
+        user_id=user_id,
     )
-    engine = create_engine(mysql_url, pool_pre_ping=True, pool_recycle=1800)
-    with engine.connect() as conn:
-        conn.exec_driver_sql("SELECT 1")
+    if not connector.connect():
+        raise RuntimeError(connector.last_error or "Failed to connect to MySQL")
 
-    identity = f"mysql://{username}@{host}:{port}/{database}"  # no password
-    return set_user_engine(user_id, engine, "mysql", identity)
+    reg.register_connector(connector)
+    reg.set_active_connector(user_id, conn_id)
+
+    identity = f"mysql://{username}@{host}:{port}/{database}"
+    return set_user_engine(user_id, connector.engine, "mysql", identity, connection_id=conn_id)
 
 
 def connect_postgres_for_user(
-    user_id: str, host: str, port: int, database: str, username: str, password: str
+    user_id: str,
+    host: str,
+    port: int,
+    database: str,
+    username: str,
+    password: str,
+    name: Optional[str] = None,
 ) -> DatabaseContext:
-    pg_url = URL.create(
-        drivername="postgresql+psycopg2",
+    from app.connectors.registry import get_connection_registry
+    from app.connectors.relational import PostgreSQLConnector
+    reg = get_connection_registry()
+
+    conn_id = f"conn_pg_{uuid.uuid4().hex[:8]}"
+    disp_name = name or f"PostgreSQL: {database} ({host})"
+    connector = PostgreSQLConnector(
+        connection_id=conn_id,
+        name=disp_name,
+        host=host,
+        port=port,
+        database=database,
         username=username,
         password=password,
-        host=host,
-        port=int(port),
-        database=database,
+        user_id=user_id,
     )
-    engine = create_engine(pg_url, pool_pre_ping=True, pool_recycle=1800)
-    with engine.connect() as conn:
-        conn.exec_driver_sql("SELECT 1")
+    if not connector.connect():
+        raise RuntimeError(connector.last_error or "Failed to connect to PostgreSQL")
 
-    identity = f"postgresql://{username}@{host}:{port}/{database}"  # no password
-    return set_user_engine(user_id, engine, "postgres", identity)
+    reg.register_connector(connector)
+    reg.set_active_connector(user_id, conn_id)
+
+    identity = f"postgresql://{username}@{host}:{port}/{database}"
+    return set_user_engine(user_id, connector.engine, "postgres", identity, connection_id=conn_id)

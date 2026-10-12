@@ -1,4 +1,5 @@
 import re
+from typing import Optional, Dict, Any, List
 from sqlalchemy import text
 
 from app.database.database_manager import get_engine, get_current_db_type
@@ -158,7 +159,46 @@ def validate_sql(sql: str):
     }
 
 
-def execute_query(sql: str):
+def execute_query(sql: str, connection_id: Optional[str] = None):
+    # Check if a non-SQL or specific connector is targeted
+    try:
+        from app.database.connection_context import get_request_user_id
+        from app.connectors.registry import get_connection_registry
+        uid = get_request_user_id()
+        if uid:
+            reg = get_connection_registry()
+            target_conn = reg.get_connector(uid, connection_id) if connection_id else reg.get_active_connector(uid)
+            if target_conn:
+                if target_conn.category != "relational":
+                    # Non-relational (MongoDB, Vector, etc.) handles its own query execution directly
+                    res = target_conn.execute_query(sql)
+                    return {
+                        "success": res.success,
+                        "columns": res.columns,
+                        "rows": res.rows,
+                        "rows_returned": res.rows_returned,
+                        "operation": "query",
+                        "database": target_conn.connector_type,
+                        "affected_rows": res.affected_rows or 0,
+                        "error": res.error,
+                        "source_id": target_conn.connection_id,
+                        "source_name": target_conn.name,
+                    }
+                elif target_conn.is_read_only:
+                    # Enforce connector read-only check
+                    first_w = _extract_first_operation(sql)
+                    if first_w in WRITE_OPERATIONS:
+                        return {
+                            "success": False,
+                            "columns": [],
+                            "rows": [],
+                            "error": f"Connection '{target_conn.name}' is configured as READ-ONLY. Write operations are blocked.",
+                            "operation": first_w,
+                            "database": target_conn.connector_type,
+                        }
+    except Exception:
+        pass
+
     validation = validate_sql(sql)
 
     if not validation["allowed"]:

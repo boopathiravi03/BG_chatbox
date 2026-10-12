@@ -316,13 +316,23 @@ export default function OverviewView({
           </div>
         </div>
 
-        <button
-          onClick={onRunAnalysis}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all cursor-pointer shrink-0"
-        >
-          <Sparkles size={14} />
-          <span>Analyze Business with AI</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => onTabChange("databases")}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-300 hover:text-white text-xs font-medium transition-all cursor-pointer"
+          >
+            <Database size={13} className="text-violet-400" />
+            <span>Manage Sources</span>
+          </button>
+
+          <button
+            onClick={onRunAnalysis}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-md shadow-violet-600/20 transition-all cursor-pointer shrink-0"
+          >
+            <Sparkles size={14} />
+            <span>Analyze Business with AI</span>
+          </button>
+        </div>
       </div>
 
       {/* KPI Cards Grid */}

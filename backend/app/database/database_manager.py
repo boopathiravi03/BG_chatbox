@@ -228,7 +228,14 @@ def get_engine():
 # ============================================================
 
 def is_database_connected():
-    return engine is not None
+    active = get_engine()
+    if active is not None:
+        return True
+    try:
+        active_type = get_current_db_type()
+        return active_type not in ("none", "", None)
+    except Exception:
+        return False
 
 
 # ============================================================

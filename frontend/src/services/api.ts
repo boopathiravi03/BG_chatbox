@@ -25,6 +25,9 @@ import type {
   ProposeActionPayload,
   ConfirmActionPayload,
   ExecuteActionPayload,
+  ConnectorCatalogItem,
+  DatabaseConnectionItem,
+  CrossDatabaseResponseItem,
 } from "../types";
 
 export const API_BASE = (
@@ -111,7 +114,9 @@ export async function sendMessage(
   message: string,
   sessionId: string,
   inputValues?: Record<string, string>,
-  pendingInsert?: boolean
+  pendingInsert?: boolean,
+  connectionId?: string,
+  selectedSourceIds?: string[]
 ) {
   return apiFetch("/chat", {
     method: "POST",
@@ -120,6 +125,8 @@ export async function sendMessage(
       session_id: sessionId,
       input_values: inputValues,
       pending_insert: pendingInsert,
+      connection_id: connectionId,
+      selected_source_ids: selectedSourceIds,
     }),
   });
 }
@@ -144,14 +151,15 @@ export async function sendInsert(
   });
 }
 
-export async function getSchema() {
-  return apiFetch("/schema");
+export async function getSchema(connectionId?: string) {
+  const q = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/schema${q}`);
 }
 
-export async function runQuery(query: string) {
+export async function runQuery(query: string, connectionId?: string) {
   return apiFetch("/query", {
     method: "POST",
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, connection_id: connectionId }),
   });
 }
 
@@ -249,8 +257,9 @@ export async function connectDatabase(data: DatabaseConnectionRequest) {
   });
 }
 
-export async function disconnectDatabase() {
-  return apiFetch("/disconnect", {
+export async function disconnectDatabase(connectionId?: string) {
+  const q = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/disconnect${q}`, {
     method: "POST",
   });
 }
@@ -1305,6 +1314,212 @@ export async function verifyAuditChain(): Promise<{
     method: "POST",
   });
 }
+
+// ── BG AI 2.0: Multi-Database API Functions ──────────────────────────────────
+
+export async function getConnectorCatalog(): Promise<{
+  status: string;
+  catalog: ConnectorCatalogItem[];
+}> {
+  return apiFetch<{ status: string; catalog: ConnectorCatalogItem[] }>(
+    "/connections/catalog"
+  );
+}
+
+export async function listDatabaseConnections(): Promise<{
+  status: string;
+  connections: DatabaseConnectionItem[];
+  total_connections: number;
+  active_connection_id: string | null;
+}> {
+  return apiFetch<{
+    status: string;
+    connections: DatabaseConnectionItem[];
+    total_connections: number;
+    active_connection_id: string | null;
+  }>("/connections");
+}
+
+export async function createDatabaseConnection(
+  payload: Record<string, any>
+): Promise<{
+  status: string;
+  message?: string;
+  connection?: DatabaseConnectionItem;
+}> {
+  return apiFetch<{
+    status: string;
+    message?: string;
+    connection?: DatabaseConnectionItem;
+  }>("/connections", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadFileSource(
+  file: File,
+  name?: string,
+  isReadOnly: boolean = true
+): Promise<{
+  status: string;
+  message?: string;
+  connection?: DatabaseConnectionItem;
+}> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (name) formData.append("name", name);
+  formData.append("is_read_only", String(isReadOnly));
+
+  return apiFetch<{
+    status: string;
+    message?: string;
+    connection?: DatabaseConnectionItem;
+  }>("/connections/upload-file", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function getDatabaseConnectionDetails(
+  connectionId: string
+): Promise<{
+  status: string;
+  connection?: DatabaseConnectionItem;
+}> {
+  return apiFetch<{
+    status: string;
+    connection?: DatabaseConnectionItem;
+  }>(`/connections/${encodeURIComponent(connectionId)}`);
+}
+
+export async function testDatabaseConnection(
+  connectionId: string
+): Promise<{
+  status: string;
+  test: {
+    connected: boolean;
+    latency_ms?: number;
+    error?: string;
+    message?: string;
+  };
+}> {
+  return apiFetch<{
+    status: string;
+    test: {
+      connected: boolean;
+      latency_ms?: number;
+      error?: string;
+      message?: string;
+    };
+  }>(`/connections/${encodeURIComponent(connectionId)}/test`, {
+    method: "POST",
+  });
+}
+
+export async function reconnectDatabaseConnection(
+  connectionId: string
+): Promise<{
+  status: string;
+  message?: string;
+  connection?: DatabaseConnectionItem;
+}> {
+  return apiFetch<{
+    status: string;
+    message?: string;
+    connection?: DatabaseConnectionItem;
+  }>(`/connections/${encodeURIComponent(connectionId)}/reconnect`, {
+    method: "POST",
+  });
+}
+
+export async function updateConnectionSettings(
+  connectionId: string,
+  settings: { name?: string; is_read_only?: boolean }
+): Promise<{
+  status: string;
+  connection?: DatabaseConnectionItem;
+}> {
+  return apiFetch<{
+    status: string;
+    connection?: DatabaseConnectionItem;
+  }>(`/connections/${encodeURIComponent(connectionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(settings),
+  });
+}
+
+export async function deleteDatabaseConnection(
+  connectionId: string
+): Promise<{
+  status: string;
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    message?: string;
+  }>(`/connections/${encodeURIComponent(connectionId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function setActiveDatabaseConnection(
+  connectionId: string
+): Promise<{
+  status: string;
+  active_connection_id?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    active_connection_id?: string;
+  }>(`/connections/${encodeURIComponent(connectionId)}/active`, {
+    method: "POST",
+  });
+}
+
+export async function disconnectAllDatabaseConnections(): Promise<{
+  status: string;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; message?: string }>(
+    "/connections/disconnect-all",
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function executeConnectionQuery(
+  connectionId: string,
+  query: string
+): Promise<any> {
+  return apiFetch(`/connections/${encodeURIComponent(connectionId)}/query`, {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+}
+
+export async function executeCrossQuery(
+  message: string,
+  selectedSourceIds?: string[]
+): Promise<{
+  status: string;
+  result?: CrossDatabaseResponseItem;
+  error?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    result?: CrossDatabaseResponseItem;
+    error?: string;
+  }>("/cross-query", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      selected_source_ids: selectedSourceIds,
+    }),
+  });
+}
+
 
 
 

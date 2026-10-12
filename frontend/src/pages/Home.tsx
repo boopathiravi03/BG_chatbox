@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import ChatArea from "../components/chat/ChatArea";
-import type { Message, ChatSession } from "../types/index";
+import type { Message, ChatSession, DatabaseConnectionItem } from "../types/index";
 import {
   sendMessage,
   confirmQuery,
@@ -9,6 +9,8 @@ import {
   getDatabaseInfo,
   getDatabaseType,
   getAuthToken,
+  listDatabaseConnections,
+  setActiveDatabaseConnection,
 } from "../services/api";
 
 import WorkspaceSidebar, {
@@ -41,6 +43,9 @@ const AnomalyCenterView = lazy(
 );
 const AgentCenterView = lazy(
   () => import("../components/workspace/views/AgentCenterView"),
+);
+const DatabaseConnectionsManager = lazy(
+  () => import("../components/workspace/database/DatabaseConnectionsManager"),
 );
 
 export default function Home() {
@@ -77,6 +82,8 @@ export default function Home() {
     rows?: number;
     size?: string;
   }>({});
+  const [connections, setConnections] = useState<DatabaseConnectionItem[]>([]);
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
   const [showDatabase, setShowDatabase] = useState(false);
 
   useEffect(() => {
@@ -112,6 +119,25 @@ export default function Home() {
     }
   }, [activeSessionId]);
 
+  const refreshConnections = async () => {
+    if (!getAuthToken()) {
+      setConnections([]);
+      setActiveConnectionId(null);
+      return;
+    }
+    try {
+      const data = await listDatabaseConnections();
+      const conns = data.connections || [];
+      setConnections(conns);
+      setActiveConnectionId(data.active_connection_id || null);
+      if (conns.length > 0) {
+        setDbConnected(true);
+      }
+    } catch {
+      // Keep current
+    }
+  };
+
   const refreshDbStatus = async () => {
     if (!getAuthToken()) {
       setDbConnected(false);
@@ -138,7 +164,18 @@ export default function Home() {
 
   useEffect(() => {
     refreshDbStatus();
+    refreshConnections();
   }, []);
+
+  const handleSelectActiveConnection = async (connectionId: string) => {
+    try {
+      await setActiveDatabaseConnection(connectionId);
+      setActiveConnectionId(connectionId);
+      await Promise.all([refreshDbStatus(), refreshConnections()]);
+    } catch (err) {
+      console.error("Failed to set active connection", err);
+    }
+  };
 
   const [sessionId] = useState(() => {
     let id = localStorage.getItem("bg_ai_session_id");
@@ -149,7 +186,7 @@ export default function Home() {
     return id;
   });
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, selectedSourceIds?: string[]) => {
     // If not currently in chat tab, switch to chat to show full conversation and results
     if (activeTab !== "chat") {
       setActiveTab("chat");
@@ -173,7 +210,14 @@ export default function Home() {
 
     try {
       setStatus("executing");
-      const data = await sendMessage(content, sessionId);
+      const data = await sendMessage(
+        content,
+        sessionId,
+        undefined,
+        false,
+        undefined,
+        selectedSourceIds
+      );
 
       const assistantMessage: Message = {
         role: "assistant",
@@ -456,6 +500,7 @@ export default function Home() {
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         dbConnected={dbConnected}
         dbType={dbType}
+        connectionsCount={connections.length}
         onConnectDatabase={() => {
           setConnectModalType("sqlite");
           setShowConnectModal(true);
@@ -474,6 +519,9 @@ export default function Home() {
           dbConnected={dbConnected}
           dbType={dbType}
           dbInfo={dbInfo}
+          connections={connections}
+          activeConnectionId={activeConnectionId}
+          onSelectActiveConnection={handleSelectActiveConnection}
           onConnectDatabase={() => {
             setConnectModalType("sqlite");
             setShowConnectModal(true);
@@ -481,6 +529,7 @@ export default function Home() {
           onDisconnect={() => setShowDisconnectModal(true)}
           onOpenAbout={() => setShowAbout(true)}
           onOpenDatabaseDetails={() => setShowDatabase(true)}
+          onNavigateTab={(tab) => setActiveTab(tab)}
         />
 
         {/* Viewport for Active Tab */}
@@ -501,9 +550,26 @@ export default function Home() {
             />
           )}
 
+          {activeTab === "databases" && (
+            <Suspense fallback={<div className="p-8 text-center text-zinc-400">Loading Data Sources...</div>}>
+              <DatabaseConnectionsManager
+                onConnectionsChanged={() => {
+                  refreshConnections();
+                  refreshDbStatus();
+                }}
+                onOpenSqlLabWithTable={(tbl, cid) => {
+                  setSqlLabInitialQuery(`SELECT * FROM ${tbl} LIMIT 10;`);
+                  setActiveTab("sqllab");
+                }}
+              />
+            </Suspense>
+          )}
+
           {activeTab === "explorer" && (
             <DataExplorerView
               dbConnected={dbConnected}
+              connections={connections}
+              activeConnectionId={activeConnectionId}
               onOpenSqlLabWithTable={handleOpenSqlLabWithTable}
               onConnectDatabase={() => {
                 setConnectModalType("sqlite");
@@ -581,6 +647,8 @@ export default function Home() {
           {activeTab === "sqllab" && (
             <SqlLabView
               dbConnected={dbConnected}
+              connections={connections}
+              activeConnectionId={activeConnectionId}
               initialQuery={sqlLabInitialQuery}
               onConnectDatabase={() => {
                 setConnectModalType("sqlite");
@@ -647,7 +715,12 @@ export default function Home() {
 
         {/* Global AI Command Bar (Rendered on non-chat views) */}
         {activeTab !== "chat" && (
-          <AICommandBar onSend={handleSend} loading={loading} />
+          <AICommandBar
+            onSend={handleSend}
+            connections={connections}
+            activeConnectionId={activeConnectionId}
+            loading={loading}
+          />
         )}
       </div>
 

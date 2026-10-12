@@ -5,7 +5,7 @@ import re
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, status
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -128,6 +128,8 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     input_values: dict | None = None
     pending_insert: bool = False
+    connection_id: str | None = None
+    selected_source_ids: list[str] | None = None
 
 
 class ConfirmQueryRequest(BaseModel):
@@ -141,6 +143,38 @@ class DatabaseConnection(BaseModel):
     database: str = ""
     username: str = ""
     password: str = ""
+    name: str | None = None
+
+
+class MultiConnectionRequest(BaseModel):
+    connector_type: str
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    database: str | None = None
+    username: str | None = None
+    password: str | None = None
+    file_path: str | None = None
+    delimiter: str | None = None
+    auth_source: str | None = None
+    api_key: str | None = None
+    tenant: str | None = None
+    driver: str | None = None
+    is_read_only: bool = False
+    set_as_active: bool = True
+
+
+class RenameConnectionRequest(BaseModel):
+    name: str
+
+
+class UpdatePermissionRequest(BaseModel):
+    is_read_only: bool
+
+
+class CrossQueryRequest(BaseModel):
+    message: str
+    selected_source_ids: list[str] | None = None
 
 
 class OptimizationRequest(BaseModel):
@@ -149,6 +183,7 @@ class OptimizationRequest(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str
+    connection_id: str | None = None
 
 
 class AgentRunRequest(BaseModel):
@@ -172,8 +207,8 @@ class ForecastRequest(BaseModel):
     aggregation: str = "SUM"
 
 
-def _activate(user: AuthenticatedUser):
-    set_user_context_for_request(user.user_id)
+def _activate(user: AuthenticatedUser, connection_id: str | None = None):
+    set_user_context_for_request(user.user_id, connection_id)
 
 
 # =============================================================================
@@ -244,8 +279,47 @@ def auth_me(user: AuthenticatedUser = Depends(get_current_user)):
 @app.post("/chat")
 @limiter.limit("60/minute")
 def chat(req: ChatRequest, request: Request, user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+    target_conn_id = req.connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
+        from app.connectors.registry import get_connection_registry
+        from app.intelligence.cross_db import CrossDatabaseEngine
+        reg = get_connection_registry()
+        user_conns = reg.list_connectors(user.user_id)
+
+        # Multi-source routing or explicit selection
+        should_cross = False
+        if req.selected_source_ids and len(req.selected_source_ids) > 1:
+            should_cross = True
+        elif len(user_conns) > 1 and any(w in req.message.lower() for w in ["compare", "across", "both", "all databases", "all sources", "federate"]):
+            should_cross = True
+        elif any(w in req.message.lower() for w in ["semantic", "semantically", "vector", "similar documents", "embeddings"]):
+            should_cross = True
+
+        if should_cross:
+            cross_res = CrossDatabaseEngine.process(
+                user_id=user.user_id,
+                message=req.message,
+                selected_source_ids=req.selected_source_ids,
+            )
+            return {
+                "generated_sql": cross_res.sub_results[0].query_text if cross_res.sub_results else "",
+                "result": cross_res.combined_result or {
+                    "success": not bool(cross_res.error),
+                    "columns": [],
+                    "rows": [],
+                    "rows_returned": 0,
+                    "error": cross_res.error,
+                },
+                "explanation": cross_res.explanation,
+                "sources_used": cross_res.sources_used,
+                "combination_strategy": cross_res.combination_strategy,
+                "requires_disambiguation": cross_res.requires_disambiguation,
+                "disambiguation_options": cross_res.disambiguation_options,
+                "chart": cross_res.chart,
+                "followups": [],
+            }
+
         return _run_agent(
             req.message,
             f"{user.user_id}:{req.session_id}",
@@ -366,9 +440,12 @@ def connect_database(
 
 
 @app.post("/disconnect")
-def disconnect(user: AuthenticatedUser = Depends(get_current_user)):
+def disconnect(
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
     try:
-        clear_user_context(user.user_id)
+        clear_user_context(user.user_id, connection_id=connection_id)
         cache_clear_user(user.user_id)
         clear_database_profile()
         clear_pending_insert()
@@ -393,17 +470,27 @@ def disconnect(user: AuthenticatedUser = Depends(get_current_user)):
 
 
 @app.get("/schema")
-def schema_endpoint(user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+def schema_endpoint(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
-        return get_schema()
+        return get_schema(target_conn_id)
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
 @app.get("/database-info")
-def database_info(user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+def database_info(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
         return get_database_info()
     except Exception as e:
@@ -420,8 +507,13 @@ def database_info(user: AuthenticatedUser = Depends(get_current_user)):
 
 
 @app.get("/database-type")
-def database_type(user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+def database_type(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
         eng = get_engine()
         db_t = get_current_db_type()
@@ -434,8 +526,13 @@ def database_type(user: AuthenticatedUser = Depends(get_current_user)):
 
 
 @app.get("/database-connection-info")
-def database_connection_info(user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+def database_connection_info(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
         return get_database_connection_info()
     except Exception as e:
@@ -445,11 +542,328 @@ def database_connection_info(user: AuthenticatedUser = Depends(get_current_user)
 @app.post("/query")
 @limiter.limit("30/minute")
 def run_query(request: Request, req: QueryRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+    target_conn_id = req.connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
-        return execute_query(req.query)
+        return execute_query(req.query, connection_id=target_conn_id)
     except Exception as e:
         return {"success": False, "columns": [], "rows": [], "error": str(e), "rows_returned": 0}
+
+
+# =============================================================================
+# MULTI-DATABASE CONNECTIONS API (BG AI 2.0)
+# =============================================================================
+
+@app.get("/connections/catalog")
+def get_catalog():
+    from app.connectors.registry import get_supported_connectors_catalog
+    return {"status": "success", "catalog": get_supported_connectors_catalog()}
+
+
+@app.get("/connections")
+def list_connections(user: AuthenticatedUser = Depends(get_current_user)):
+    _activate(user)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conns = reg.list_connectors(user.user_id)
+        active = reg.get_active_connector(user.user_id)
+        active_id = active.connection_id if active else None
+
+        results = []
+        for c in conns:
+            d = c.to_dict()
+            d["is_active"] = (c.connection_id == active_id)
+            results.append(d)
+
+        return {
+            "status": "success",
+            "connections": results,
+            "total_connections": len(results),
+            "active_connection_id": active_id,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "connections": []}
+
+
+@app.post("/connections")
+@limiter.limit("20/minute")
+def create_connection(
+    req: MultiConnectionRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+
+        cfg = req.dict(exclude_unset=True)
+        connector = reg.create_connector_from_config(user.user_id, cfg)
+        ok = connector.connect()
+
+        if not ok:
+            return {
+                "status": "error",
+                "message": connector.last_error or "Failed to connect to database.",
+                "connection": connector.to_dict(),
+            }
+
+        if req.set_as_active:
+            reg.set_active_connector(user.user_id, connector.connection_id)
+            _activate(user, connector.connection_id)
+            try:
+                refresh_database_profile()
+            except Exception:
+                pass
+
+        return {
+            "status": "success",
+            "message": f"Successfully connected to {connector.name}",
+            "connection": connector.to_dict(include_schema=True),
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/upload-file")
+@limiter.limit("10/minute")
+async def upload_file_source(
+    request: Request,
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    is_read_only: bool = Form(True),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        filename = Path(file.filename).name
+        ext = filename.split(".")[-1].lower() if "." in filename else ""
+
+        if ext not in ("csv", "tsv", "xlsx", "xls", "json"):
+            raise HTTPException(
+                status_code=400,
+                detail="Supported data file formats are: .csv, .tsv, .xlsx, .xls, .json",
+            )
+
+        upload_dir = Path(__file__).resolve().parents[2] / "database" / "files"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        target_path = upload_dir / f"{uuid.uuid4().hex[:8]}_{filename}"
+        contents = await file.read()
+        target_path.write_bytes(contents)
+
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+
+        connector_type = "csv" if ext in ("csv", "tsv") else ("excel" if ext in ("xlsx", "xls") else "json")
+        disp_name = name or f"File: {filename}"
+        delimiter = "\t" if ext == "tsv" else ","
+
+        cfg = {
+            "connector_type": connector_type,
+            "name": disp_name,
+            "file_path": str(target_path),
+            "delimiter": delimiter,
+            "is_read_only": is_read_only,
+        }
+
+        conn = reg.create_connector_from_config(user.user_id, cfg)
+        ok = conn.connect()
+        if not ok:
+            return {"status": "error", "message": conn.last_error or "Failed to load data file"}
+
+        reg.set_active_connector(user.user_id, conn.connection_id)
+        _activate(user, conn.connection_id)
+
+        return {
+            "status": "success",
+            "message": f"Data file '{filename}' loaded into SQL workspace successfully",
+            "connection": conn.to_dict(include_schema=True),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/connections/{connection_id}")
+def get_connection_details(
+    connection_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, connection_id)
+        if not conn:
+            raise HTTPException(status_code=404, detail="Connection not found")
+
+        active = reg.get_active_connector(user.user_id)
+        d = conn.to_dict(include_schema=True)
+        d["is_active"] = (active and active.connection_id == conn.connection_id)
+        return {"status": "success", "connection": d}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/{connection_id}/test")
+def test_connection_endpoint(
+    connection_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, connection_id)
+        if not conn:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        test_res = conn.test_connection()
+        return {"status": "success" if test_res.get("connected") else "error", "test": test_res}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/{connection_id}/reconnect")
+def reconnect_connection_endpoint(
+    connection_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, connection_id)
+        if not conn:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        conn.disconnect()
+        ok = conn.connect()
+        return {
+            "status": "success" if ok else "error",
+            "message": "Reconnected successfully" if ok else (conn.last_error or "Reconnect failed"),
+            "connection": conn.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.patch("/connections/{connection_id}")
+def update_connection_settings(
+    connection_id: str,
+    req: Dict[str, Any],
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, connection_id)
+        if not conn:
+            raise HTTPException(status_code=404, detail="Connection not found")
+
+        if "name" in req and req["name"]:
+            conn.name = str(req["name"]).strip()
+        if "is_read_only" in req:
+            conn.is_read_only = bool(req["is_read_only"])
+
+        return {"status": "success", "connection": conn.to_dict()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/connections/{connection_id}")
+def delete_connection_endpoint(
+    connection_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        ok = reg.remove_connector(user.user_id, connection_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Connection not found")
+
+        _activate(user)
+        return {"status": "success", "message": f"Connection {connection_id} disconnected and removed."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/{connection_id}/active")
+def set_active_connection_endpoint(
+    connection_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        ok = reg.set_active_connector(user.user_id, connection_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Connection not found")
+
+        _activate(user, connection_id)
+        try:
+            refresh_database_profile()
+        except Exception:
+            pass
+
+        return {"status": "success", "active_connection_id": connection_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/disconnect-all")
+def disconnect_all_connections(user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        reg.disconnect_all(user.user_id)
+        clear_user_context(user.user_id)
+        clear_database_profile()
+        return {"status": "success", "message": "All database connections disconnected successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/{connection_id}/query")
+def execute_connection_query(
+    connection_id: str,
+    req: QueryRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, connection_id)
+    try:
+        return execute_query(req.query, connection_id=connection_id)
+    except Exception as e:
+        return {"success": False, "columns": [], "rows": [], "error": str(e)}
+
+
+@app.post("/cross-query")
+@limiter.limit("30/minute")
+def execute_cross_query(
+    req: CrossQueryRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user)
+    try:
+        from app.intelligence.cross_db import CrossDatabaseEngine
+        res = CrossDatabaseEngine.process(
+            user_id=user.user_id,
+            message=req.message,
+            selected_source_ids=req.selected_source_ids,
+        )
+        return {"status": "success", "result": res.to_dict()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/optimize")

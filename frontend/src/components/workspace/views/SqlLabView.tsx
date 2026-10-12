@@ -17,9 +17,14 @@ import { runQuery, optimizeSQL } from "../../../services/api";
 import ResultTable from "../../chat/ResultTable";
 import { useToast } from "../../../context/ToastContext";
 
+import type { DatabaseConnectionItem } from "../../../types";
+
 interface SqlLabViewProps {
   dbConnected: boolean;
+  connections?: DatabaseConnectionItem[];
+  activeConnectionId?: string | null;
   initialQuery?: string;
+  initialConnectionId?: string;
   onConnectDatabase: () => void;
 }
 
@@ -33,9 +38,15 @@ interface HistoryItem {
 
 export default function SqlLabView({
   dbConnected,
+  connections = [],
+  activeConnectionId,
   initialQuery,
+  initialConnectionId,
   onConnectDatabase,
 }: SqlLabViewProps) {
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(
+    initialConnectionId || activeConnectionId || connections[0]?.connection_id || null
+  );
   const [query, setQuery] = useState(initialQuery || "SELECT * FROM customers LIMIT 10;");
   const [loading, setLoading] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
@@ -81,7 +92,7 @@ export default function SqlLabView({
     const start = performance.now();
 
     try {
-      const res = await runQuery(query.trim());
+      const res = await runQuery(query.trim(), selectedConnectionId || undefined);
       const end = performance.now();
       const elapsed = Math.round(end - start);
       setExecutionTime(elapsed);
@@ -143,7 +154,7 @@ export default function SqlLabView({
     toast.success("SQL syntax format is valid and safe for execution.");
   };
 
-  if (!dbConnected) {
+  if (!dbConnected && connections.length === 0) {
     return (
       <div className="p-8 max-w-xl mx-auto my-16 text-center space-y-4 bg-[#121216] border border-white/[0.08] rounded-2xl">
         <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 mx-auto">
@@ -156,7 +167,7 @@ export default function SqlLabView({
         </p>
         <button
           onClick={onConnectDatabase}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
         >
           <Plug size={14} />
           <span>Connect Database</span>
@@ -171,9 +182,28 @@ export default function SqlLabView({
       <div className="bg-[#121216] border border-white/[0.08] rounded-2xl overflow-hidden shadow-xl flex flex-col">
         {/* Editor Toolbar */}
         <div className="h-12 px-4 bg-[#14141a] border-b border-white/[0.06] flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2">
-            <Terminal size={15} className="text-indigo-400" />
-            <span className="text-xs font-bold text-white tracking-wide">SQL Editor</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Terminal size={15} className="text-violet-400" />
+              <span className="text-xs font-bold text-white tracking-wide">SQL Editor</span>
+            </div>
+
+            {connections.length > 1 && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08]">
+                <Database size={12} className="text-violet-400" />
+                <select
+                  value={selectedConnectionId || ""}
+                  onChange={(e) => setSelectedConnectionId(e.target.value)}
+                  className="bg-transparent text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                >
+                  {connections.map((c) => (
+                    <option key={c.connection_id} value={c.connection_id} className="bg-[#141418] text-white">
+                      {c.name} ({c.connector_type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5">
