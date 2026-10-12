@@ -1417,6 +1417,41 @@ export async function testDatabaseConnection(
   });
 }
 
+export async function testConnectionConfig(data: {
+  connector_type: string;
+  name?: string;
+  is_read_only?: boolean;
+  config?: Record<string, any>;
+  [key: string]: any;
+}): Promise<{
+  status: string;
+  test: {
+    connected: boolean;
+    latency_ms?: number;
+    error?: string;
+    details?: string;
+    message?: string;
+    info?: Record<string, any>;
+  };
+  message?: string;
+}> {
+  return apiFetch<{
+    status: string;
+    test: {
+      connected: boolean;
+      latency_ms?: number;
+      error?: string;
+      details?: string;
+      message?: string;
+      info?: Record<string, any>;
+    };
+    message?: string;
+  }>("/connections/test-config", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function reconnectDatabaseConnection(
   connectionId: string
 ): Promise<{

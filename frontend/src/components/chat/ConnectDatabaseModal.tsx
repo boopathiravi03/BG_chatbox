@@ -1,10 +1,14 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
   Server,
   Database,
   Layers,
+  Cpu,
+  FileSpreadsheet,
+  FileText,
+  FileJson,
   Loader2,
   FileUp,
   CheckCircle2,
@@ -13,9 +17,18 @@ import {
   EyeOff,
   ArrowRight,
   ShieldCheck,
-  HardDrive,
+  Search,
+  Zap,
+  Activity,
+  Check,
 } from "lucide-react";
-import { connectDatabase, uploadDatabase } from "../../services/api";
+import {
+  getConnectorCatalog,
+  createDatabaseConnection,
+  uploadFileSource,
+  testConnectionConfig,
+} from "../../services/api";
+import type { ConnectorCatalogItem } from "../../types";
 import {
   modalBackdropVariants,
   modalContainerVariants,
@@ -26,25 +39,162 @@ import ClickSpark from "../reactbits/ClickSpark";
 interface Props {
   onClose: () => void;
   onConnected?: () => void;
-  defaultType?: "sqlite" | "mysql" | "postgres";
+  defaultType?: string;
 }
 
-type DbType = "sqlite" | "mysql" | "postgres";
 type ConnectionStage =
   | "idle"
+  | "testing"
   | "connecting"
   | "verifying"
   | "connected"
   | "error";
+
+// Comprehensive catalog fallback if API is warming up
+const DEFAULT_CONNECTOR_CATALOG: ConnectorCatalogItem[] = [
+  {
+    id: "sqlite",
+    name: "SQLite",
+    category: "relational",
+    description: "Embedded fast ACID relational database and local file databases",
+    default_port: null,
+    badge: "Built-in",
+    status: "ready",
+    fields: ["database_path"],
+  },
+  {
+    id: "mysql",
+    name: "MySQL",
+    category: "relational",
+    description: "World's most popular open-source relational database server",
+    default_port: 3306,
+    badge: "Popular",
+    status: "ready",
+    fields: ["host", "port", "database", "username", "password"],
+  },
+  {
+    id: "postgres",
+    name: "PostgreSQL",
+    category: "relational",
+    description: "Advanced enterprise-grade object-relational database",
+    default_port: 5432,
+    badge: "Enterprise",
+    status: "ready",
+    fields: ["host", "port", "database", "username", "password"],
+  },
+  {
+    id: "mariadb",
+    name: "MariaDB",
+    category: "relational",
+    description: "High-performance drop-in replacement for MySQL",
+    default_port: 3306,
+    badge: "Fast",
+    status: "ready",
+    fields: ["host", "port", "database", "username", "password"],
+  },
+  {
+    id: "mssql",
+    name: "Microsoft SQL Server",
+    category: "relational",
+    description: "Microsoft enterprise relational database management system",
+    default_port: 1433,
+    badge: "Enterprise",
+    status: "ready",
+    fields: ["host", "port", "database", "username", "password", "driver"],
+  },
+  {
+    id: "mongodb",
+    name: "MongoDB",
+    category: "document",
+    description: "Document-based distributed NoSQL database with flexible JSON schemas",
+    default_port: 27017,
+    badge: "Document",
+    status: "ready",
+    fields: ["host", "port", "database", "username", "password", "auth_source"],
+  },
+  {
+    id: "redis",
+    name: "Redis",
+    category: "document",
+    description: "Blazing-fast in-memory key-value data store, cache, and message broker",
+    default_port: 6379,
+    badge: "Key-Value",
+    status: "ready",
+    fields: ["host", "port", "password", "db", "ssl"],
+  },
+  {
+    id: "qdrant",
+    name: "Qdrant",
+    category: "vector",
+    description: "Vector search engine and vector database with payload filtering",
+    default_port: 6333,
+    badge: "Vector AI",
+    status: "ready",
+    fields: ["host", "port", "api_key"],
+  },
+  {
+    id: "chroma",
+    name: "Chroma DB",
+    category: "vector",
+    description: "Open-source AI-native embedding database for LLM applications",
+    default_port: 8000,
+    badge: "Embeddings",
+    status: "ready",
+    fields: ["host", "port", "tenant", "database"],
+  },
+  {
+    id: "csv",
+    name: "CSV Data Source",
+    category: "file",
+    description: "Query tabular comma/tab-separated values with full SQL capabilities",
+    default_port: null,
+    badge: "Tabular",
+    status: "ready",
+    fields: ["file_path", "delimiter"],
+  },
+  {
+    id: "excel",
+    name: "Excel Workbook",
+    category: "file",
+    description: "Transform sheets in .xlsx/.xls workbooks into queryable SQL tables",
+    default_port: null,
+    badge: "Spreadsheet",
+    status: "ready",
+    fields: ["file_path"],
+  },
+  {
+    id: "json",
+    name: "JSON File Source",
+    category: "file",
+    description: "Analyze structured and nested JSON files using relational schemas",
+    default_port: null,
+    badge: "Semi-structured",
+    status: "ready",
+    fields: ["file_path"],
+  },
+];
+
+type CategoryFilter = "all" | "relational" | "nosql" | "vector" | "file";
 
 export default function ConnectDatabaseModal({
   onClose,
   onConnected,
   defaultType = "sqlite",
 }: Props) {
-  const [dbType, setDbType] = useState<DbType>(defaultType);
+  const toast = useToast();
+  const [catalog, setCatalog] = useState<ConnectorCatalogItem[]>(DEFAULT_CONNECTOR_CATALOG);
+  const [selectedType, setSelectedType] = useState<string>(defaultType);
+  const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
   const [stage, setStage] = useState<ConnectionStage>("idle");
   const [stageMessage, setStageMessage] = useState<string>("");
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    latency_ms?: number;
+    message?: string;
+  } | null>(null);
+
   const [connectedSummary, setConnectedSummary] = useState<{
     name: string;
     engine: string;
@@ -54,23 +204,92 @@ export default function ConnectDatabaseModal({
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const toast = useToast();
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  // Form fields
   const [form, setForm] = useState({
+    name: "",
     host: "localhost",
-    port: defaultType === "postgres" ? "5432" : "3306",
-    database: defaultType === "postgres" ? "postgres" : "bg_ai_db",
-    username: defaultType === "postgres" ? "postgres" : "root",
+    port: "3306",
+    database: "bg_ai_db",
+    username: "root",
     password: "",
+    ssl: false,
+    sqlitePath: "",
+    delimiter: ",",
+    driver: "ODBC Driver 18 for SQL Server",
+    authSource: "admin",
+    connectionString: "",
+    dbIndex: 0,
+    apiKey: "",
+    collectionName: "",
+    tenant: "default_tenant",
+    isReadOnly: true,
   });
 
-  // Close on Escape key (if not currently connecting)
+  // Load backend catalog dynamically
+  useEffect(() => {
+    let isMounted = true;
+    getConnectorCatalog()
+      .then((res) => {
+        if (isMounted && res && res.catalog && res.catalog.length > 0) {
+          setCatalog(res.catalog);
+        }
+      })
+      .catch((err) => {
+        console.warn("Using default connector catalog:", err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Update form defaults when selected connector changes
+  useEffect(() => {
+    setErrorMessage(null);
+    setTestResult(null);
+    setSelectedFile(null);
+
+    const item = catalog.find(
+      (c) => (c.id || c.connector_type || "").toLowerCase() === selectedType.toLowerCase()
+    );
+
+    const displayName = item?.name || selectedType.toUpperCase();
+    const defaultPortStr = item?.default_port ? String(item.default_port) : "";
+
+    let defaultUser = "";
+    let defaultDb = "";
+
+    if (selectedType === "postgres") {
+      defaultUser = "postgres";
+      defaultDb = "postgres";
+    } else if (selectedType === "mysql" || selectedType === "mariadb") {
+      defaultUser = "root";
+      defaultDb = "bg_ai_db";
+    } else if (selectedType === "mssql") {
+      defaultUser = "sa";
+      defaultDb = "master";
+    } else if (selectedType === "mongodb") {
+      defaultDb = "test";
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      name: `${displayName} Data Source`,
+      port: defaultPortStr,
+      username: defaultUser,
+      database: defaultDb,
+    }));
+  }, [selectedType, catalog]);
+
+  // Close on Escape key (if not busy)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.key === "Escape" &&
         stage !== "connecting" &&
-        stage !== "verifying"
+        stage !== "verifying" &&
+        stage !== "testing"
       ) {
         onClose();
       }
@@ -79,391 +298,414 @@ export default function ConnectDatabaseModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, stage]);
 
-  // Update default ports and credentials when tab switches
-  useEffect(() => {
-    setErrorMessage(null);
-    if (dbType === "mysql") {
-      setForm((prev) => ({
-        ...prev,
-        port: prev.port === "5432" || !prev.port ? "3306" : prev.port,
-        database:
-          prev.database === "postgres"
-            ? "bg_ai_db"
-            : prev.database || "bg_ai_db",
-        username:
-          prev.username === "postgres" ? "root" : prev.username || "root",
-      }));
-    } else if (dbType === "postgres") {
-      setForm((prev) => ({
-        ...prev,
-        port: prev.port === "3306" || !prev.port ? "5432" : prev.port,
-        database:
-          prev.database === "bg_ai_db"
-            ? "postgres"
-            : prev.database || "postgres",
-        username:
-          prev.username === "root" ? "postgres" : prev.username || "postgres",
-      }));
-    }
-  }, [dbType]);
-
-  // Connect MySQL or PostgreSQL with multi-stage progress
-  const handleConnect = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage(null);
-    setStage("connecting");
-    setStageMessage(
-      `Connecting to ${dbType === "mysql" ? "MySQL" : "PostgreSQL"} server at ${form.host}:${form.port}...`,
-    );
-
-    try {
-      // Step 2 progression simulation while request executes
-      const verifyTimer = setTimeout(() => {
-        setStage("verifying");
-        setStageMessage(
-          `Verifying credentials & introspecting schema for "${form.database}"...`,
-        );
-      }, 500);
-
-      const data = await connectDatabase({
-        db_type: dbType,
-        host: form.host,
-        port: parseInt(form.port) || (dbType === "mysql" ? 3306 : 5432),
-        database: form.database,
-        username: form.username,
-        password: form.password,
-      });
-
-      clearTimeout(verifyTimer);
-
-      if (data.status === "success") {
-        setStage("connected");
-        setConnectedSummary({
-          name: form.database,
-          engine: dbType === "mysql" ? "MySQL" : "PostgreSQL",
-          details: `${form.host}:${form.port} • Catalog Loaded`,
-        });
-        toast.success(
-          `Connected to ${dbType === "mysql" ? "MySQL" : "PostgreSQL"} successfully!`,
-        );
-        setTimeout(() => {
-          onClose();
-          onConnected?.();
-        }, 900);
-      } else {
-        setStage("error");
-        setErrorMessage(
-          data.message ||
-            "Connection failed. Please check credentials and server status.",
-        );
-        toast.error(
-          data.message || "Connection failed. Please check credentials.",
-        );
-      }
-    } catch {
-      setStage("error");
-      setErrorMessage(
-        "Network or database connection error. Verify if the database server is running.",
-      );
-      toast.error("Network or database connection error.");
-    }
-  };
-
-  // Upload SQLite File with multi-stage progress
-  const handleFileUpload = async (file: File) => {
-    if (
-      !file.name.endsWith(".db") &&
-      !file.name.endsWith(".sqlite") &&
-      !file.name.endsWith(".sqlite3")
-    ) {
-      toast.error(
-        "Please upload a valid SQLite file (.db, .sqlite, or .sqlite3)",
-      );
-      return;
-    }
-
-    setErrorMessage(null);
-    setStage("connecting");
-    setStageMessage(`Reading SQLite file "${file.name}"...`);
-
-    try {
-      const verifyTimer = setTimeout(() => {
-        setStage("verifying");
-        setStageMessage("Validating database schema and indexing tables...");
-      }, 400);
-
-      const data = await uploadDatabase(file);
-      clearTimeout(verifyTimer);
-
-      if (data.status === "success") {
-        setStage("connected");
-        setConnectedSummary({
-          name: file.name,
-          engine: "SQLite",
-          details: `${(file.size / 1024).toFixed(1)} KB • Session Ready`,
-        });
-        toast.success(`SQLite database "${file.name}" connected successfully!`);
-        setTimeout(() => {
-          onClose();
-          onConnected?.();
-        }, 900);
-      } else {
-        setStage("error");
-        setErrorMessage(data.message || "Failed to parse database file.");
-        toast.error(data.message || "Failed to parse database file.");
-      }
-    } catch {
-      setStage("error");
-      setErrorMessage(
-        "Failed to upload database file. Network error occurred.",
-      );
-      toast.error("Failed to upload database file.");
-    }
-  };
-
-  const updateField = (field: string, value: string) => {
+  const updateField = (field: string, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    setTestResult(null);
+    setErrorMessage(null);
   };
 
-  const isBusy = stage === "connecting" || stage === "verifying";
+  const currentItem = useMemo(() => {
+    return (
+      catalog.find(
+        (c) => (c.id || c.connector_type || "").toLowerCase() === selectedType.toLowerCase()
+      ) || catalog[0]
+    );
+  }, [catalog, selectedType]);
+
+  // Filtered catalog
+  const filteredCatalog = useMemo(() => {
+    return catalog.filter((item) => {
+      const id = (item.id || item.connector_type || "").toLowerCase();
+      const name = (item.name || item.display_name || "").toLowerCase();
+      const desc = (item.description || "").toLowerCase();
+      const badge = (item.badge || "").toLowerCase();
+
+      // Category matching
+      let matchesCat = true;
+      if (activeCategory === "relational") {
+        matchesCat = item.category === "relational";
+      } else if (activeCategory === "nosql") {
+        matchesCat =
+          item.category === "document" ||
+          item.category === "nosql" ||
+          id === "mongodb" ||
+          id === "redis";
+      } else if (activeCategory === "vector") {
+        matchesCat = item.category === "vector";
+      } else if (activeCategory === "file") {
+        matchesCat = item.category === "file";
+      }
+
+      // Search matching
+      const query = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        name.includes(query) ||
+        id.includes(query) ||
+        desc.includes(query) ||
+        badge.includes(query);
+
+      return matchesCat && matchesSearch;
+    });
+  }, [catalog, activeCategory, searchQuery]);
+
+  const getEngineIcon = (id: string, category: string) => {
+    if (category === "file" || id === "csv" || id === "excel" || id === "json") {
+      if (id === "excel") return FileSpreadsheet;
+      if (id === "json") return FileJson;
+      return FileText;
+    }
+    if (category === "vector" || id === "qdrant" || id === "chroma") return Cpu;
+    if (id === "redis") return Activity;
+    if (id === "mongodb") return Layers;
+    return Server;
+  };
+
+  const getEngineColor = (id: string) => {
+    switch (id) {
+      case "postgres":
+        return "text-sky-400";
+      case "mysql":
+        return "text-teal-400";
+      case "mariadb":
+        return "text-cyan-400";
+      case "mssql":
+        return "text-blue-400";
+      case "mongodb":
+        return "text-emerald-400";
+      case "redis":
+        return "text-rose-400";
+      case "qdrant":
+        return "text-violet-400";
+      case "chroma":
+        return "text-fuchsia-400";
+      case "csv":
+        return "text-amber-400";
+      case "excel":
+        return "text-green-400";
+      case "json":
+        return "text-orange-400";
+      default:
+        return "text-indigo-400";
+    }
+  };
+
+  // Build connection payload from current form state
+  const buildConnectionPayload = () => {
+    const portNum = form.port ? parseInt(form.port, 10) : currentItem.default_port || undefined;
+
+    return {
+      connector_type: selectedType,
+      name: form.name.trim() || `${currentItem.name} Source`,
+      is_read_only: form.isReadOnly,
+      set_as_active: true,
+      config: {
+        host: form.host.trim(),
+        port: portNum,
+        database: form.database.trim(),
+        username: form.username.trim(),
+        password: form.password,
+        ssl: form.ssl,
+        file_path: form.sqlitePath.trim(),
+        delimiter: form.delimiter,
+        driver: form.driver,
+        auth_source: form.authSource,
+        connection_string: form.connectionString.trim() || undefined,
+        db: form.dbIndex,
+        api_key: form.apiKey.trim() || undefined,
+        collection_name: form.collectionName.trim() || undefined,
+        tenant: form.tenant.trim() || undefined,
+      },
+    };
+  };
+
+  // Live "Test Connection" Handler
+  const handleTestConnection = async () => {
+    setStage("testing");
+    setErrorMessage(null);
+    setTestResult(null);
+
+    try {
+      const payload = buildConnectionPayload();
+      const res = await testConnectionConfig(payload);
+
+      if (res.test && res.test.connected) {
+        setTestResult({
+          success: true,
+          latency_ms: res.test.latency_ms,
+          message: res.test.details || `Successfully reached ${currentItem.name}!`,
+        });
+        toast.success(`Connection verified (${res.test.latency_ms || 12} ms)`);
+      } else {
+        const err = res.test?.error || res.message || "Failed to reach server.";
+        setTestResult({
+          success: false,
+          message: err,
+        });
+        setErrorMessage(err);
+        toast.error(`Test failed: ${err}`);
+      }
+    } catch (err: any) {
+      const msg = err.message || "Test connection failed.";
+      setTestResult({
+        success: false,
+        message: msg,
+      });
+      setErrorMessage(msg);
+      toast.error(msg);
+    } finally {
+      setStage("idle");
+    }
+  };
+
+  // File selection
+  const handleFileUpload = async (file: File) => {
+    setSelectedFile(file);
+    const baseName = file.name.replace(/\.[^/.]+$/, "");
+    setForm((prev) => ({
+      ...prev,
+      name: prev.name.endsWith("Source") || !prev.name ? baseName : prev.name,
+    }));
+  };
+
+  // Connect submission
+  const handleConnect = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMessage(null);
+
+    // 1. If File connector or SQLite with uploaded file
+    if (currentItem.category === "file" || (selectedType === "sqlite" && selectedFile)) {
+      if (!selectedFile && !form.sqlitePath.trim()) {
+        setErrorMessage("Please select a file to upload or enter a database path.");
+        return;
+      }
+
+      if (selectedFile) {
+        setStage("connecting");
+        setStageMessage(`Uploading ${selectedFile.name}...`);
+        try {
+          const res = await uploadFileSource(
+            selectedFile,
+            form.name.trim() || selectedFile.name,
+            form.isReadOnly
+          );
+          setStage("connected");
+          setConnectedSummary({
+            name: form.name.trim() || selectedFile.name,
+            engine: currentItem.name,
+            details: `Active data source configured.`,
+          });
+          toast.success(`Connected to ${currentItem.name}!`);
+          onConnected?.();
+          return;
+        } catch (err: any) {
+          setStage("error");
+          setErrorMessage(err.message || "File upload connection failed.");
+          return;
+        }
+      }
+    }
+
+    // 2. Database connection via createDatabaseConnection
+    setStage("connecting");
+    setStageMessage(`Connecting to ${currentItem.name}...`);
+
+    try {
+      const payload = buildConnectionPayload();
+      const res = await createDatabaseConnection(payload);
+
+      if (res.status === "error") {
+        throw new Error(res.message || "Connection failed.");
+      }
+
+      setStage("connected");
+      setConnectedSummary({
+        name: form.name.trim() || currentItem.name,
+        engine: currentItem.name,
+        details: `Active database connection established.`,
+      });
+      toast.success(`Successfully connected to ${currentItem.name}!`);
+      onConnected?.();
+    } catch (err: any) {
+      setStage("error");
+      setErrorMessage(err.message || "Could not connect to database.");
+      toast.error(err.message || "Connection failed.");
+    }
+  };
+
+  const isConnecting = stage === "connecting" || stage === "verifying";
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-        {/* Glass Backdrop */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
         <motion.div
-          key="connect-backdrop"
           variants={modalBackdropVariants}
           initial="hidden"
           animate="visible"
           exit="exit"
-          onClick={isBusy ? undefined : onClose}
+          onClick={isConnecting ? undefined : onClose}
           className="fixed inset-0 bg-black/80 backdrop-blur-md"
         />
 
-        {/* Modal Window */}
         <motion.div
-          key="connect-container"
           variants={modalContainerVariants}
           initial="hidden"
           animate="visible"
           exit="exit"
-          className="relative w-full max-w-xl rounded-2xl bg-[#121216] border border-white/10 shadow-2xl shadow-black/90 overflow-hidden z-10 my-auto"
+          onClick={(e) => e.stopPropagation()}
+          className="relative w-full max-w-4xl max-h-[92vh] bg-[#0d0d12] border border-white/[0.08] rounded-2xl shadow-2xl flex flex-col overflow-hidden text-zinc-100 z-10"
         >
-          {/* Subtle Top Indigo Glow Accent */}
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-teal-500" />
-
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4.5 border-b border-white/[0.08] bg-[#16161b]">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] bg-[#141418]/80">
             <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 flex items-center justify-center">
                 <Database size={20} />
               </div>
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                  <span>Connect Database</span>
-                  <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">
-                    Live Session
+                <h3 className="text-base font-semibold text-white tracking-tight flex items-center gap-2">
+                  Connect Database & Data Source
+                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-300">
+                    {catalog.length} Supported
                   </span>
-                </h2>
+                </h3>
                 <p className="text-xs text-zinc-400">
-                  Select database engine and configure connection parameters
+                  Connect independent databases, vector stores, or files simultaneously
                 </p>
               </div>
             </div>
 
-            {!isBusy && (
-              <button
-                onClick={onClose}
-                className="p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors"
-                title="Close (Esc)"
-              >
-                <X size={18} />
-              </button>
-            )}
+            <button
+              onClick={onClose}
+              disabled={isConnecting}
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors disabled:opacity-40"
+            >
+              <X size={18} />
+            </button>
           </div>
 
-          {/* Connection Progress Stage Overlay */}
-          <AnimatePresence>
-            {isBusy && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.98 }}
-                className="p-8 sm:p-10 flex flex-col items-center justify-center text-center space-y-4"
-              >
-                <div className="relative flex items-center justify-center w-20 h-20">
-                  {/* Concentric pulsing rings */}
-                  <motion.div
-                    animate={{ scale: [1, 1.3, 1], opacity: [0.3, 0.7, 0.3] }}
-                    transition={{
-                      repeat: Infinity,
-                      duration: 2,
-                      ease: "easeInOut",
-                    }}
-                    className="absolute inset-0 rounded-full bg-indigo-500/20 border border-indigo-500/40"
-                  />
-                  <div className="relative z-10 w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shadow-lg shadow-indigo-500/20">
-                    <Loader2
-                      size={28}
-                      className="animate-spin text-indigo-400"
-                    />
-                  </div>
-                </div>
+          {/* Success Screen */}
+          {stage === "connected" ? (
+            <div className="p-8 text-center space-y-6">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
+                <CheckCircle2 size={32} />
+              </div>
 
-                <div className="space-y-1.5 max-w-sm">
-                  <h3 className="text-base font-bold text-white tracking-tight">
-                    {stage === "connecting"
-                      ? "Connecting Database..."
-                      : "Verifying Connection..."}
-                  </h3>
-                  <p className="text-xs text-zinc-400 leading-relaxed font-mono">
-                    {stageMessage}
-                  </p>
-                </div>
+              <div>
+                <h4 className="text-lg font-bold text-white">Connection Established</h4>
+                <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
+                  {connectedSummary?.name} ({connectedSummary?.engine}) is now active in BG AI.
+                </p>
+              </div>
 
-                {/* Progress bar */}
-                <div className="w-48 bg-white/[0.06] h-1.5 rounded-full overflow-hidden mt-2">
-                  <motion.div
-                    className="h-full bg-indigo-500"
-                    initial={{ width: "15%" }}
-                    animate={{ width: stage === "verifying" ? "80%" : "45%" }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                  />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Connection Success State Overlay */}
-          <AnimatePresence>
-            {stage === "connected" && connectedSummary && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                className="p-8 sm:p-10 flex flex-col items-center justify-center text-center space-y-4"
-              >
-                <motion.div
-                  initial={{ scale: 0.5, rotate: -20 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  transition={{ type: "spring", damping: 12, stiffness: 200 }}
-                  className="w-20 h-20 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-xl shadow-emerald-500/20"
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-6 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs sm:text-sm font-semibold shadow-lg shadow-violet-600/20 transition-all cursor-pointer"
                 >
-                  <CheckCircle2 size={36} className="text-emerald-400" />
-                </motion.div>
-
-                <div className="space-y-1">
-                  <h3 className="text-lg font-bold text-white tracking-tight">
-                    Connected Successfully!
-                  </h3>
-                  <p className="text-xs text-emerald-400 font-medium">
-                    Schema verified and indexed for conversational queries.
-                  </p>
-                </div>
-
-                <div className="p-3 px-4 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center gap-3">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <div className="text-left">
-                    <p className="text-xs font-semibold text-zinc-100 font-mono">
-                      {connectedSummary.name}
-                    </p>
-                    <p className="text-[11px] text-zinc-400">
-                      {connectedSummary.engine} • {connectedSummary.details}
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Form and Selection View (Hidden during active connecting/success sequence) */}
-          {!isBusy && stage !== "connected" && (
-            <>
-              {/* Database Engine Selection Cards */}
-              <div className="px-6 pt-5 pb-3">
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    {
-                      id: "sqlite",
-                      title: "SQLite",
-                      badge: "File DB",
-                      desc: "Local .db file",
-                      icon: HardDrive,
-                      color: "text-indigo-400",
-                      glow: "rgba(99, 102, 241, 0.25)",
-                    },
-                    {
-                      id: "mysql",
-                      title: "MySQL",
-                      badge: "Port 3306",
-                      desc: "Relational DB",
-                      icon: Server,
-                      color: "text-teal-400",
-                      glow: "rgba(20, 184, 166, 0.25)",
-                    },
-                    {
-                      id: "postgres",
-                      title: "PostgreSQL",
-                      badge: "Port 5432",
-                      desc: "Advanced SQL",
-                      icon: Layers,
-                      color: "text-sky-400",
-                      glow: "rgba(14, 165, 233, 0.25)",
-                    },
-                  ].map((engine) => {
-                    const Icon = engine.icon;
-                    const active = dbType === engine.id;
-                    return (
+                  Start Exploring Data
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto flex flex-col divide-y divide-white/[0.06]">
+              {/* Top Controls: Category Tabs & Search Bar */}
+              <div className="p-5 pb-3 space-y-3 bg-[#111116]">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  {/* Category Pills */}
+                  <div className="flex items-center gap-1 p-1 bg-[#16161c] rounded-xl border border-white/[0.06] overflow-x-auto">
+                    {[
+                      { id: "all", label: "All (12)" },
+                      { id: "relational", label: "Relational (5)" },
+                      { id: "nosql", label: "NoSQL & Key-Value (2)" },
+                      { id: "vector", label: "Vector DBs (2)" },
+                      { id: "file", label: "Files (3)" },
+                    ].map((tab) => (
                       <button
-                        key={engine.id}
+                        key={tab.id}
                         type="button"
-                        onClick={() => {
-                          setDbType(engine.id as DbType);
-                          setErrorMessage(null);
-                        }}
-                        className={`relative p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
-                          active
-                            ? "bg-white/[0.06] border-indigo-500 shadow-md shadow-indigo-500/10 ring-1 ring-indigo-500/50"
-                            : "bg-white/[0.02] hover:bg-white/[0.04] border-white/[0.08] hover:border-white/20"
+                        onClick={() => setActiveCategory(tab.id as CategoryFilter)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                          activeCategory === tab.id
+                            ? "bg-violet-600 text-white shadow-sm"
+                            : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]"
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-2">
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
+                    />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search connectors..."
+                      className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-[#16161c] border border-white/[0.06] text-xs text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/40 transition-colors"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Connector Selector Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 pt-1 max-h-48 overflow-y-auto pr-1">
+                  {filteredCatalog.map((item) => {
+                    const id = (item.id || item.connector_type || "").toLowerCase();
+                    const active = selectedType.toLowerCase() === id;
+                    const Icon = getEngineIcon(id, item.category);
+                    const colorClass = getEngineColor(id);
+
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setSelectedType(id)}
+                        className={`p-2.5 rounded-xl border text-left transition-all duration-150 relative flex flex-col justify-between ${
+                          active
+                            ? "bg-violet-500/10 border-violet-500 ring-1 ring-violet-500/40 shadow-sm"
+                            : "bg-[#141418] hover:bg-white/[0.04] border-white/[0.06] hover:border-white/15"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
                           <div
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center ${
                               active
-                                ? "bg-indigo-500/20 text-indigo-300"
+                                ? "bg-violet-500/20 text-violet-300"
                                 : "bg-white/[0.04] text-zinc-400"
                             }`}
                           >
-                            <Icon
-                              size={16}
-                              className={active ? engine.color : ""}
-                            />
+                            <Icon size={14} className={active ? colorClass : ""} />
                           </div>
-                          <span
-                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                              active
-                                ? "bg-indigo-500/20 text-indigo-300 font-medium"
-                                : "bg-white/[0.04] text-zinc-500"
-                            }`}
-                          >
-                            {engine.badge}
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/[0.04] text-zinc-400 border border-white/[0.06]">
+                            {item.default_port ? `:${item.default_port}` : item.badge || "Ready"}
                           </span>
                         </div>
 
-                        <p className="text-xs font-bold text-white tracking-tight">
-                          {engine.title}
-                        </p>
-                        <p className="text-[11px] text-zinc-400 truncate mt-0.5">
-                          {engine.desc}
-                        </p>
+                        <div>
+                          <p className="text-xs font-semibold text-white tracking-tight truncate">
+                            {item.name}
+                          </p>
+                          <p className="text-[10px] text-zinc-400 truncate mt-0.5">
+                            {item.badge}
+                          </p>
+                        </div>
 
                         {active && (
-                          <motion.div
-                            layoutId="activeEngineIndicator"
-                            className="absolute bottom-0 left-3 right-3 h-0.5 bg-indigo-500 rounded-full"
-                          />
+                          <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-violet-400" />
                         )}
                       </button>
                     );
@@ -471,227 +713,648 @@ export default function ConnectDatabaseModal({
                 </div>
               </div>
 
-              {/* Error Alert if previously failed */}
-              {errorMessage && (
-                <div className="mx-6 mb-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-start gap-2.5 text-rose-300 text-xs leading-relaxed">
-                  <AlertCircle
-                    size={16}
-                    className="text-rose-400 shrink-0 mt-0.5"
-                  />
-                  <div className="flex-1">
-                    <p className="font-semibold text-rose-200">
-                      Connection Failed
-                    </p>
-                    <p className="text-rose-300/90 mt-0.5">{errorMessage}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Tab Content: SQLite Upload */}
-              {dbType === "sqlite" && (
-                <div className="p-6 pt-2 space-y-4">
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setIsDragOver(true);
-                    }}
-                    onDragLeave={() => setIsDragOver(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setIsDragOver(false);
-                      const file = e.dataTransfer.files?.[0];
-                      if (file) handleFileUpload(file);
-                    }}
-                    className={`border-2 border-dashed rounded-2xl p-7 text-center transition-all ${
-                      isDragOver
-                        ? "border-indigo-500 bg-indigo-500/10 scale-[1.01]"
-                        : "border-white/[0.12] bg-white/[0.02] hover:border-white/[0.22]"
-                    }`}
-                  >
-                    <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mx-auto flex items-center justify-center mb-3">
-                      <FileUp size={24} />
-                    </div>
-
-                    <h4 className="text-sm font-bold text-white">
-                      Drop your SQLite database file here
-                    </h4>
-
-                    <p className="text-xs text-zinc-400 mt-1 max-w-xs mx-auto">
-                      Drag and drop any SQLite file, or browse from your
-                      computer
-                    </p>
-
-                    <div className="flex items-center justify-center gap-1.5 mt-3">
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-zinc-400">
-                        .db
-                      </span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-zinc-400">
-                        .sqlite
-                      </span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-zinc-400">
-                        .sqlite3
-                      </span>
-                    </div>
-
-                    <div className="mt-5">
-                      <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/10 text-xs sm:text-sm font-semibold text-zinc-100 cursor-pointer transition-colors shadow-sm">
-                        <FileUp size={15} />
-                        <span>Browse SQLite File</span>
-                        <input
-                          type="file"
-                          accept=".db,.sqlite,.sqlite3"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleFileUpload(file);
-                          }}
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] text-zinc-400 px-1">
-                    <span className="flex items-center gap-1.5">
-                      <ShieldCheck size={13} className="text-emerald-400" />
-                      Session sandbox isolation
-                    </span>
-                    <span>Max recommended file: 100MB</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Tab Content: MySQL / PostgreSQL Connection Form */}
-              {(dbType === "mysql" || dbType === "postgres") && (
-                <form onSubmit={handleConnect} className="p-6 pt-2 space-y-4">
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                        Host / Server Address
-                      </label>
-                      <input
-                        type="text"
-                        value={form.host}
-                        onChange={(e) => updateField("host", e.target.value)}
-                        placeholder="localhost"
-                        required
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40 transition-colors"
-                      />
+              {/* Form Content Area */}
+              <div className="p-6 space-y-4">
+                {/* Active Connector Banner */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-[#141418] border border-white/[0.06]">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-400 flex items-center justify-center">
+                      <Database size={16} />
                     </div>
                     <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-semibold text-zinc-300">
-                          Port
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateField(
-                              "port",
-                              dbType === "mysql" ? "3306" : "5432",
-                            )
-                          }
-                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono underline"
-                        >
-                          Default
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        value={form.port}
-                        onChange={(e) => updateField("port", e.target.value)}
-                        required
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-zinc-100 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40 transition-colors font-mono"
-                      />
+                      <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                        {currentItem.name} Configuration
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300">
+                          {currentItem.badge}
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-zinc-400">{currentItem.description}</p>
                     </div>
                   </div>
 
+                  <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.isReadOnly}
+                      onChange={(e) => updateField("isReadOnly", e.target.checked)}
+                      className="rounded border-zinc-700 text-violet-600 focus:ring-violet-500 bg-zinc-900"
+                    />
+                    <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-400">
+                      <ShieldCheck size={12} /> Read-Only Mode
+                    </span>
+                  </label>
+                </div>
+
+                {/* Error Banner */}
+                {errorMessage && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-start gap-2.5 text-rose-300 text-xs leading-relaxed">
+                    <AlertCircle size={15} className="text-rose-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-rose-200">Connection Error</p>
+                      <p className="text-rose-300/90 mt-0.5">{errorMessage}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Test Success Banner */}
+                {testResult?.success && (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-emerald-300 text-xs">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                      <span>{testResult.message}</span>
+                    </div>
+                    {testResult.latency_ms !== undefined && (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                        {testResult.latency_ms} ms latency
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <form onSubmit={handleConnect} className="space-y-4">
+                  {/* Common: Connection Display Name */}
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                      Database Name
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                      Connection Display Name
                     </label>
                     <input
                       type="text"
-                      value={form.database}
-                      onChange={(e) => updateField("database", e.target.value)}
-                      placeholder={dbType === "mysql" ? "bg_ai_db" : "postgres"}
+                      value={form.name}
+                      onChange={(e) => updateField("name", e.target.value)}
+                      placeholder={`${currentItem.name} Data Source`}
                       required
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40 transition-colors font-mono"
+                      className="w-full px-3.5 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs sm:text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/40 transition-colors"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                        Username
-                      </label>
-                      <input
-                        type="text"
-                        value={form.username}
-                        onChange={(e) =>
-                          updateField("username", e.target.value)
-                        }
-                        placeholder={dbType === "mysql" ? "root" : "postgres"}
-                        required
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40 transition-colors font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                        Password
-                      </label>
-                      <div className="relative">
+                  {/* 1. SQLite Form */}
+                  {selectedType === "sqlite" && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          SQLite Database File Path (or drop file below)
+                        </label>
                         <input
-                          type={showPassword ? "text" : "password"}
-                          value={form.password}
-                          onChange={(e) =>
-                            updateField("password", e.target.value)
-                          }
-                          placeholder="••••••••"
-                          className="w-full pl-3.5 pr-10 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/40 transition-colors font-mono"
+                          type="text"
+                          value={form.sqlitePath}
+                          onChange={(e) => updateField("sqlitePath", e.target.value)}
+                          placeholder="database/chinook.db or /path/to/database.sqlite"
+                          className="w-full px-3.5 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs sm:text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-violet-500 font-mono"
                         />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                          title={
-                            showPassword ? "Hide password" : "Show password"
-                          }
-                        >
-                          {showPassword ? (
-                            <EyeOff size={15} />
-                          ) : (
-                            <Eye size={15} />
-                          )}
-                        </button>
+                      </div>
+
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(true);
+                        }}
+                        onDragLeave={() => setIsDragOver(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) handleFileUpload(file);
+                        }}
+                        className={`border-2 border-dashed rounded-xl p-5 text-center transition-all ${
+                          isDragOver
+                            ? "border-violet-500 bg-violet-500/10"
+                            : "border-white/[0.1] bg-white/[0.02] hover:border-white/[0.2]"
+                        }`}
+                      >
+                        <FileUp size={22} className="mx-auto text-violet-400 mb-2" />
+                        <p className="text-xs font-medium text-white">
+                          {selectedFile ? selectedFile.name : "Drop .db / .sqlite file to upload"}
+                        </p>
+                        <p className="text-[10px] text-zinc-400 mt-0.5">
+                          Drag and drop or browse from local filesystem
+                        </p>
+                        <label className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-xs font-semibold text-zinc-200 cursor-pointer transition-colors">
+                          <FileUp size={13} />
+                          <span>Browse File</span>
+                          <input
+                            type="file"
+                            accept=".db,.sqlite,.sqlite3"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleFileUpload(f);
+                            }}
+                          />
+                        </label>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="pt-2">
-                    <ClickSpark
-                      sparkColor="#818cf8"
-                      sparkCount={6}
-                      sparkRadius={18}
-                      className="w-full"
-                    >
-                      <button
-                        type="submit"
-                        className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold shadow-lg shadow-indigo-600/20 transition-all cursor-pointer group"
+                  {/* 2. Flat File Sources: CSV, Excel, JSON */}
+                  {(selectedType === "csv" || selectedType === "excel" || selectedType === "json") && (
+                    <div className="space-y-3">
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(true);
+                        }}
+                        onDragLeave={() => setIsDragOver(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(false);
+                          const f = e.dataTransfer.files?.[0];
+                          if (f) handleFileUpload(f);
+                        }}
+                        className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                          isDragOver
+                            ? "border-violet-500 bg-violet-500/10"
+                            : "border-white/[0.1] bg-white/[0.02] hover:border-white/[0.2]"
+                        }`}
                       >
-                        <span>
-                          Connect {dbType === "mysql" ? "MySQL" : "PostgreSQL"}{" "}
-                          Database
-                        </span>
-                        <ArrowRight
-                          size={15}
-                          className="group-hover:translate-x-0.5 transition-transform"
+                        <FileUp size={24} className="mx-auto text-violet-400 mb-2" />
+                        <p className="text-xs font-semibold text-white">
+                          {selectedFile
+                            ? `Selected: ${selectedFile.name}`
+                            : `Upload ${currentItem.name} File`}
+                        </p>
+                        <p className="text-[10px] text-zinc-400 mt-0.5">
+                          {selectedType === "csv"
+                            ? "Supports .csv, .tsv files"
+                            : selectedType === "excel"
+                            ? "Supports .xlsx, .xls spreadsheets"
+                            : "Supports .json structured records"}
+                        </p>
+                        <label className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-xs font-semibold text-zinc-200 cursor-pointer transition-colors">
+                          <FileUp size={13} />
+                          <span>Browse Local File</span>
+                          <input
+                            type="file"
+                            accept={
+                              selectedType === "csv"
+                                ? ".csv,.tsv"
+                                : selectedType === "excel"
+                                ? ".xlsx,.xls"
+                                : ".json"
+                            }
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleFileUpload(f);
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {selectedType === "csv" && (
+                        <div className="w-1/2">
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            CSV Delimiter
+                          </label>
+                          <select
+                            value={form.delimiter}
+                            onChange={(e) => updateField("delimiter", e.target.value)}
+                            className="w-full px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-200 outline-none"
+                          >
+                            <option value=",">Comma ( , )</option>
+                            <option value=";">Semicolon ( ; )</option>
+                            <option value="\t">Tab ( \t )</option>
+                            <option value="|">Pipe ( | )</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 3. Relational Client: MySQL, PostgreSQL, MariaDB, MSSQL */}
+                  {(selectedType === "mysql" ||
+                    selectedType === "postgres" ||
+                    selectedType === "mariadb" ||
+                    selectedType === "mssql") && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Host / Server
+                          </label>
+                          <input
+                            type="text"
+                            value={form.host}
+                            onChange={(e) => updateField("host", e.target.value)}
+                            placeholder="localhost or db.company.com"
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none focus:border-violet-500 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-semibold text-zinc-300">Port</label>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateField("port", String(currentItem.default_port || 3306))
+                              }
+                              className="text-[10px] text-violet-400 hover:underline"
+                            >
+                              Default
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={form.port}
+                            onChange={(e) => updateField("port", e.target.value)}
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none focus:border-violet-500 font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Database Name
+                          </label>
+                          <input
+                            type="text"
+                            value={form.database}
+                            onChange={(e) => updateField("database", e.target.value)}
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none focus:border-violet-500 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Username
+                          </label>
+                          <input
+                            type="text"
+                            value={form.username}
+                            onChange={(e) => updateField("username", e.target.value)}
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none focus:border-violet-500 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Password
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showPassword ? "text" : "password"}
+                              value={form.password}
+                              onChange={(e) => updateField("password", e.target.value)}
+                              placeholder="••••••••"
+                              className="w-full pl-3 pr-8 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none focus:border-violet-500 font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                            >
+                              {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {selectedType === "mssql" && (
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            ODBC Driver
+                          </label>
+                          <input
+                            type="text"
+                            value={form.driver}
+                            onChange={(e) => updateField("driver", e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 4. Redis Form */}
+                  {selectedType === "redis" && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Redis Host / Cluster
+                          </label>
+                          <input
+                            type="text"
+                            value={form.host}
+                            onChange={(e) => updateField("host", e.target.value)}
+                            placeholder="localhost or 127.0.0.1"
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-semibold text-zinc-300">Port</label>
+                            <button
+                              type="button"
+                              onClick={() => updateField("port", "6379")}
+                              className="text-[10px] text-violet-400 hover:underline"
+                            >
+                              Default (6379)
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={form.port || "6379"}
+                            onChange={(e) => updateField("port", e.target.value)}
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Auth Password (Optional)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showPassword ? "text" : "password"}
+                              value={form.password}
+                              onChange={(e) => updateField("password", e.target.value)}
+                              placeholder="Leave blank if no password required"
+                              className="w-full pl-3 pr-8 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                            >
+                              {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            DB Index (0-15)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="15"
+                            value={form.dbIndex}
+                            onChange={(e) => updateField("dbIndex", parseInt(e.target.value, 10) || 0)}
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={form.ssl}
+                            onChange={(e) => updateField("ssl", e.target.checked)}
+                            className="rounded border-zinc-700 text-violet-600 focus:ring-violet-500 bg-zinc-900"
+                          />
+                          <span>Use TLS / SSL Connection (rediss://)</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 5. MongoDB Form */}
+                  {selectedType === "mongodb" && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                          MongoDB Connection URI (Optional shortcut)
+                        </label>
+                        <input
+                          type="text"
+                          value={form.connectionString}
+                          onChange={(e) => updateField("connectionString", e.target.value)}
+                          placeholder="mongodb://localhost:27017 or mongodb+srv://..."
+                          className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
                         />
+                      </div>
+
+                      {!form.connectionString && (
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-2">
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Host
+                            </label>
+                            <input
+                              type="text"
+                              value={form.host}
+                              onChange={(e) => updateField("host", e.target.value)}
+                              placeholder="localhost"
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Port
+                            </label>
+                            <input
+                              type="text"
+                              value={form.port || "27017"}
+                              onChange={(e) => updateField("port", e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {!form.connectionString && (
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Database Name
+                            </label>
+                            <input
+                              type="text"
+                              value={form.database}
+                              onChange={(e) => updateField("database", e.target.value)}
+                              placeholder="admin or test"
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Username
+                            </label>
+                            <input
+                              type="text"
+                              value={form.username}
+                              onChange={(e) => updateField("username", e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Password
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showPassword ? "text" : "password"}
+                                value={form.password}
+                                onChange={(e) => updateField("password", e.target.value)}
+                                className="w-full pl-3 pr-8 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                              >
+                                {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 6. Vector: Qdrant & Chroma */}
+                  {(selectedType === "qdrant" || selectedType === "chroma") && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                            Host Endpoint
+                          </label>
+                          <input
+                            type="text"
+                            value={form.host}
+                            onChange={(e) => updateField("host", e.target.value)}
+                            placeholder="localhost or qdrant.cloud.io"
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300 mb-1">Port</label>
+                          <input
+                            type="text"
+                            value={form.port || (selectedType === "qdrant" ? "6333" : "8000")}
+                            onChange={(e) => updateField("port", e.target.value)}
+                            required
+                            className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {selectedType === "qdrant" && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              API Key (Optional)
+                            </label>
+                            <input
+                              type="password"
+                              value={form.apiKey}
+                              onChange={(e) => updateField("apiKey", e.target.value)}
+                              placeholder="••••••••"
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Target Collection (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              value={form.collectionName}
+                              onChange={(e) => updateField("collectionName", e.target.value)}
+                              placeholder="e.g. products_embeddings"
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedType === "chroma" && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Tenant Name
+                            </label>
+                            <input
+                              type="text"
+                              value={form.tenant}
+                              onChange={(e) => updateField("tenant", e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                              Database Name
+                            </label>
+                            <input
+                              type="text"
+                              value={form.database}
+                              onChange={(e) => updateField("database", e.target.value)}
+                              placeholder="default_database"
+                              className="w-full px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs text-zinc-100 outline-none font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Actions Footer */}
+                  <div className="flex items-center justify-between pt-4 border-t border-white/[0.06]">
+                    {/* Live Test Connection Button */}
+                    <button
+                      type="button"
+                      disabled={stage === "testing" || isConnecting}
+                      onClick={handleTestConnection}
+                      className="px-4 py-2.5 rounded-xl border border-white/[0.1] bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white text-xs font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {stage === "testing" ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin text-violet-400" />
+                          <span>Testing ping...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={13} className="text-amber-400" />
+                          <span>Test Connection</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Submit Connect Button */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={isConnecting}
+                        className="px-4 py-2.5 rounded-xl border border-white/[0.08] hover:bg-white/[0.04] text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+                      >
+                        Cancel
                       </button>
-                    </ClickSpark>
+
+                      <ClickSpark sparkColor="#a78bfa" sparkCount={6} sparkRadius={16}>
+                        <button
+                          type="submit"
+                          disabled={isConnecting}
+                          className="px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs sm:text-sm font-semibold shadow-lg shadow-violet-600/25 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                        >
+                          {isConnecting ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              <span>{stageMessage}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>Connect {currentItem.name}</span>
+                              <ArrowRight size={14} />
+                            </>
+                          )}
+                        </button>
+                      </ClickSpark>
+                    </div>
                   </div>
                 </form>
-              )}
-            </>
+              </div>
+            </div>
           )}
         </motion.div>
       </div>

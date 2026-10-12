@@ -64,9 +64,7 @@ export default function Home() {
   const [showAbout, setShowAbout] = useState(false);
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState(false);
-  const [connectModalType, setConnectModalType] = useState<
-    "sqlite" | "mysql" | "postgres"
-  >("sqlite");
+  const [connectModalType, setConnectModalType] = useState<string>("sqlite");
 
   const [sqlLabInitialQuery, setSqlLabInitialQuery] = useState<string>("");
 

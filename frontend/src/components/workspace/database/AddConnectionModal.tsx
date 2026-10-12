@@ -13,12 +13,15 @@ import {
   UploadCloud,
   ShieldCheck,
   Cpu,
+  Server,
+  Zap,
 } from "lucide-react";
 import type { ConnectorCatalogItem } from "../../../types";
 import {
   getConnectorCatalog,
   createDatabaseConnection,
   uploadFileSource,
+  testConnectionConfig,
 } from "../../../services/api";
 import { useToast } from "../../../context/ToastContext";
 
@@ -47,6 +50,13 @@ export default function AddConnectionModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    latency_ms?: number;
+    message?: string;
+  } | null>(null);
+
   // Common Form Fields
   const [formData, setFormData] = useState({
     name: "",
@@ -60,6 +70,7 @@ export default function AddConnectionModal({
     apiKey: "",
     collectionName: "",
     tableName: "",
+    dbIndex: 0,
     isReadOnly: true,
   });
 
@@ -112,7 +123,12 @@ export default function AddConnectionModal({
       defaultDb = "master";
     } else if (type === "mongodb") {
       defaultDb = "test";
+    } else if (type === "redis") {
+      defaultPort = "6379";
+      defaultDb = "0";
     }
+
+    setTestResult(null);
 
     setFormData({
       name: `${displayName} Source`,
@@ -126,6 +142,7 @@ export default function AddConnectionModal({
       apiKey: "",
       collectionName: "",
       tableName: "",
+      dbIndex: 0,
       isReadOnly: true,
     });
   };
@@ -232,6 +249,27 @@ export default function AddConnectionModal({
         return;
       }
 
+      // Redis Key-Value Store
+      if (type === "redis") {
+        await createDatabaseConnection({
+          connector_type: "redis",
+          name: formData.name.trim() || `${displayName} Store`,
+          is_read_only: formData.isReadOnly,
+          config: {
+            host: formData.host.trim() || "localhost",
+            port: formData.port ? parseInt(formData.port, 10) : 6379,
+            password: formData.password || undefined,
+            db: formData.dbIndex !== undefined ? parseInt(String(formData.dbIndex), 10) : 0,
+            ssl: formData.ssl,
+          },
+        });
+
+        toast.success(`Connected to Redis!`);
+        onConnectionCreated();
+        onClose();
+        return;
+      }
+
       // Relational & Document Connectors (Postgres, MySQL, MariaDB, MSSQL, MongoDB)
       const portNum = formData.port ? parseInt(formData.port, 10) : selectedConnector.default_port;
       await createDatabaseConnection({
@@ -261,13 +299,72 @@ export default function AddConnectionModal({
     }
   };
 
+  const handleTestConnection = async () => {
+    if (!selectedConnector) return;
+    setTesting(true);
+    setError(null);
+    setTestResult(null);
+
+    const type = getConnType(selectedConnector);
+    const displayName = getConnName(selectedConnector);
+
+    try {
+      const portNum = formData.port ? parseInt(formData.port, 10) : selectedConnector.default_port || undefined;
+      const payload = {
+        connector_type: type,
+        name: formData.name.trim() || displayName,
+        is_read_only: formData.isReadOnly,
+        config: {
+          host: formData.host.trim(),
+          port: portNum,
+          database: formData.database.trim(),
+          username: formData.username.trim(),
+          password: formData.password,
+          ssl: formData.ssl,
+          file_path: formData.filePath.trim(),
+          db: formData.dbIndex,
+          api_key: formData.apiKey ? formData.apiKey.trim() : undefined,
+          collection_name: formData.collectionName.trim() || undefined,
+        },
+      };
+
+      const res = await testConnectionConfig(payload);
+      if (res.test && res.test.connected) {
+        setTestResult({
+          success: true,
+          latency_ms: res.test.latency_ms,
+          message: res.test.details || `Reachable (${res.test.latency_ms || 10} ms)`,
+        });
+        toast.success(`Connection verified (${res.test.latency_ms || 10} ms)`);
+      } else {
+        const msg = res.test?.error || res.message || "Connection test failed";
+        setTestResult({ success: false, message: msg });
+        setError(msg);
+        toast.error(msg);
+      }
+    } catch (err: any) {
+      const msg = err.message || "Failed to test connection";
+      setTestResult({ success: false, message: msg });
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const filteredCatalog = catalog.filter((item) => {
-    const matchesCategory =
-      activeCategory === "all" || item.category === activeCategory;
     const name = getConnName(item).toLowerCase();
     const type = getConnType(item).toLowerCase();
+    const matchesCategory =
+      activeCategory === "all" ||
+      item.category === activeCategory ||
+      (activeCategory === "document" &&
+        (item.category === "document" ||
+          item.category === "nosql" ||
+          type === "redis" ||
+          type === "mongodb"));
     const desc = (item.description || "").toLowerCase();
     const query = searchQuery.toLowerCase();
     const matchesSearch =
@@ -286,6 +383,9 @@ export default function AddConnectionModal({
     }
     if (category === "vector") {
       return <Cpu className="w-5 h-5 text-violet-400" />;
+    }
+    if (type === "redis") {
+      return <Server className="w-5 h-5 text-rose-400" />;
     }
     if (type === "mongodb") {
       return <Layers className="w-5 h-5 text-emerald-400" />;
@@ -331,7 +431,7 @@ export default function AddConnectionModal({
                     [
                       { id: "all", label: "All Connectors" },
                       { id: "relational", label: "Relational" },
-                      { id: "document", label: "Document" },
+                      { id: "document", label: "NoSQL & Key-Value" },
                       { id: "vector", label: "Vector" },
                       { id: "file", label: "Files" },
                     ] as const
@@ -616,10 +716,99 @@ export default function AddConnectionModal({
                 </div>
               )}
 
+              {/* Redis Key-Value Store Mode */}
+              {getConnType(selectedConnector) === "redis" && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
+                        Redis Host / Endpoint
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={formData.host}
+                        onChange={(e) =>
+                          setFormData({ ...formData, host: e.target.value })
+                        }
+                        placeholder="localhost or 127.0.0.1"
+                        className="w-full px-3 py-2 bg-[#141418] border border-white/[0.08] focus:border-violet-500/50 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
+                        Port
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        value={formData.port || "6379"}
+                        onChange={(e) =>
+                          setFormData({ ...formData, port: e.target.value })
+                        }
+                        placeholder="6379"
+                        className="w-full px-3 py-2 bg-[#141418] border border-white/[0.08] focus:border-violet-500/50 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
+                        Password (Optional)
+                      </label>
+                      <input
+                        type="password"
+                        value={formData.password}
+                        onChange={(e) =>
+                          setFormData({ ...formData, password: e.target.value })
+                        }
+                        placeholder="••••••••"
+                        className="w-full px-3 py-2 bg-[#141418] border border-white/[0.08] focus:border-violet-500/50 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
+                        DB Index (0-15)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="15"
+                        value={formData.dbIndex}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            dbIndex: parseInt(e.target.value, 10) || 0,
+                          })
+                        }
+                        className="w-full px-3 py-2 bg-[#141418] border border-white/[0.08] focus:border-violet-500/50 rounded-xl text-xs text-white placeholder-zinc-600 focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="redisSslToggle"
+                      checked={formData.ssl}
+                      onChange={(e) =>
+                        setFormData({ ...formData, ssl: e.target.checked })
+                      }
+                      className="rounded border-white/[0.1] bg-[#141418] text-violet-600 focus:ring-0"
+                    />
+                    <label htmlFor="redisSslToggle" className="text-xs text-zinc-300">
+                      Enable TLS / SSL Connection (rediss://)
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {/* Relational & Document Connectors */}
               {(selectedConnector.category === "relational" ||
                 selectedConnector.category === "document") &&
-                getConnType(selectedConnector) !== "sqlite" && (
+                getConnType(selectedConnector) !== "sqlite" &&
+                getConnType(selectedConnector) !== "redis" && (
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
@@ -741,24 +930,60 @@ export default function AddConnectionModal({
                 />
               </div>
 
+              {/* Test Result Banner */}
+              {testResult?.success && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-emerald-300 text-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-emerald-400" />
+                    <span>{testResult.message}</span>
+                  </div>
+                  {testResult.latency_ms !== undefined && (
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                      {testResult.latency_ms} ms
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Form Action Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/[0.06]">
+              <div className="flex items-center justify-between pt-3 border-t border-white/[0.06]">
                 <button
                   type="button"
-                  onClick={() => setSelectedConnector(null)}
-                  disabled={submitting}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-colors"
+                  disabled={testing || submitting}
+                  onClick={handleTestConnection}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.06] text-xs font-medium text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
                 >
-                  Back
+                  {testing ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin text-violet-400" />
+                      <span>Testing ping...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={13} className="text-amber-400" />
+                      <span>Test Connection</span>
+                    </>
+                  )}
                 </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-violet-600/50 text-xs font-semibold text-white shadow-lg shadow-violet-600/20 transition-all cursor-pointer"
-                >
-                  {submitting && <Loader2 size={14} className="animate-spin" />}
-                  <span>Connect Source</span>
-                </button>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedConnector(null)}
+                    disabled={submitting}
+                    className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex items-center gap-2 px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-violet-600/50 text-xs font-semibold text-white shadow-lg shadow-violet-600/20 transition-all cursor-pointer"
+                  >
+                    {submitting && <Loader2 size={14} className="animate-spin" />}
+                    <span>Connect Source</span>
+                  </button>
+                </div>
               </div>
             </form>
           )}

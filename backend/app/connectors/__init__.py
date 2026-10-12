@@ -20,6 +20,7 @@ from app.connectors.relational import (
     MariaDBConnector,
 )
 from app.connectors.mongodb import MongoDBConnector
+from app.connectors.redis_connector import RedisConnector
 from app.connectors.vector import (
     VectorConnector,
     QdrantConnector,
@@ -50,6 +51,7 @@ __all__ = [
     "MSSQLConnector",
     "MariaDBConnector",
     "MongoDBConnector",
+    "RedisConnector",
     "VectorConnector",
     "QdrantConnector",
     "ChromaConnector",

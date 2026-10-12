@@ -43,6 +43,7 @@ from app.connectors.relational import (
     MariaDBConnector,
 )
 from app.connectors.mongodb import MongoDBConnector
+from app.connectors.redis_connector import RedisConnector
 from app.connectors.vector import QdrantConnector, ChromaConnector
 from app.connectors.file_connectors import CSVConnector, JSONConnector
 from app.connectors.registry import (
@@ -97,10 +98,15 @@ def run_tests():
     # ──────────────────────────────────────────────────────────────────────────
     print("\n--- 1. Connector Catalog & Discovery ---")
     catalog = get_supported_connectors_catalog()
-    assert_test("Catalog lists all 11 connectors", len(catalog) >= 11)
+    assert_test("Catalog lists all 12 connectors", len(catalog) >= 12)
     types_in_cat = {c["id"] for c in catalog}
-    for expected in ["sqlite", "mysql", "postgres", "sqlserver", "mariadb", "mongodb", "qdrant", "chroma", "csv", "excel", "json"]:
-        assert_test(f"Connector '{expected}' present in catalog", expected in types_in_cat)
+    expected_connectors = [
+        "sqlite", "mysql", "postgres", "mssql", "mariadb",
+        "mongodb", "redis", "qdrant", "chroma", "csv", "excel", "json"
+    ]
+    for expected in expected_connectors:
+        present = expected in types_in_cat or (expected == "sqlserver" and "mssql" in types_in_cat)
+        assert_test(f"Connector '{expected}' present in catalog", present)
 
     # ──────────────────────────────────────────────────────────────────────────
     # SECTION 2: Simultaneous Multi-Source Connections
@@ -332,11 +338,69 @@ def run_tests():
     schema_tool2 = get_schema()
     assert_test("get_schema() reflects connection 2 tables", "customers" in schema_tool2)
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # SECTION 12: Redis Connector & Read-Only Policy Verification
+    # ──────────────────────────────────────────────────────────────────────────
+    print("\n--- 12. Redis Connector & Read-Only Policy Verification ---")
+    redis_conn = RedisConnector(
+        connection_id=f"conn_redis_{uuid.uuid4().hex[:6]}",
+        name="Production Cache Redis",
+        host="localhost",
+        port=6379,
+        password="supersecretpassword123",
+        db=2,
+        ssl=True,
+        is_read_only=True,
+        user_id=test_user_id,
+    )
+
+    # 1. Credential masking: Password must never be exposed
+    sanitized = redis_conn.to_sanitized_config()
+    assert_test("Redis sanitized config masks password", sanitized.get("password") == "***")
+    assert_test("Redis sanitized config preserves host/port/db", sanitized.get("port") == 6379 and sanitized.get("db") == 2)
+    assert_test("Redis sanitized config preserves ssl flag", sanitized.get("ssl") is True)
+
+    # 2. Strict read-only enforcement: Destructive mutating commands blocked unconditionally
+    set_res = redis_conn.execute_query("SET user:101 'hacked'")
+    assert_test("Redis read-only policy blocks SET command", set_res.success is False)
+    assert_test("Redis blocked SET explains policy violation", "blocked by BG AI Redis read-only security policy" in (set_res.error or ""))
+
+    del_res = redis_conn.execute_query("DEL user:101")
+    assert_test("Redis read-only policy blocks DEL command", del_res.success is False)
+
+    flush_res = redis_conn.execute_query("FLUSHALL")
+    assert_test("Redis read-only policy blocks FLUSHALL command", flush_res.success is False)
+
+    flushdb_res = redis_conn.execute_query("FLUSHDB")
+    assert_test("Redis read-only policy blocks FLUSHDB command", flushdb_res.success is False)
+
+    # 3. Safe empty query handling
+    empty_res = redis_conn.execute_query("   ")
+    assert_test("Redis rejects empty query gracefully", empty_res.success is False)
+
+    # 4. Registry factory creates RedisConnector from config dictionary
+    redis_cfg = {
+        "connector_type": "redis",
+        "name": "Factory Redis",
+        "host": "redis.example.com",
+        "port": 6380,
+        "password": "secret",
+        "db": 1,
+        "ssl": False,
+        "is_read_only": True,
+    }
+    factory_conn = registry.create_connector_from_config(test_user_id, redis_cfg)
+    assert_test("Registry factory instantiates RedisConnector", isinstance(factory_conn, RedisConnector))
+    assert_test("Factory Redis connector port is 6380", factory_conn.port == 6380)
+    assert_test("Factory Redis connector db is 1", factory_conn.db == 1)
+
     # Clean up temp files
     try:
         conn1.disconnect()
         conn2.disconnect()
         json_conn.disconnect()
+        redis_conn.disconnect()
+        factory_conn.disconnect()
         registry.disconnect_all(test_user_id)
         clear_user_context(test_user_id)
     except Exception:

@@ -1819,7 +1819,7 @@ export interface ComplianceReportItem {
 
 // ── BG AI 2.0: Multi-Database Types ──────────────────────────────────────────
 
-export type ConnectorCategory = "relational" | "document" | "vector" | "file";
+export type ConnectorCategory = "relational" | "document" | "vector" | "file" | "nosql";
 export type ConnectorStatus = "connected" | "disconnected" | "error";
 
 export interface ConnectorCatalogItem {

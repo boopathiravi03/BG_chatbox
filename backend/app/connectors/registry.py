@@ -24,6 +24,7 @@ from app.connectors.relational import (
     MariaDBConnector,
 )
 from app.connectors.mongodb import MongoDBConnector
+from app.connectors.redis_connector import RedisConnector
 from app.connectors.vector import QdrantConnector, ChromaConnector
 from app.connectors.file_connectors import CSVConnector, ExcelConnector, JSONConnector
 
@@ -234,6 +235,18 @@ class ConnectionRegistry:
                 is_read_only=is_read_only,
                 user_id=user_id,
             )
+        elif c_type == "redis":
+            connector = RedisConnector(
+                connection_id=conn_id,
+                name=name,
+                host=config.get("host", "localhost"),
+                port=int(config.get("port", 6379)),
+                password=config.get("password"),
+                db=int(config.get("db", 0)),
+                ssl=bool(config.get("ssl", False)),
+                is_read_only=is_read_only,
+                user_id=user_id,
+            )
         elif c_type == "qdrant":
             connector = QdrantConnector(
                 connection_id=conn_id,
@@ -341,7 +354,7 @@ def get_supported_connectors_catalog() -> List[Dict[str, Any]]:
             "fields": ["host", "port", "database", "username", "password"],
         },
         {
-            "id": "sqlserver",
+            "id": "mssql",
             "name": "Microsoft SQL Server",
             "category": "relational",
             "description": "Microsoft enterprise relational database management system",
@@ -350,7 +363,7 @@ def get_supported_connectors_catalog() -> List[Dict[str, Any]]:
             "status": "ready",
             "fields": ["host", "port", "database", "username", "password", "driver"],
         },
-        # Priority 2: Document & Vector
+        # Priority 2: NoSQL & Key-Value
         {
             "id": "mongodb",
             "name": "MongoDB",
@@ -361,6 +374,17 @@ def get_supported_connectors_catalog() -> List[Dict[str, Any]]:
             "status": "ready",
             "fields": ["host", "port", "database", "username", "password", "auth_source"],
         },
+        {
+            "id": "redis",
+            "name": "Redis",
+            "category": "document",
+            "description": "Blazing-fast in-memory key-value data store and cache",
+            "default_port": 6379,
+            "badge": "Key-Value",
+            "status": "ready",
+            "fields": ["host", "port", "password", "db", "ssl"],
+        },
+        # Priority 3: Vector Databases
         {
             "id": "qdrant",
             "name": "Qdrant",

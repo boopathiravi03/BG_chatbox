@@ -160,8 +160,13 @@ class MultiConnectionRequest(BaseModel):
     api_key: str | None = None
     tenant: str | None = None
     driver: str | None = None
+    collection_name: str | None = None
+    connection_string: str | None = None
+    db: int | None = None
+    ssl: bool = False
     is_read_only: bool = False
     set_as_active: bool = True
+    config: dict[str, Any] | None = None
 
 
 class RenameConnectionRequest(BaseModel):
@@ -598,6 +603,8 @@ def create_connection(
         reg = get_connection_registry()
 
         cfg = req.dict(exclude_unset=True)
+        if req.config and isinstance(req.config, dict):
+            cfg.update(req.config)
         connector = reg.create_connector_from_config(user.user_id, cfg)
         ok = connector.connect()
 
@@ -705,6 +712,33 @@ def get_connection_details(
         raise
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@app.post("/connections/test-config")
+@limiter.limit("30/minute")
+def test_connection_config_endpoint(
+    req: MultiConnectionRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        cfg = req.dict(exclude_unset=True)
+        if req.config and isinstance(req.config, dict):
+            cfg.update(req.config)
+        cfg["connection_id"] = f"test_{uuid.uuid4().hex[:8]}"
+        cfg["name"] = "Temporary Test Connection"
+
+        # Instantiate connector temporarily
+        connector = reg.create_connector_from_config(user.user_id, cfg)
+        try:
+            test_res = connector.test_connection()
+            return {"status": "success" if test_res.get("connected") else "error", "test": test_res}
+        finally:
+            reg.remove_connector(user.user_id, connector.connection_id)
+    except Exception as e:
+        return {"status": "error", "message": str(e), "test": {"connected": False, "error": str(e)}}
 
 
 @app.post("/connections/{connection_id}/test")
