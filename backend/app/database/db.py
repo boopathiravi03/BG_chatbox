@@ -57,6 +57,44 @@ def set_database(db_path: Path):
 
 def get_database_info():
     try:
+        from app.database.connection_context import get_request_user_id, get_request_connection_id
+        uid = get_request_user_id()
+        if uid:
+            try:
+                from app.connectors.registry import get_connection_registry, ConnectorStatus
+                reg = get_connection_registry()
+                target_cid = get_request_connection_id()
+                conn = reg.get_connector(uid, target_cid) if target_cid else None
+                if not conn:
+                    conn = reg.get_active_connector(uid)
+                if conn:
+                    is_conn = (conn.status == ConnectorStatus.CONNECTED)
+                    if not is_conn and hasattr(conn, "connect"):
+                        try:
+                            is_conn = bool(conn.connect())
+                        except Exception:
+                            is_conn = False
+                    stats = conn.get_stats() if is_conn else {}
+                    tables = stats.get("tables", stats.get("collections", stats.get("tables_count", 0)))
+                    rows = stats.get("rows", stats.get("documents", stats.get("total_keys", stats.get("total_points", stats.get("total_documents", 0)))))
+                    cols = stats.get("columns", 0)
+                    return {
+                        "connected": is_conn,
+                        "db_type": conn.connector_type,
+                        "database": conn.name,
+                        "tables": tables,
+                        "collections": stats.get("collections", tables if conn.category.value == "document" else 0),
+                        "rows": rows,
+                        "documents": stats.get("documents", rows if conn.category.value == "document" else 0),
+                        "columns": cols,
+                        "size": stats.get("size", "Remote Database" if conn.category.value != "file" else "Local File"),
+                        "status": conn.status.value if hasattr(conn.status, "value") else str(conn.status),
+                        "category": conn.category.value if hasattr(conn.category, "value") else str(conn.category),
+                        "is_exact": True,
+                    }
+            except Exception:
+                pass
+
         active_engine = get_engine()
         if active_engine is None:
             return {
@@ -64,9 +102,14 @@ def get_database_info():
                 "db_type": "none",
                 "database": "Not Connected",
                 "tables": 0,
+                "collections": 0,
                 "rows": 0,
+                "documents": 0,
                 "columns": 0,
                 "size": "0 B",
+                "status": "disconnected",
+                "category": "none",
+                "is_exact": False,
             }
 
         inspector = inspect(active_engine)
@@ -136,9 +179,14 @@ def get_database_info():
             ),
             "database": database_name,
             "tables": len(tables),
+            "collections": 0,
             "rows": row_count,
+            "documents": 0,
             "columns": column_count,
             "size": size_str,
+            "status": "connected",
+            "category": "relational",
+            "is_exact": True,
         }
 
     except Exception as e:
@@ -147,9 +195,14 @@ def get_database_info():
             "db_type": "none",
             "database": "Not Connected",
             "tables": 0,
+            "collections": 0,
             "rows": 0,
+            "documents": 0,
             "columns": 0,
             "size": "0 MB",
+            "status": "disconnected",
+            "category": "none",
+            "is_exact": False,
             "error": str(e),
         }
 

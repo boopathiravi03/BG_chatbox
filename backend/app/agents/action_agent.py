@@ -54,6 +54,29 @@ class ActionAgent(BaseAgent):
         for trigger in injection_triggers:
             if trigger in req_lower:
                 steps.append(f"SAFETY GUARD TRIGGERED: Detected disallowed command/pattern '{trigger}'.")
+                try:
+                    from app.intelligence.governance.security_events import SecurityEventManager
+                    from app.database.connection_context import get_request_user_id
+                    uid = get_request_user_id() or "default_user"
+                    db_id = getattr(task, "database_context", None) or "active_db"
+
+                    if trigger in ("drop table", "alter table", "truncate", "grant", "revoke"):
+                        SecurityEventManager.log_ddl_blocked(
+                            user_id=uid,
+                            database_identity=db_id,
+                            operation=f"Prompt command '{trigger.upper()}'",
+                            source="action_agent_safety_guard",
+                        )
+                    else:
+                        SecurityEventManager.log_prompt_injection(
+                            user_id=uid,
+                            database_identity=db_id,
+                            pattern=trigger,
+                            source="action_agent_safety_guard",
+                        )
+                except Exception:
+                    pass
+
                 return AgentResult(
                     task_id=task.task_id,
                     agent_name=self.name,

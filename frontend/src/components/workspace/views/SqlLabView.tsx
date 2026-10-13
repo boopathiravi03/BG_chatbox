@@ -12,6 +12,7 @@ import {
   Plug,
   AlertTriangle,
   Sparkles,
+  FileCode,
 } from "lucide-react";
 import { runQuery, optimizeSQL } from "../../../services/api";
 import ResultTable from "../../chat/ResultTable";
@@ -47,7 +48,21 @@ export default function SqlLabView({
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(
     initialConnectionId || activeConnectionId || connections[0]?.connection_id || null
   );
-  const [query, setQuery] = useState(initialQuery || "SELECT * FROM customers LIMIT 10;");
+
+  const currentConn =
+    connections.find((c) => c.connection_id === selectedConnectionId) ||
+    connections.find((c) => c.is_active) ||
+    connections[0];
+
+  const isMongo =
+    currentConn?.connector_type?.toLowerCase() === "mongodb" ||
+    currentConn?.category === "nosql";
+
+  const defaultQueryForConn = isMongo
+    ? "db.customers.find({}).limit(25)"
+    : "SELECT * FROM customers LIMIT 10;";
+
+  const [query, setQuery] = useState(initialQuery || defaultQueryForConn);
   const [loading, setLoading] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [queryResult, setQueryResult] = useState<any>(null);
@@ -70,11 +85,26 @@ export default function SqlLabView({
     }
   }, [initialQuery]);
 
+  // Adjust default query when switching between SQL and MongoDB if query is still untouched default
+  useEffect(() => {
+    if (!initialQuery) {
+      if (isMongo && query.trim().toUpperCase().startsWith("SELECT")) {
+        setQuery("db.customers.find({}).limit(25)");
+      } else if (!isMongo && query.trim().startsWith("db.")) {
+        setQuery("SELECT * FROM customers LIMIT 10;");
+      }
+    }
+  }, [isMongo, initialQuery]);
+
   const saveToHistory = (sql: string, success: boolean, rowsCount: number) => {
     const item: HistoryItem = {
       id: crypto.randomUUID(),
       query: sql,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
       success,
       rowsCount,
     };
@@ -104,7 +134,7 @@ export default function SqlLabView({
           rows: res.rows || [],
         });
         saveToHistory(query.trim(), true, res.rows?.length || 0);
-        toast.success(`Query executed in ${elapsed}ms`);
+        toast.success(`Query executed in ${elapsed}ms (${res.rows?.length || 0} records)`);
       } else {
         setQueryResult({
           success: false,
@@ -119,7 +149,7 @@ export default function SqlLabView({
         error: err.message || "Failed to execute query.",
       });
       saveToHistory(query.trim(), false, 0);
-      toast.error("Execution error");
+      toast.error(err.message || "Execution error");
     } finally {
       setLoading(false);
     }
@@ -129,25 +159,46 @@ export default function SqlLabView({
     if (!query.trim() || optimizing) return;
     setOptimizing(true);
     try {
+      if (isMongo) {
+        toast.info("AI Optimization analyzes query performance & index coverage.");
+      }
       const res = await optimizeSQL(query.trim());
       if (res) {
         setOptimizationResult(res);
         toast.success("AI optimization analysis complete");
       }
     } catch (err) {
-      toast.error("Failed to optimize SQL");
+      toast.error("Failed to optimize query");
     } finally {
       setOptimizing(false);
     }
   };
 
   const handleValidate = () => {
-    const trimmed = query.trim().toUpperCase();
+    const trimmed = query.trim();
     if (!trimmed) {
       toast.error("Query is empty");
       return;
     }
-    if (trimmed.startsWith("DROP") || trimmed.startsWith("TRUNCATE")) {
+
+    if (isMongo) {
+      if (trimmed.startsWith("{")) {
+        try {
+          JSON.parse(trimmed);
+          toast.success("JSON command syntax is valid.");
+        } catch (e: any) {
+          toast.error(`Invalid JSON command: ${e.message}`);
+        }
+      } else if (trimmed.startsWith("db.")) {
+        toast.success("MongoDB query syntax format is valid.");
+      } else {
+        toast.error("MongoDB queries should start with 'db.<collection>.' or be a valid JSON object.");
+      }
+      return;
+    }
+
+    const upper = trimmed.toUpperCase();
+    if (upper.startsWith("DROP") || upper.startsWith("TRUNCATE")) {
       toast.error("Dangerous DDL query detected. Drop/Truncate requires confirmation.");
       return;
     }
@@ -162,7 +213,7 @@ export default function SqlLabView({
         </div>
         <h3 className="text-lg font-bold text-white">No Database Connected</h3>
         <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-          Connect your database to run interactive SQL queries, inspect execution times,
+          Connect your database to run interactive queries, inspect execution times,
           and optimize queries using AI.
         </p>
         <button
@@ -178,14 +229,21 @@ export default function SqlLabView({
 
   return (
     <div className="h-full flex flex-col p-4 sm:p-6 space-y-4 max-w-6xl mx-auto overflow-y-auto">
-      {/* SQL Editor Card */}
+      {/* Editor Card */}
       <div className="bg-[#121216] border border-white/[0.08] rounded-2xl overflow-hidden shadow-xl flex flex-col">
         {/* Editor Toolbar */}
         <div className="h-12 px-4 bg-[#14141a] border-b border-white/[0.06] flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Terminal size={15} className="text-violet-400" />
-              <span className="text-xs font-bold text-white tracking-wide">SQL Editor</span>
+              <span className="text-xs font-bold text-white tracking-wide">
+                {isMongo ? "MongoDB Query & Command Lab" : "SQL Query Lab"}
+              </span>
+              {isMongo && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                  MQL & JSON
+                </span>
+              )}
             </div>
 
             {connections.length > 1 && (
@@ -232,15 +290,6 @@ export default function SqlLabView({
               <CheckCircle size={13} className="text-emerald-400" />
               <span className="hidden sm:inline">Validate</span>
             </button>
-
-            <button
-              disabled
-              title="Execution Plan is scheduled for the next release"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.01] border border-white/[0.04] text-zinc-600 text-xs font-medium cursor-not-allowed opacity-60"
-            >
-              <HelpCircle size={13} />
-              <span className="hidden sm:inline">Explain</span>
-            </button>
           </div>
         </div>
 
@@ -250,32 +299,79 @@ export default function SqlLabView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             rows={5}
-            placeholder="Type your SQL query here... (e.g. SELECT * FROM customers WHERE city = 'Chennai';)"
+            placeholder={
+              isMongo
+                ? 'Type MQL or JSON command... (e.g. db.customers.find({}).limit(25) or {"collection": "customers", "filter": {}})'
+                : "Type your SQL query here... (e.g. SELECT * FROM customers WHERE city = 'Chennai';)"
+            }
             className="w-full bg-transparent font-mono text-xs sm:text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none resize-y leading-relaxed"
           />
         </div>
 
         {/* Quick query presets */}
-        <div className="px-4 py-2 bg-[#101014] border-t border-white/[0.04] flex items-center gap-2 overflow-x-auto text-[11px] text-zinc-400">
+        <div className="px-4 py-2 bg-[#101014] border-t border-white/[0.04] flex items-center gap-2 overflow-x-auto text-[11px] text-zinc-400 scrollbar-thin">
           <span className="shrink-0 font-semibold text-zinc-400">Templates:</span>
-          <button
-            onClick={() => setQuery("SELECT * FROM customers LIMIT 25;")}
-            className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
-          >
-            SELECT * LIMIT 25
-          </button>
-          <button
-            onClick={() => setQuery("SELECT COUNT(*) AS total_records FROM orders;")}
-            className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
-          >
-            COUNT(*)
-          </button>
-          <button
-            onClick={() => setQuery("SELECT status, COUNT(*) FROM orders GROUP BY status;")}
-            className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
-          >
-            GROUP BY status
-          </button>
+          {isMongo ? (
+            <>
+              <button
+                onClick={() => setQuery("db.customers.find({}).limit(25)")}
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                find().limit(25)
+              </button>
+              <button
+                onClick={() => setQuery("db.customers.countDocuments({})")}
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                countDocuments()
+              </button>
+              <button
+                onClick={() =>
+                  setQuery('db.orders.aggregate([{"$group": {"_id": "$status", "count": {"$sum": 1}}}])')
+                }
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                aggregate()
+              </button>
+              <button
+                onClick={() =>
+                  setQuery('{\n  "collection": "customers",\n  "action": "find",\n  "filter": {},\n  "limit": 25\n}')
+                }
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                JSON Command
+              </button>
+              <button
+                onClick={() =>
+                  setQuery('db.customers.insertOne({"name": "New Customer", "status": "active"})')
+                }
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                insertOne()
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setQuery("SELECT * FROM customers LIMIT 25;")}
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                SELECT * LIMIT 25
+              </button>
+              <button
+                onClick={() => setQuery("SELECT COUNT(*) AS total_records FROM orders;")}
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                COUNT(*)
+              </button>
+              <button
+                onClick={() => setQuery("SELECT status, COUNT(*) FROM orders GROUP BY status;")}
+                className="px-2 py-0.5 rounded bg-white/[0.03] hover:bg-white/[0.08] text-zinc-300 hover:text-white transition-all cursor-pointer shrink-0 font-mono"
+              >
+                GROUP BY status
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -285,7 +381,7 @@ export default function SqlLabView({
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
               <Zap size={14} className="text-amber-400" />
-              <span>AI SQL Optimization Recommendation</span>
+              <span>AI Query Optimization Recommendation</span>
             </span>
             {optimizationResult.estimated_improvement && (
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
@@ -300,96 +396,95 @@ export default function SqlLabView({
             </div>
           )}
 
-          {optimizationResult.improvements && (
-            <ul className="text-xs text-zinc-300 list-disc list-inside space-y-0.5 pt-1">
-              {optimizationResult.improvements.map((imp: string, i: number) => (
-                <li key={i}>{imp}</li>
-              ))}
-            </ul>
+          {optimizationResult.explanation && (
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              {optimizationResult.explanation}
+            </p>
           )}
         </div>
       )}
 
-      {/* Results Section */}
-      <div className="bg-[#121216] border border-white/[0.08] rounded-2xl overflow-hidden shadow-xl p-5 space-y-4">
-        <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Query Result
+      {/* Query Result Section */}
+      {queryResult && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span className="font-semibold text-white flex items-center gap-2">
+              <span>Results</span>
+              {executionTime !== null && (
+                <span className="font-mono text-[11px] text-zinc-400 flex items-center gap-1">
+                  <Clock size={11} />
+                  <span>{executionTime}ms</span>
+                </span>
+              )}
             </span>
-            {executionTime !== null && (
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.04] text-zinc-400">
-                {executionTime} ms
-              </span>
-            )}
-            {queryResult?.rows && (
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                {queryResult.rows.length} rows
-              </span>
-            )}
           </div>
-        </div>
 
-        {queryResult ? (
-          queryResult.success ? (
-            <ResultTable result={queryResult} />
-          ) : (
-            <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-mono">
-              <p className="font-bold mb-1 flex items-center gap-1.5">
-                <AlertTriangle size={14} /> Execution Error:
-              </p>
-              <p>{queryResult.error}</p>
+          {queryResult.success ? (
+            <div className="rounded-2xl border border-white/[0.08] bg-[#121216] overflow-hidden shadow-xl">
+              <ResultTable result={queryResult} />
             </div>
-          )
-        ) : (
-          <div className="p-10 text-center text-xs text-zinc-400">
-            Write or paste a SQL query above and click <span className="text-emerald-400 font-semibold">Run</span> to execute.
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3">
+              <AlertTriangle size={18} className="text-rose-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold text-rose-300">Execution Failed</h4>
+                <p className="text-xs text-rose-200/90 font-mono leading-relaxed break-all">
+                  {queryResult.error}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Execution History */}
+      {/* Query History */}
       {history.length > 0 && (
-        <div className="bg-[#121216] border border-white/[0.08] rounded-2xl p-4 space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold text-zinc-400 uppercase tracking-wider">
-            <span className="flex items-center gap-1.5">
-              <Clock size={13} />
-              <span>Query Execution History</span>
+        <div className="bg-[#121216] border border-white/[0.08] rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white flex items-center gap-1.5">
+              <Clock size={13} className="text-zinc-400" />
+              <span>Recent Query History</span>
             </span>
             <button
               onClick={() => {
                 setHistory([]);
                 localStorage.removeItem("bgai_sql_history");
               }}
-              className="text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
             >
-              Clear
+              Clear History
             </button>
           </div>
 
-          <div className="space-y-1.5 max-h-36 overflow-y-auto scrollbar-thin">
-            {history.map((item) => (
+          <div className="space-y-1.5 max-h-48 overflow-y-auto scrollbar-thin">
+            {history.map((h) => (
               <div
-                key={item.id}
-                className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] text-xs font-mono text-zinc-300 transition-colors"
+                key={h.id}
+                className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.04] transition-all group text-xs font-mono"
               >
-                <div className="flex items-center gap-2 truncate mr-3">
+                <div
+                  onClick={() => setQuery(h.query)}
+                  className="flex-1 truncate cursor-pointer text-zinc-300 group-hover:text-white pr-4"
+                  title={h.query}
+                >
                   <span
-                    className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                      item.success ? "bg-emerald-400" : "bg-rose-400"
+                    className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${
+                      h.success ? "bg-emerald-400" : "bg-rose-400"
                     }`}
                   />
-                  <span className="truncate">{item.query}</span>
+                  {h.query}
                 </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] text-zinc-400">{item.timestamp}</span>
+                <div className="flex items-center gap-2 text-[10px] text-zinc-500 shrink-0">
+                  <span>{h.timestamp}</span>
                   <button
-                    onClick={() => setQuery(item.query)}
-                    className="p-1 rounded text-zinc-400 hover:text-white hover:bg-white/[0.08] cursor-pointer"
-                    title="Load into editor"
+                    onClick={() => {
+                      navigator.clipboard.writeText(h.query);
+                      toast.success("Query copied");
+                    }}
+                    className="p-1 hover:text-white transition-colors cursor-pointer"
+                    title="Copy Query"
                   >
-                    <RotateCcw size={12} />
+                    <Copy size={11} />
                   </button>
                 </div>
               </div>

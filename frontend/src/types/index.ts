@@ -23,6 +23,10 @@ export interface Message {
   content: string;
   timestamp?: string;
 
+  is_intro?: boolean;
+  intro_key?: string;
+  connection_id?: string;
+
   type?: string;
   message?: string;
 
@@ -359,6 +363,7 @@ export interface AnomalyScanReport {
   scan_timestamp: string;
   database_name: string;
   database_type: string;
+  scan_state?: "not_scanned" | "scanning" | "completed_no_findings" | "completed_with_findings" | "scan_failed";
 }
 
 export interface AnomalySummary {
@@ -366,6 +371,17 @@ export interface AnomalySummary {
   critical: number;
   warning: number;
   info: number;
+  total_anomalies?: number;
+  total_count?: number;
+  critical_count?: number;
+  warning_count?: number;
+  info_count?: number;
+  scan_timestamp?: string;
+  database_name?: string;
+  database_type?: string;
+  scan_state?: "not_scanned" | "scanning" | "completed_no_findings" | "completed_with_findings" | "scan_failed";
+  anomalies?: AnomalyFinding[];
+  clean_tables?: string[];
 }
 
 export interface AgentInfo {
@@ -1835,12 +1851,26 @@ export interface ConnectorCatalogItem {
   fields: string[];
 }
 
+export interface ConnectorCapabilities {
+  can_read_data: boolean;
+  can_insert_records: boolean;
+  can_update_records: boolean;
+  can_delete_records: boolean;
+  can_create_entities: boolean;
+  can_alter_schema: boolean;
+  can_manage_indexes: boolean;
+  can_execute_raw_queries: boolean;
+  supports_transactions: boolean;
+  read_only_reason?: string | null;
+}
+
 export interface DatabaseConnectionItem {
   connection_id: string;
   name: string;
   connector_type: string;
   category: ConnectorCategory;
   is_read_only: boolean;
+  capabilities?: ConnectorCapabilities;
   status: ConnectorStatus;
   created_at: string;
   last_connected_at: string | null;
@@ -1891,7 +1921,79 @@ export interface CrossDatabaseResponseItem {
   error?: string | null;
 }
 
+// ── Database Cybersecurity & Security Posture Types ─────────────────────────
 
+export interface SecurityPostureFinding {
+  id: string;
+  category: "SENSITIVE_DATA_EXPOSURE" | "CONNECTION_SECURITY" | "ACCESS_CONTROL" | "QUERY_SECURITY" | string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
+  title: string;
+  table?: string;
+  column?: string;
+  evidence_summary: string;
+  remediation: string;
+  sample_count?: number;
+}
+
+export interface SecurityPostureScanResult {
+  status: string;
+  connection_id: string;
+  database_type: string;
+  database_name: string;
+  scanned_at: string;
+  posture_score?: number | null;
+  risk_level?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN" | string;
+  score_explanation?: string;
+  tls_status: "VERIFIED" | "DISABLED" | "UNKNOWN";
+  tls_details?: string;
+  privilege_status: "LEAST_PRIVILEGE" | "ELEVATED" | "SUPERUSER" | "UNKNOWN";
+  privilege_details?: string;
+  tables_scanned: number;
+  total_findings: number;
+  findings: SecurityPostureFinding[];
+  message?: string;
+}
+
+export interface SecurityFindingExplanation {
+  finding_id: string;
+  title: string;
+  severity: string;
+  category: string;
+  location: string;
+  why_it_matters: string;
+  potential_impact: string;
+  remediation_steps: string[];
+  uncertainty_and_limitations: string;
+}
+
+export interface IPThreatBlockItem {
+  ip_address: string;
+  blocked_at: string;
+  expires_at: string;
+  remaining_seconds: number;
+  reason: string;
+  rule_triggered: string;
+}
+
+export interface IPReputationResult {
+  ip_address: string;
+  provider: string;
+  status: string;
+  classification: string;
+  is_private_network?: boolean;
+  is_loopback?: boolean;
+  reason?: string;
+  expires_at?: string;
+  note: string;
+}
+
+export interface IPThreatListResponse {
+  status: string;
+  threat_events: SecurityEventItem[];
+  active_blocks: IPThreatBlockItem[];
+  total_returned: number;
+  message?: string;
+}
 
 
 

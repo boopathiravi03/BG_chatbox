@@ -23,6 +23,7 @@ WRITE_OPERATIONS = {
     "insert",
     "update",
     "delete",
+    "create",
 }
 
 
@@ -161,6 +162,7 @@ def validate_sql(sql: str):
 
 def execute_query(sql: str, connection_id: Optional[str] = None):
     # Check if a non-SQL or specific connector is targeted
+    target_conn = None
     try:
         from app.database.connection_context import get_request_user_id
         from app.connectors.registry import get_connection_registry
@@ -188,6 +190,22 @@ def execute_query(sql: str, connection_id: Optional[str] = None):
                     # Enforce connector read-only check
                     first_w = _extract_first_operation(sql)
                     if first_w in WRITE_OPERATIONS:
+                        try:
+                            from app.intelligence.governance.security_events import SecurityEventManager
+                            from app.intelligence.governance.models import SecurityEventType, SecurityEventSeverity
+                            SecurityEventManager.log_security_event(
+                                user_id=uid or "default_user",
+                                database_identity=target_conn.connector_type,
+                                event_type=SecurityEventType.UNAUTHORIZED_ACCESS,
+                                severity=SecurityEventSeverity.HIGH,
+                                source="connector_permission_guard",
+                                resource=target_conn.name,
+                                description=f"Blocked write attempt ({first_w.upper()}) on READ-ONLY connection '{target_conn.name}'.",
+                                mitigation="Enforced read-only connector guardrail.",
+                                metadata={"operation": first_w},
+                            )
+                        except Exception:
+                            pass
                         return {
                             "success": False,
                             "columns": [],
@@ -202,6 +220,41 @@ def execute_query(sql: str, connection_id: Optional[str] = None):
     validation = validate_sql(sql)
 
     if not validation["allowed"]:
+        try:
+            from app.database.connection_context import get_request_user_id, get_request_client_ip
+            from app.intelligence.governance.security_events import SecurityEventManager
+            from app.intelligence.governance.models import SecurityEventType, SecurityEventSeverity
+            uid = get_request_user_id() or "default_user"
+            client_ip = get_request_client_ip() or "unknown"
+            db_id = target_conn.connector_type if target_conn else get_current_db_type()
+
+            if validation.get("dangerous"):
+                SecurityEventManager.log_ip_threat(
+                    user_id=uid,
+                    database_identity=db_id,
+                    event_type=SecurityEventType.DDL_BLOCKED,
+                    severity=SecurityEventSeverity.CRITICAL,
+                    source_ip=client_ip,
+                    resource="DATABASE_SCHEMA",
+                    description=f"Prohibited destructive DDL attempt ({validation['operation'].upper()}) originating from IP {client_ip}.",
+                    mitigation="Blocked execution via SQL safety gate.",
+                    metadata={"attempted_sql": validation['operation'].upper(), "source_ip": client_ip},
+                )
+            elif "Multiple SQL statements" in validation.get("reason", ""):
+                SecurityEventManager.log_ip_threat(
+                    user_id=uid,
+                    database_identity=db_id,
+                    event_type=SecurityEventType.INJECTION_PATTERN_DETECTED,
+                    severity=SecurityEventSeverity.HIGH,
+                    source_ip=client_ip,
+                    resource="SQL_STATEMENT",
+                    description=f"Multiple stacked SQL statements detected and blocked from IP {client_ip}.",
+                    mitigation="Denied multi-statement query execution to prevent stacked SQL injection.",
+                    metadata={"blocked_operation": validation.get("operation"), "source_ip": client_ip},
+                )
+        except Exception:
+            pass
+
         return {
             "success": False,
             "columns": [],
@@ -211,7 +264,15 @@ def execute_query(sql: str, connection_id: Optional[str] = None):
             "database": get_current_db_type(),
         }
 
-    engine = get_engine()
+    engine = None
+    if target_conn and hasattr(target_conn, "get_engine"):
+        try:
+            engine = target_conn.get_engine()
+        except Exception:
+            engine = None
+
+    if engine is None:
+        engine = get_engine()
 
     if engine is None:
         return {

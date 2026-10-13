@@ -420,6 +420,7 @@ def list_security_events(
     database_identity: Optional[str] = None,
     severity: Optional[SecurityEventSeverity] = None,
     event_type: Optional[SecurityEventType] = None,
+    ip_address: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> List[SecurityEventRecord]:
@@ -447,6 +448,11 @@ def list_security_events(
             if event_type:
                 query += " AND event_type = ?"
                 params.append(event_type.value if hasattr(event_type, "value") else str(event_type))
+
+            if ip_address:
+                # Filter by source_ip stored in metadata JSON
+                query += " AND json_extract(metadata, '$.source_ip') = ?"
+                params.append(ip_address)
 
             query += " ORDER BY timestamp DESC, rowid DESC LIMIT ? OFFSET ?"
             params.extend([safe_limit, safe_offset])

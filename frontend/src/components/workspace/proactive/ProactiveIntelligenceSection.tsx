@@ -13,6 +13,8 @@ import {
   X,
   ExternalLink,
   SlidersHorizontal,
+  Clock,
+  Database,
 } from "lucide-react";
 import {
   getProactiveAlerts,
@@ -20,25 +22,44 @@ import {
   acknowledgeProactiveAlert,
   resolveProactiveAlert,
   proposeProactiveAction,
+  getAnomalySummary,
   getAuthToken,
 } from "../../../services/api";
 import type {
   ProactiveAlert,
   ProactiveActionProposal,
+  AnomalySummary,
 } from "../../../types";
 
 interface ProactiveIntelligenceSectionProps {
   dbConnected: boolean;
+  activeDbName?: string;
+  activeConnectionId?: string | null;
   onConnectDatabase: () => void;
   onNavigateToAgents?: (prompt: string, agent?: string) => void;
+  onNavigateToAnomalyCenter?: () => void;
+  onScanCompleted?: () => void;
 }
+
+export type ScanState =
+  | "not_scanned"
+  | "scanning"
+  | "completed_no_findings"
+  | "completed_with_findings"
+  | "scan_failed";
 
 export default function ProactiveIntelligenceSection({
   dbConnected,
+  activeDbName,
+  activeConnectionId,
   onConnectDatabase,
   onNavigateToAgents,
+  onNavigateToAnomalyCenter,
+  onScanCompleted,
 }: ProactiveIntelligenceSectionProps) {
   const [alerts, setAlerts] = useState<ProactiveAlert[]>([]);
+  const [anomalySummary, setAnomalySummary] = useState<AnomalySummary | null>(null);
+  const [scanState, setScanState] = useState<ScanState>("not_scanned");
   const [loading, setLoading] = useState<boolean>(false);
   const [scanning, setScanning] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -53,53 +74,98 @@ export default function ProactiveIntelligenceSection({
   } | null>(null);
   const [proposingActionId, setProposingActionId] = useState<string | null>(null);
 
-  // Fetch alerts for authenticated user
-  const fetchAlerts = useCallback(async () => {
+  // Fetch unified alerts and anomaly summary for active database
+  const fetchData = useCallback(async (forceRefresh = false) => {
     if (!dbConnected || !getAuthToken()) {
       setAlerts([]);
+      setAnomalySummary(null);
+      setScanState("not_scanned");
       return;
     }
     setLoading(true);
     setErrorMessage(null);
     try {
-      const resp = await getProactiveAlerts({ limit: 50 });
-      if (resp && Array.isArray(resp.alerts)) {
-        setAlerts(resp.alerts);
+      const [alertsResp, anomResp] = await Promise.allSettled([
+        getProactiveAlerts({ limit: 50 }),
+        getAnomalySummary(forceRefresh, activeConnectionId),
+      ]);
+
+      let loadedAlerts: ProactiveAlert[] = [];
+      if (alertsResp.status === "fulfilled" && alertsResp.value && Array.isArray(alertsResp.value.alerts)) {
+        loadedAlerts = alertsResp.value.alerts;
+        setAlerts(loadedAlerts);
+      }
+
+      if (anomResp.status === "fulfilled" && anomResp.value) {
+        const summary = anomResp.value;
+        setAnomalySummary(summary);
+        const total = summary.total_anomalies ?? summary.total_count ?? summary.total ?? 0;
+        if (summary.scan_state) {
+          setScanState(summary.scan_state as ScanState);
+        } else {
+          setScanState(total > 0 || loadedAlerts.length > 0 ? "completed_with_findings" : "completed_no_findings");
+        }
+      } else if (loadedAlerts.length > 0) {
+        setScanState("completed_with_findings");
       } else {
-        setAlerts([]);
+        setScanState("completed_no_findings");
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to load proactive alerts.");
+      setScanState("scan_failed");
     } finally {
       setLoading(false);
     }
-  }, [dbConnected]);
+  }, [dbConnected, activeConnectionId]);
 
   useEffect(() => {
-    fetchAlerts();
-  }, [fetchAlerts]);
+    fetchData(false);
+  }, [fetchData]);
 
   // Handle on-demand proactive scan
   const handleScanNow = async () => {
     if (scanning || !dbConnected) return;
     setScanning(true);
+    setScanState("scanning");
     setErrorMessage(null);
     try {
-      const resp = await evaluateProactive();
-      if (resp.status === "disconnected") {
-        setErrorMessage("Database is currently disconnected. Please connect a database.");
-        setAlerts([]);
-      } else if (resp.status === "insufficient_data") {
-        setErrorMessage(resp.message || "Insufficient historical records to detect metric shifts.");
-      } else if (resp.alerts) {
-        setAlerts(resp.alerts);
+      const [evalResp, anomResp] = await Promise.allSettled([
+        evaluateProactive(),
+        getAnomalySummary(true, activeConnectionId),
+      ]);
+
+      let loadedAlerts: ProactiveAlert[] = [];
+      if (evalResp.status === "fulfilled" && evalResp.value) {
+        const resp = evalResp.value;
+        if (resp.status === "disconnected") {
+          setErrorMessage("Database is currently disconnected. Please connect a database.");
+          setAlerts([]);
+        } else if (resp.status === "insufficient_data") {
+          // Insufficient historical records for time-series shifts, but anomalies may still be discovered
+        } else if (resp.alerts) {
+          loadedAlerts = resp.alerts;
+          setAlerts(loadedAlerts);
+        }
       }
+
+      if (anomResp.status === "fulfilled" && anomResp.value) {
+        const summary = anomResp.value;
+        setAnomalySummary(summary);
+        const total = summary.total_anomalies ?? summary.total_count ?? summary.total ?? 0;
+        setScanState(total > 0 || loadedAlerts.length > 0 ? "completed_with_findings" : "completed_no_findings");
+      } else if (loadedAlerts.length > 0) {
+        setScanState("completed_with_findings");
+      } else {
+        setScanState("completed_no_findings");
+      }
+      onScanCompleted?.();
     } catch (err: any) {
       if (err.message && err.message.includes("429")) {
         setErrorMessage("Scan rate limit reached (max 10 scans/min). Please try again shortly.");
       } else {
         setErrorMessage(err.message || "Proactive scan failed.");
       }
+      setScanState("scan_failed");
     } finally {
       setScanning(false);
     }
@@ -172,10 +238,47 @@ export default function ProactiveIntelligenceSection({
 
   // Accurate Summary Counts strictly derived from API responses
   const activeAlerts = alerts.filter((a) => a.status !== "RESOLVED");
-  const criticalCount = activeAlerts.filter((a) => a.severity.toUpperCase() === "CRITICAL").length;
-  const warningCount = activeAlerts.filter((a) => a.severity.toUpperCase() === "WARNING").length;
-  const infoCount = activeAlerts.filter((a) => a.severity.toUpperCase() === "INFO").length;
-  const totalActive = activeAlerts.length;
+
+  // Derived from unified anomaly summary or active alerts
+  const totalAnomalies =
+    anomalySummary?.total_anomalies ??
+    anomalySummary?.total_count ??
+    anomalySummary?.total ??
+    0;
+  const totalActive = Math.max(totalAnomalies, activeAlerts.length);
+
+  const criticalCount = Math.max(
+    anomalySummary?.critical_count ?? anomalySummary?.critical ?? 0,
+    activeAlerts.filter((a) => a.severity.toUpperCase() === "CRITICAL").length
+  );
+
+  const warningCount = Math.max(
+    anomalySummary?.warning_count ?? anomalySummary?.warning ?? 0,
+    activeAlerts.filter((a) => a.severity.toUpperCase() === "WARNING").length
+  );
+
+  const infoCount = Math.max(
+    anomalySummary?.info_count ?? anomalySummary?.info ?? 0,
+    activeAlerts.filter((a) => a.severity.toUpperCase() === "INFO").length
+  );
+
+  const connectionIdentity =
+    anomalySummary?.database_name && anomalySummary.database_name !== "Not Connected"
+      ? anomalySummary.database_name
+      : activeDbName || "Active Database";
+
+  const scanTimestamp = anomalySummary?.scan_timestamp;
+
+  const formatTimestamp = (ts?: string | null) => {
+    if (!ts) return null;
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch {
+      return ts;
+    }
+  };
 
   // Safe helper to render evidence values without ever rendering an object directly into JSX
   const renderSafeValue = (val: any): React.ReactNode => {
@@ -251,17 +354,58 @@ export default function ProactiveIntelligenceSection({
               <h3 className="text-sm font-bold text-white tracking-tight">
                 Proactive Intelligence
               </h3>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-semibold">
-                ON-DEMAND
+              {/* Scan State Badge */}
+              {scanState === "scanning" ? (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-semibold flex items-center gap-1">
+                  <RefreshCw size={10} className="animate-spin" /> SCANNING...
+                </span>
+              ) : scanState === "completed_with_findings" ? (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 font-semibold">
+                  SCAN COMPLETED ({totalActive} FINDINGS)
+                </span>
+              ) : scanState === "completed_no_findings" ? (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
+                  SCAN COMPLETED (CLEAN)
+                </span>
+              ) : scanState === "scan_failed" ? (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 font-semibold">
+                  SCAN FAILED
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-500/15 border border-zinc-500/30 text-zinc-400 font-semibold">
+                  NOT SCANNED
+                </span>
+              )}
+
+              {/* Active Connection Identity */}
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-zinc-300 flex items-center gap-1">
+                <Database size={11} className="text-zinc-400" />
+                <span>{connectionIdentity}</span>
               </span>
             </div>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Detected changes and data-quality issues in your connected data.
-            </p>
+            <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1 flex-wrap">
+              <span>Detected changes and data-quality issues in your connected data.</span>
+              {scanTimestamp && (
+                <span className="text-[11px] text-zinc-500 font-mono flex items-center gap-1">
+                  <Clock size={11} />
+                  <span>Last scan: {formatTimestamp(scanTimestamp)}</span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 self-end md:self-center">
+        <div className="flex items-center gap-2 self-end md:self-center">
+          {onNavigateToAnomalyCenter && (
+            <button
+              onClick={onNavigateToAnomalyCenter}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-300 hover:text-white text-xs font-medium transition-all cursor-pointer"
+            >
+              <span>Anomaly Center</span>
+              <ArrowRight size={12} />
+            </button>
+          )}
+
           <button
             onClick={handleScanNow}
             disabled={scanning}
@@ -291,7 +435,12 @@ export default function ProactiveIntelligenceSection({
 
       {/* Summary KPI Badges */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToAnomalyCenter?.()}
+          className={`p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between ${
+            onNavigateToAnomalyCenter ? "hover:border-white/[0.15] cursor-pointer" : ""
+          }`}
+        >
           <div className="space-y-0.5">
             <span className="text-[11px] text-zinc-400">Total Active</span>
             <p className="text-xl font-bold font-mono text-white">{totalActive}</p>
@@ -301,7 +450,12 @@ export default function ProactiveIntelligenceSection({
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToAnomalyCenter?.()}
+          className={`p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between ${
+            onNavigateToAnomalyCenter ? "hover:border-rose-500/30 cursor-pointer" : ""
+          }`}
+        >
           <div className="space-y-0.5">
             <span className="text-[11px] text-rose-400 font-medium">Critical</span>
             <p className="text-xl font-bold font-mono text-rose-400">{criticalCount}</p>
@@ -311,7 +465,12 @@ export default function ProactiveIntelligenceSection({
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToAnomalyCenter?.()}
+          className={`p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between ${
+            onNavigateToAnomalyCenter ? "hover:border-amber-500/30 cursor-pointer" : ""
+          }`}
+        >
           <div className="space-y-0.5">
             <span className="text-[11px] text-amber-400 font-medium">Warning</span>
             <p className="text-xl font-bold font-mono text-amber-400">{warningCount}</p>
@@ -321,7 +480,12 @@ export default function ProactiveIntelligenceSection({
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToAnomalyCenter?.()}
+          className={`p-3.5 rounded-xl bg-[#121216] border border-white/[0.06] flex items-center justify-between ${
+            onNavigateToAnomalyCenter ? "hover:border-sky-500/30 cursor-pointer" : ""
+          }`}
+        >
           <div className="space-y-0.5">
             <span className="text-[11px] text-sky-400 font-medium">Informational</span>
             <p className="text-xl font-bold font-mono text-sky-400">{infoCount}</p>
@@ -369,16 +533,56 @@ export default function ProactiveIntelligenceSection({
         </div>
       )}
 
-      {/* Empty State */}
-      {alerts.length === 0 && !loading && (
+      {/* State: Not Scanned */}
+      {scanState === "not_scanned" && !loading && (
         <div className="p-8 rounded-2xl bg-[#121216] border border-white/[0.06] text-center space-y-3">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto">
-            <CheckCircle2 size={24} />
+          <div className="w-12 h-12 rounded-2xl bg-zinc-500/10 border border-zinc-500/20 flex items-center justify-center text-zinc-400 mx-auto">
+            <Sparkles size={24} />
           </div>
           <div className="max-w-md mx-auto space-y-1">
-            <h4 className="text-sm font-bold text-white">No significant issues detected.</h4>
+            <h4 className="text-sm font-bold text-white">Database Not Scanned Yet</h4>
             <p className="text-xs text-zinc-400">
-              Run a scan whenever you want BG AI to re-check your connected data for metric shifts and schema health.
+              Run an initial proactive scan to inspect null density, numeric distributions, and referential integrity across your tables.
+            </p>
+          </div>
+          <div className="pt-2">
+            <button
+              onClick={handleScanNow}
+              disabled={scanning}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition-all cursor-pointer shadow-md shadow-indigo-600/20"
+            >
+              <RefreshCw size={13} className={scanning ? "animate-spin text-white" : ""} />
+              <span>{scanning ? "Scanning..." : "Scan Database Now"}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* State: Scanning */}
+      {scanState === "scanning" && (
+        <div className="p-8 rounded-2xl bg-[#121216] border border-white/[0.06] text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mx-auto animate-pulse">
+            <RefreshCw size={24} className="animate-spin text-indigo-400" />
+          </div>
+          <div className="max-w-md mx-auto space-y-1">
+            <h4 className="text-sm font-bold text-white">Scanning Database...</h4>
+            <p className="text-xs text-zinc-400">
+              Evaluating statistical measures, outlier boundaries, and referential constraints in {connectionIdentity}...
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* State: Scan Failed */}
+      {scanState === "scan_failed" && !scanning && (
+        <div className="p-8 rounded-2xl bg-[#121216] border border-rose-500/20 text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mx-auto">
+            <AlertTriangle size={24} />
+          </div>
+          <div className="max-w-md mx-auto space-y-1">
+            <h4 className="text-sm font-bold text-white">Scan Failed</h4>
+            <p className="text-xs text-rose-300">
+              {errorMessage || "An error occurred while evaluating database metrics."}
             </p>
           </div>
           <div className="pt-2">
@@ -388,9 +592,62 @@ export default function ProactiveIntelligenceSection({
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-xs font-semibold text-white transition-all cursor-pointer"
             >
               <RefreshCw size={13} className={scanning ? "animate-spin text-white" : ""} />
-              <span>{scanning ? "Scanning..." : "Run Proactive Scan"}</span>
+              <span>Retry Scan</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* State: Completed Clean (No findings) */}
+      {scanState === "completed_no_findings" && totalActive === 0 && !loading && (
+        <div className="p-8 rounded-2xl bg-[#121216] border border-white/[0.06] text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto">
+            <CheckCircle2 size={24} />
+          </div>
+          <div className="max-w-md mx-auto space-y-1">
+            <h4 className="text-sm font-bold text-white">No significant issues detected.</h4>
+            <p className="text-xs text-zinc-400">
+              All scanned tables in {connectionIdentity} passed statistical validation with zero integrity breaches or outliers.
+            </p>
+          </div>
+          <div className="pt-2">
+            <button
+              onClick={handleScanNow}
+              disabled={scanning}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-xs font-semibold text-white transition-all cursor-pointer"
+            >
+              <RefreshCw size={13} className={scanning ? "animate-spin text-white" : ""} />
+              <span>{scanning ? "Scanning..." : "Re-run Proactive Scan"}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* State: Completed with Findings, but alerts store is empty while anomaly detector found issues */}
+      {totalActive > 0 && alerts.length === 0 && !loading && (
+        <div className="p-6 rounded-2xl bg-[#121216] border border-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 shrink-0">
+              <AlertTriangle size={20} />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white">
+                {totalActive} Anomaly Finding{totalActive > 1 ? "s" : ""} Detected
+              </h4>
+              <p className="text-xs text-zinc-400">
+                Found {criticalCount} critical, {warningCount} warning, and {infoCount} informational findings across active tables.
+              </p>
+            </div>
+          </div>
+          {onNavigateToAnomalyCenter && (
+            <button
+              onClick={onNavigateToAnomalyCenter}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-md shadow-amber-600/20 transition-all cursor-pointer shrink-0"
+            >
+              <span>Inspect in Anomaly Center</span>
+              <ArrowRight size={13} />
+            </button>
+          )}
         </div>
       )}
 

@@ -12,11 +12,12 @@ interface DatabaseInfo {
 }
 
 interface Props {
+  connectionId?: string;
   onClose?: () => void;
   onDisconnected?: () => void;
 }
 
-export default function DatabaseStats({ onClose, onDisconnected }: Props) {
+export default function DatabaseStats({ connectionId, onClose, onDisconnected }: Props) {
   const [info, setInfo] = useState<DatabaseInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -24,7 +25,7 @@ export default function DatabaseStats({ onClose, onDisconnected }: Props) {
   useEffect(() => {
     const fetchInfo = async () => {
       try {
-        const data = await getDatabaseInfo();
+        const data = await getDatabaseInfo(connectionId);
         setInfo(data);
       } catch (error) {
         setInfo({
@@ -41,7 +42,7 @@ export default function DatabaseStats({ onClose, onDisconnected }: Props) {
     };
 
     fetchInfo();
-  }, []);
+  }, [connectionId]);
 
   const handleDisconnect = async () => {
     setDisconnecting(true);

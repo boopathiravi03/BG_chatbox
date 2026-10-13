@@ -23,6 +23,7 @@ interface ChatAreaProps {
   onCancelQuery?: () => void;
   dbConnected?: boolean;
   dbType?: string | null;
+  activeConnectionId?: string | null;
   onOpenDatabase?: () => void;
   onConnectDatabase?: (type?: "sqlite" | "mysql" | "postgres") => void;
 }
@@ -41,6 +42,7 @@ export default function ChatArea({
   onCancelQuery,
   dbConnected,
   dbType,
+  activeConnectionId,
   onOpenDatabase,
   onConnectDatabase,
 }: ChatAreaProps) {
@@ -255,7 +257,10 @@ export default function ChatArea({
 
       {showDbStats && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <DatabaseStats onClose={() => setShowDbStats(false)} />
+          <DatabaseStats
+            connectionId={activeConnectionId || undefined}
+            onClose={() => setShowDbStats(false)}
+          />
         </div>
       )}
     </main>

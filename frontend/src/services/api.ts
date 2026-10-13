@@ -10,6 +10,8 @@ import type {
   ProactiveEvaluationResponse,
   ProactiveActionProposalResponse,
   DecisionAnalysisResponse,
+  AnomalyScanReport,
+  AnomalySummary,
   OutcomeRecord,
   RecordOutcomePayload,
   OutcomeListResponse,
@@ -28,6 +30,9 @@ import type {
   ConnectorCatalogItem,
   DatabaseConnectionItem,
   CrossDatabaseResponseItem,
+  SecurityPostureScanResult,
+  SecurityPostureFinding,
+  SecurityFindingExplanation,
 } from "../types";
 
 export const API_BASE = (
@@ -173,20 +178,24 @@ export async function clearDatabase() {
   });
 }
 
-export async function getDatabaseInfo() {
-  return apiFetch("/database-info");
+export async function getDatabaseInfo(connectionId?: string) {
+  const q = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/database-info${q}`);
 }
 
-export async function getDatabaseType() {
-  return apiFetch("/database-type");
+export async function getDatabaseType(connectionId?: string) {
+  const q = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/database-type${q}`);
 }
 
-export async function getDatabaseConnectionInfo() {
-  return apiFetch("/database-connection-info");
+export async function getDatabaseConnectionInfo(connectionId?: string) {
+  const q = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/database-connection-info${q}`);
 }
 
-export async function getDashboardData() {
-  return apiFetch("/dashboard");
+export async function getDashboardData(connectionId?: string) {
+  const q = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/dashboard${q}`);
 }
 
 export async function getAnalytics() {
@@ -381,14 +390,22 @@ export async function generateForecast(params: {
   return data.forecast;
 }
 
-export async function getAnomalyReport(forceRefresh = false) {
-  const data = await apiFetch(`/anomaly/report?force_refresh=${forceRefresh}`);
+export async function getAnomalyReport(forceRefresh = false, connectionId?: string | null): Promise<AnomalyScanReport> {
+  const query = new URLSearchParams();
+  if (forceRefresh) query.set("force_refresh", "true");
+  if (connectionId) query.set("connection_id", connectionId);
+  const qStr = query.toString() ? `?${query.toString()}` : "";
+  const data = await apiFetch(`/anomaly/report${qStr}`);
   if (data.status === "error") throw new Error(data.message || "Failed to load anomaly report");
   return data.report;
 }
 
-export async function getAnomalySummary() {
-  return apiFetch("/anomaly/summary");
+export async function getAnomalySummary(forceRefresh = false, connectionId?: string | null): Promise<AnomalySummary> {
+  const query = new URLSearchParams();
+  if (forceRefresh) query.set("force_refresh", "true");
+  if (connectionId) query.set("connection_id", connectionId);
+  const qStr = query.toString() ? `?${query.toString()}` : "";
+  return apiFetch<AnomalySummary>(`/anomaly/summary${qStr}`);
 }
 
 export async function getBusinessInsights(forceRefresh = false): Promise<BusinessInsightsResponse> {
@@ -1315,6 +1332,71 @@ export async function verifyAuditChain(): Promise<{
   });
 }
 
+export async function scanDatabaseSecurity(
+  connectionId?: string,
+  tables?: string[]
+): Promise<SecurityPostureScanResult> {
+  return apiFetch<SecurityPostureScanResult>("/security/scan", {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId, tables }),
+  });
+}
+
+export async function explainSecurityFinding(
+  finding: SecurityPostureFinding
+): Promise<{ status: string; explanation?: SecurityFindingExplanation; message?: string }> {
+  return apiFetch<{ status: string; explanation?: SecurityFindingExplanation; message?: string }>(
+    "/security/explain",
+    {
+      method: "POST",
+      body: JSON.stringify({ finding }),
+    }
+  );
+}
+
+export async function listIPThreats(params: {
+  ip_address?: string;
+  severity?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<import("../types").IPThreatListResponse> {
+  const q = new URLSearchParams();
+  if (params.ip_address) q.set("ip_address", params.ip_address);
+  if (params.severity) q.set("severity", params.severity);
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.offset) q.set("offset", String(params.offset));
+
+  return apiFetch<import("../types").IPThreatListResponse>(`/security/ip-threats?${q.toString()}`);
+}
+
+export async function queryIPReputation(ip_address: string): Promise<{
+  status: string;
+  reputation: import("../types").IPReputationResult;
+  message?: string;
+}> {
+  return apiFetch<{ status: string; reputation: import("../types").IPReputationResult; message?: string }>(
+    "/security/ip-threats/reputation",
+    {
+      method: "POST",
+      body: JSON.stringify({ ip_address }),
+    }
+  );
+}
+
+export async function unblockIP(ip_address: string): Promise<{
+  status: string;
+  message: string;
+  unblocked: boolean;
+}> {
+  return apiFetch<{ status: string; message: string; unblocked: boolean }>(
+    "/security/ip-threats/unblock",
+    {
+      method: "POST",
+      body: JSON.stringify({ ip_address }),
+    }
+  );
+}
+
 // ── BG AI 2.0: Multi-Database API Functions ──────────────────────────────────
 
 export async function getConnectorCatalog(): Promise<{
@@ -1554,6 +1636,175 @@ export async function executeCrossQuery(
     }),
   });
 }
+
+// =============================================================================
+// DATABASE EXPLORER & CRUD MANAGEMENT
+// =============================================================================
+
+export interface DatabaseRecordsParams {
+  table: string;
+  connectionId?: string;
+  limit?: number;
+  offset?: number;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc" | string;
+  search?: string;
+}
+
+export interface DatabaseRecordsResponse {
+  success: boolean;
+  entity: string;
+  records: Record<string, any>[];
+  columns: string[];
+  total_count: number;
+  limit: number;
+  offset: number;
+  primary_keys?: string[];
+  is_read_only?: boolean;
+  error?: string;
+}
+
+export async function getDatabaseRecords(
+  params: DatabaseRecordsParams
+): Promise<DatabaseRecordsResponse> {
+  const query = new URLSearchParams({
+    table: params.table,
+    limit: String(params.limit ?? 25),
+    offset: String(params.offset ?? 0),
+    sort_dir: params.sort_dir ?? "asc",
+  });
+  if (params.connectionId) query.append("connection_id", params.connectionId);
+  if (params.sort_by) query.append("sort_by", params.sort_by);
+  if (params.search) query.append("search", params.search);
+
+  return apiFetch<DatabaseRecordsResponse>(`/database/records?${query.toString()}`);
+}
+
+export async function createDatabaseRecord(payload: {
+  table: string;
+  data: Record<string, any>;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/records", {
+    method: "POST",
+    body: JSON.stringify({
+      table: payload.table,
+      data: payload.data,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function updateDatabaseRecord(payload: {
+  table: string;
+  primary_key: Record<string, any>;
+  data: Record<string, any>;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/records", {
+    method: "PUT",
+    body: JSON.stringify({
+      table: payload.table,
+      primary_key: payload.primary_key,
+      data: payload.data,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function deleteDatabaseRecord(payload: {
+  table: string;
+  primary_key: Record<string, any>;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/records", {
+    method: "DELETE",
+    body: JSON.stringify({
+      table: payload.table,
+      primary_key: payload.primary_key,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function createDatabaseEntity(payload: {
+  name: string;
+  definition?: Record<string, any>;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/structure/create", {
+    method: "POST",
+    body: JSON.stringify({
+      name: payload.name,
+      definition: payload.definition,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function renameDatabaseEntity(payload: {
+  old_name: string;
+  new_name: string;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/structure/rename", {
+    method: "POST",
+    body: JSON.stringify({
+      old_name: payload.old_name,
+      new_name: payload.new_name,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function dropDatabaseEntity(payload: {
+  name: string;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/structure/drop", {
+    method: "POST",
+    body: JSON.stringify({
+      name: payload.name,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function createDatabaseIndex(payload: {
+  tableName: string;
+  columnNames: string[];
+  indexName?: string;
+  unique?: boolean;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/indexes/create", {
+    method: "POST",
+    body: JSON.stringify({
+      table_name: payload.tableName,
+      column_names: payload.columnNames,
+      index_name: payload.indexName,
+      unique: payload.unique || false,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+export async function dropDatabaseIndex(payload: {
+  tableName: string;
+  indexName: string;
+  connectionId?: string;
+}): Promise<{ status: string; result?: any; error?: string }> {
+  return apiFetch("/database/indexes/drop", {
+    method: "POST",
+    body: JSON.stringify({
+      table_name: payload.tableName,
+      index_name: payload.indexName,
+      connection_id: payload.connectionId,
+    }),
+  });
+}
+
+
 
 
 

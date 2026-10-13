@@ -73,26 +73,37 @@ export default function ResultTable({ result }: Props) {
           </thead>
 
           <tbody className="divide-y divide-white/[0.04]">
-            {result.rows?.map((row, i) => {
-              const values = Array.isArray(row) ? row : Object.values(row);
+            {result.rows?.map((row, i) => (
+              <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                {result.columns!.map((column, cellIndex) => {
+                  const cell =
+                    Array.isArray(row)
+                      ? row[cellIndex]
+                      : typeof row === "object" && row !== null
+                      ? row[column]
+                      : row;
 
-              return (
-                <tr key={i} className="hover:bg-white/[0.03] transition-colors">
-                  {values.map((cell, cellIndex) => (
+                  const display =
+                    cell === null || cell === undefined ? (
+                      <span className="text-zinc-500 italic">null</span>
+                    ) : typeof cell === "object" ? (
+                      <span className="text-violet-300 font-mono text-xs">{JSON.stringify(cell)}</span>
+                    ) : (
+                      String(cell)
+                    );
+
+                  return (
                     <td
                       key={`${i}-${cellIndex}`}
-                      className="px-4 py-2.5 text-zinc-200 font-mono text-xs sm:text-sm whitespace-nowrap"
+                      className="px-4 py-2.5 text-zinc-200 font-mono text-xs sm:text-sm whitespace-nowrap max-w-sm truncate"
+                      title={typeof cell === "object" ? JSON.stringify(cell) : String(cell ?? "")}
                     >
-                      {cell === null || cell === undefined ? (
-                        <span className="text-zinc-500 italic">null</span>
-                      ) : (
-                        String(cell)
-                      )}
+                      {display}
                     </td>
-                  ))}
-                </tr>
-              );
-            })}
+                  );
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

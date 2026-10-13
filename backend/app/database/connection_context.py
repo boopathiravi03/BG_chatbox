@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from pathlib import Path
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -27,6 +28,8 @@ _request_db_type: ContextVar[str] = ContextVar("_request_db_type", default="none
 _request_user_id: ContextVar[Optional[str]] = ContextVar("_request_user_id", default=None)
 _request_context_id: ContextVar[Optional[str]] = ContextVar("_request_context_id", default=None)
 _request_connection_id: ContextVar[Optional[str]] = ContextVar("_request_connection_id", default=None)
+_request_client_ip: ContextVar[Optional[str]] = ContextVar("_request_client_ip", default=None)
+
 
 
 # ── Per-user context dataclass (Phase 7 backward-compatibility) ───────────────
@@ -143,7 +146,7 @@ def clear_user_context(user_id: str, connection_id: Optional[str] = None) -> Non
 
 # ── Request-scoped context activation ────────────────────────────────────────
 def set_user_context_for_request(
-    user_id: str, connection_id: Optional[str] = None
+    user_id: str, connection_id: Optional[str] = None, client_ip: Optional[str] = None
 ) -> DatabaseContext:
     """
     Called at the top of every authenticated endpoint handler.
@@ -151,6 +154,8 @@ def set_user_context_for_request(
     so downstream get_engine() / get_current_db_type() calls return
     the correct isolated engine without needing modification.
     """
+    if client_ip:
+        _request_client_ip.set(client_ip)
     engine: Optional[Engine] = None
     db_type = "none"
     ctx_id = None
@@ -171,6 +176,11 @@ def set_user_context_for_request(
             ctx_id = connector.connection_id
             db_type = connector.connector_type
             if isinstance(connector, RelationalConnector):
+                if connector.engine is None and hasattr(connector, "connect"):
+                    try:
+                        connector.connect()
+                    except Exception:
+                        pass
                 engine = connector.engine
 
             _request_connection_id.set(connector.connection_id)
@@ -186,6 +196,32 @@ def set_user_context_for_request(
         ctx_id = ctx.context_id
         _request_connection_id.set(ctx.context_id)
     else:
+        # If engine is still None, attempt synchronization with existing user context or database_manager
+        if engine is None:
+            existing_ctx = get_user_context(user_id)
+            if existing_ctx and existing_ctx.engine is not None:
+                engine = existing_ctx.engine
+                if db_type == "none":
+                    db_type = existing_ctx.database_type
+            else:
+                try:
+                    from app.database.database_manager import get_engine as get_dm_engine, get_current_db_type as get_dm_db_type
+                    dm_eng = get_dm_engine()
+                    if dm_eng is not None:
+                        engine = dm_eng
+                        if db_type == "none":
+                            db_type = get_dm_db_type()
+                except Exception:
+                    pass
+
+            if engine is not None and connector and hasattr(connector, "_engine") and getattr(connector, "_engine", None) is None:
+                try:
+                    connector._engine = engine
+                    if hasattr(connector, "touch_connected"):
+                        connector.touch_connected()
+                except Exception:
+                    pass
+
         ctx = DatabaseContext(
             context_id=ctx_id or str(uuid.uuid4()),
             user_id=user_id,
@@ -224,6 +260,10 @@ def get_request_context_id() -> Optional[str]:
 
 def get_request_connection_id() -> Optional[str]:
     return _request_connection_id.get()
+
+
+def get_request_client_ip() -> Optional[str]:
+    return _request_client_ip.get()
 
 
 # ── Connect helpers (Bridge to Multi-Connection Registry) ─────────────────────

@@ -70,6 +70,53 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+
+# ── IP Threat & Intrusion Detection Middleware ─────────────────────────────────
+from app.security.ip_intelligence import (
+    extract_client_ip,
+    get_intrusion_engine,
+    get_reputation_provider,
+)
+
+
+class IPThreatMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # 1. Safely extract client IP
+        client_ip = extract_client_ip(request)
+        request.state.client_ip = client_ip
+
+        engine = get_intrusion_engine()
+
+        # 2. Check if IP is actively blocked
+        is_blocked, block = engine.is_ip_blocked(client_ip)
+        if is_blocked and block:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "status": "error",
+                    "error": "Access Denied: Your IP address is temporarily blocked due to detected security policy violations.",
+                    "ip": client_ip,
+                    "reason": block.reason,
+                    "rule": block.rule_triggered,
+                },
+            )
+
+        # 3. Monitor request velocity (burst detection) for all paths except static health checks
+        path = request.url.path
+        if path not in {"/", "/health", "/favicon.ico"}:
+            engine.record_request_activity(client_ip, endpoint=path, user_id="system_edge")
+
+        response = await call_next(request)
+
+        # 4. Probe detection on 404 responses
+        if response.status_code == 404:
+            engine.record_probe_attempt(client_ip, path=path, user_id="scanner_probe")
+
+        return response
+
+
+app.add_middleware(IPThreatMiddleware)
+
 # ── Auth & Context imports ────────────────────────────────────────────────────
 from app.security.auth import create_access_token
 from app.security.sessions import (
@@ -212,8 +259,9 @@ class ForecastRequest(BaseModel):
     aggregation: str = "SUM"
 
 
-def _activate(user: AuthenticatedUser, connection_id: str | None = None):
-    set_user_context_for_request(user.user_id, connection_id)
+def _activate(user: AuthenticatedUser, connection_id: str | None = None, request: Request | None = None):
+    client_ip = getattr(request.state, "client_ip", None) if request and hasattr(request, "state") else None
+    set_user_context_for_request(user.user_id, connection_id, client_ip=client_ip)
 
 
 # =============================================================================
@@ -255,6 +303,12 @@ def auth_register(req: RegisterRequest, request: Request):
 def auth_login(req: LoginRequest, request: Request):
     user = authenticate_user(req.username, req.password)
     if not user:
+        client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
+        get_intrusion_engine().record_auth_failure(
+            ip_address=client_ip,
+            username=req.username,
+            user_id="auth_failure",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
@@ -497,16 +551,78 @@ def database_info(
     target_conn_id = connection_id or request.headers.get("X-Connection-ID")
     _activate(user, target_conn_id)
     try:
-        return get_database_info()
+        from app.connectors.registry import get_connection_registry, ConnectorStatus
+        reg = get_connection_registry()
+        active = None
+        if target_conn_id:
+            active = reg.get_connector(user.user_id, target_conn_id)
+        if not active:
+            active = reg.get_active_connector(user.user_id)
+
+        if active:
+            is_conn = (active.status == ConnectorStatus.CONNECTED)
+            if not is_conn and hasattr(active, "connect"):
+                try:
+                    is_conn = bool(active.connect())
+                except Exception:
+                    is_conn = False
+            stats = active.get_stats() if is_conn else {}
+            tables = stats.get("tables", stats.get("collections", stats.get("tables_count", 0)))
+            rows = stats.get("rows", stats.get("documents", stats.get("total_keys", stats.get("total_points", stats.get("total_documents", 0)))))
+            cols = stats.get("columns", 0)
+
+            # If active connector returned 0 tables or rows for relational category, fallback to get_database_info()
+            if active.category.value == "relational" and (tables == 0 or rows == 0):
+                try:
+                    fb = get_database_info()
+                    if fb.get("connected"):
+                        if tables == 0 and fb.get("tables", 0) > 0:
+                            tables = fb.get("tables", 0)
+                        if rows == 0 and fb.get("rows", 0) > 0:
+                            rows = fb.get("rows", 0)
+                        if cols == 0 and fb.get("columns", 0) > 0:
+                            cols = fb.get("columns", 0)
+                except Exception:
+                    pass
+
+            return {
+                "connected": is_conn,
+                "db_type": active.connector_type,
+                "database": active.name,
+                "database_name": getattr(active, "database", active.name),
+                "connection_id": active.connection_id,
+                "tables": tables,
+                "collections": stats.get("collections", tables if active.category.value == "document" else 0),
+                "rows": rows,
+                "documents": stats.get("documents", rows if active.category.value == "document" else 0),
+                "columns": cols,
+                "size": stats.get("size", stats.get("used_memory", "Remote Database" if active.category.value != "file" else "Local File")),
+                "status": active.status.value,
+                "category": active.category.value,
+                "is_exact": True,
+            }
+
+        fb = get_database_info()
+        fb.setdefault("status", "connected" if fb.get("connected") else "disconnected")
+        fb.setdefault("category", "relational")
+        fb.setdefault("collections", 0)
+        fb.setdefault("documents", 0)
+        fb.setdefault("is_exact", True)
+        return fb
     except Exception as e:
         return {
             "connected": False,
             "db_type": "none",
             "database": "Not Connected",
             "tables": 0,
+            "collections": 0,
             "rows": 0,
+            "documents": 0,
             "columns": 0,
             "size": "0 B",
+            "status": "error",
+            "category": "none",
+            "is_exact": False,
             "error": str(e),
         }
 
@@ -520,6 +636,24 @@ def database_type(
     target_conn_id = connection_id or request.headers.get("X-Connection-ID")
     _activate(user, target_conn_id)
     try:
+        from app.connectors.registry import get_connection_registry, ConnectorStatus
+        reg = get_connection_registry()
+        active = None
+        if target_conn_id:
+            active = reg.get_connector(user.user_id, target_conn_id)
+        if not active:
+            active = reg.get_active_connector(user.user_id)
+
+        if active:
+            is_conn = (active.status == ConnectorStatus.CONNECTED)
+            return {
+                "connected": is_conn,
+                "db_type": active.connector_type,
+                "connection_id": active.connection_id,
+                "name": active.name,
+                "category": active.category.value,
+            }
+
         eng = get_engine()
         db_t = get_current_db_type()
         return {
@@ -539,6 +673,36 @@ def database_connection_info(
     target_conn_id = connection_id or request.headers.get("X-Connection-ID")
     _activate(user, target_conn_id)
     try:
+        from app.connectors.registry import get_connection_registry, ConnectorStatus
+        reg = get_connection_registry()
+        active = None
+        if target_conn_id:
+            active = reg.get_connector(user.user_id, target_conn_id)
+        if not active:
+            active = reg.get_active_connector(user.user_id)
+
+        if active:
+            is_conn = (active.status == ConnectorStatus.CONNECTED)
+            cfg = active.to_sanitized_config()
+            driver_name = (
+                "pymongo"
+                if active.connector_type == "mongodb"
+                else "redis-py"
+                if active.connector_type == "redis"
+                else active.connector_type
+            )
+            return {
+                "connected": is_conn,
+                "db_type": active.connector_type,
+                "connection_id": active.connection_id,
+                "name": active.name,
+                "host": cfg.get("host"),
+                "port": cfg.get("port"),
+                "database": cfg.get("database"),
+                "username": cfg.get("username"),
+                "driver": driver_name,
+            }
+
         return get_database_connection_info()
     except Exception as e:
         return {"connected": False, "db_type": "none", "error": str(e)}
@@ -548,7 +712,7 @@ def database_connection_info(
 @limiter.limit("30/minute")
 def run_query(request: Request, req: QueryRequest, user: AuthenticatedUser = Depends(get_current_user)):
     target_conn_id = req.connection_id or request.headers.get("X-Connection-ID")
-    _activate(user, target_conn_id)
+    _activate(user, target_conn_id, request=request)
     try:
         return execute_query(req.query, connection_id=target_conn_id)
     except Exception as e:
@@ -638,7 +802,7 @@ async def upload_file_source(
     request: Request,
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
-    is_read_only: bool = Form(True),
+    is_read_only: bool = Form(False),
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     try:
@@ -841,7 +1005,22 @@ def set_active_connection_endpoint(
         if not ok:
             raise HTTPException(status_code=404, detail="Connection not found")
 
+        conn = reg.get_connector(user.user_id, connection_id)
+        if conn and conn.status.value != "connected":
+            try:
+                conn.connect()
+            except Exception:
+                pass
+
         _activate(user, connection_id)
+
+        # Invalidate old connection schema caches
+        try:
+            from app.tools.get_schema import clear_engine_schema_cache
+            clear_engine_schema_cache()
+        except Exception:
+            pass
+
         try:
             refresh_database_profile()
         except Exception:
@@ -900,6 +1079,424 @@ def execute_cross_query(
         return {"status": "error", "message": str(e)}
 
 
+# =============================================================================
+# COMPLETE DATABASE MANAGEMENT & CRUD API (PHASE 1 - 3)
+# =============================================================================
+
+class CreateRecordRequest(BaseModel):
+    table: str
+    data: Dict[str, Any]
+    connection_id: Optional[str] = None
+
+
+class UpdateRecordRequest(BaseModel):
+    table: str
+    primary_key: Dict[str, Any]
+    data: Dict[str, Any]
+    connection_id: Optional[str] = None
+
+
+class DeleteRecordRequest(BaseModel):
+    table: str
+    primary_key: Dict[str, Any]
+    connection_id: Optional[str] = None
+
+
+class CreateEntityRequest(BaseModel):
+    name: str
+    definition: Optional[Dict[str, Any]] = None
+    connection_id: Optional[str] = None
+
+
+class RenameEntityRequest(BaseModel):
+    old_name: str
+    new_name: str
+    connection_id: Optional[str] = None
+
+
+class DropEntityRequest(BaseModel):
+    name: str
+    connection_id: Optional[str] = None
+
+
+class CreateIndexRequest(BaseModel):
+    table_name: str
+    column_names: List[str]
+    index_name: Optional[str] = None
+    unique: bool = False
+    connection_id: Optional[str] = None
+
+
+class DropIndexRequest(BaseModel):
+    table_name: str
+    index_name: str
+    connection_id: Optional[str] = None
+
+
+@app.get("/database/records")
+def get_database_records_endpoint(
+    table: str,
+    connection_id: Optional[str] = None,
+    limit: int = 25,
+    offset: int = 0,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
+    search: Optional[str] = None,
+    request: Request = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    target_conn_id = connection_id or (request.headers.get("X-Connection-ID") if request else None)
+    _activate(user, target_conn_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, target_conn_id) if target_conn_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if conn:
+            return conn.get_records(
+                entity=table,
+                limit=limit,
+                offset=offset,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                search=search,
+            )
+
+        from app.intelligence.table_explorer import get_table_sample
+        sample = get_table_sample(
+            table_name=table,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            search=search,
+        )
+        return {
+            "success": True,
+            "entity": table,
+            "records": sample.get("rows", []),
+            "columns": sample.get("columns", []),
+            "total_count": sample.get("total_rows", 0),
+            "limit": limit,
+            "offset": offset,
+            "primary_keys": [],
+            "is_read_only": False,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "records": [], "columns": [], "total_count": 0}
+
+
+@app.post("/database/records")
+def create_database_record_endpoint(
+    req: CreateRecordRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.create_record(entity=req.table, data=req.data)
+
+        # Audit Ledger (Phase 6)
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="DATA_MUTATION",
+                user_id=user.user_id,
+                resource_id=req.table,
+                details=f"Inserted record into '{req.table}' via {conn.name}",
+            )
+        except Exception:
+            pass
+
+        try:
+            from app.intelligence.anomaly.detector import clear_cached_anomaly_report
+            clear_cached_anomaly_report()
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/database/records")
+def update_database_record_endpoint(
+    req: UpdateRecordRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.update_record(entity=req.table, primary_key=req.primary_key, data=req.data)
+
+        # Audit Ledger (Phase 6)
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="DATA_MUTATION",
+                user_id=user.user_id,
+                resource_id=req.table,
+                details=f"Updated record in '{req.table}' via {conn.name}: {req.primary_key}",
+            )
+        except Exception:
+            pass
+
+        try:
+            from app.intelligence.anomaly.detector import clear_cached_anomaly_report
+            clear_cached_anomaly_report()
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/database/records")
+def delete_database_record_endpoint(
+    req: DeleteRecordRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.delete_record(entity=req.table, primary_key=req.primary_key)
+
+        # Audit Ledger (Phase 6)
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="DATA_DELETION",
+                user_id=user.user_id,
+                resource_id=req.table,
+                details=f"Deleted record in '{req.table}' via {conn.name}: {req.primary_key}",
+            )
+        except Exception:
+            pass
+
+        try:
+            from app.intelligence.anomaly.detector import clear_cached_anomaly_report
+            clear_cached_anomaly_report()
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/database/structure/create")
+def create_structure_endpoint(
+    req: CreateEntityRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.create_entity(req.name, req.definition)
+
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="SCHEMA_MODIFICATION",
+                user_id=user.user_id,
+                resource_id=req.name,
+                details=f"Created table/collection '{req.name}' on {conn.name}",
+            )
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/database/structure/rename")
+def rename_structure_endpoint(
+    req: RenameEntityRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.rename_entity(req.old_name, req.new_name)
+
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="SCHEMA_MODIFICATION",
+                user_id=user.user_id,
+                resource_id=req.old_name,
+                details=f"Renamed '{req.old_name}' to '{req.new_name}' on {conn.name}",
+            )
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/database/structure/drop")
+def drop_structure_endpoint(
+    req: DropEntityRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.drop_entity(req.name)
+
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="SCHEMA_MODIFICATION",
+                user_id=user.user_id,
+                resource_id=req.name,
+                details=f"Dropped table/collection '{req.name}' on {conn.name}",
+            )
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/database/indexes/create")
+def create_index_endpoint(
+    req: CreateIndexRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.create_index(req.table_name, req.column_names, req.index_name, req.unique)
+
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="SCHEMA_MODIFICATION",
+                user_id=user.user_id,
+                resource_id=req.table_name,
+                details=f"Created index on '{req.table_name}' ({', '.join(req.column_names)}) on {conn.name}",
+            )
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/database/indexes/drop")
+def drop_index_endpoint(
+    req: DropIndexRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            raise HTTPException(status_code=400, detail="No active database connected.")
+
+        result = conn.drop_index(req.table_name, req.index_name)
+
+        try:
+            from app.governance.audit_ledger import get_audit_ledger
+            get_audit_ledger().record_event(
+                event_type="SCHEMA_MODIFICATION",
+                user_id=user.user_id,
+                resource_id=req.table_name,
+                details=f"Dropped index '{req.index_name}' on '{req.table_name}' on {conn.name}",
+            )
+        except Exception:
+            pass
+
+        return {"status": "success", "result": result}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/optimize")
 def optimize_sql_endpoint(req: OptimizationRequest, user: AuthenticatedUser = Depends(get_current_user)):
     _activate(user)
@@ -910,8 +1507,13 @@ def optimize_sql_endpoint(req: OptimizationRequest, user: AuthenticatedUser = De
 
 
 @app.get("/dashboard")
-def dashboard(user: AuthenticatedUser = Depends(get_current_user)):
-    _activate(user)
+def dashboard(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
         return get_dashboard_data()
     except Exception as e:
@@ -1182,42 +1784,97 @@ def forecasting_generate_endpoint(
 def anomaly_report_endpoint(
     request: Request,
     force_refresh: bool = False,
+    connection_id: str | None = None,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    _activate(user)
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
+        from app.database.database_manager import get_engine, get_current_db_type
+        engine = get_engine()
+        db_type = get_current_db_type()
+        if engine is None or db_type == "none":
+            return {
+                "status": "error",
+                "scan_state": "not_scanned",
+                "message": "No database currently connected.",
+                "report": None,
+            }
+
         from app.intelligence.anomaly.detector import detect_anomalies
         report = detect_anomalies(force_refresh=force_refresh)
-        return {"status": "success", "report": report.to_dict() if hasattr(report, "to_dict") else report}
+        rep_dict = report.to_dict() if hasattr(report, "to_dict") else report
+        tot = rep_dict.get("total_anomalies", 0) if isinstance(rep_dict, dict) else 0
+        scan_state = "completed_with_findings" if tot > 0 else "completed_no_findings"
+        return {"status": "success", "scan_state": scan_state, "report": rep_dict}
     except Exception as e:
-        return {"status": "error", "message": str(e), "report": None}
+        return {"status": "error", "scan_state": "scan_failed", "message": str(e), "report": None}
 
 
 @app.get("/anomaly/summary")
 def anomaly_summary_endpoint(
+    request: Request,
+    force_refresh: bool = False,
+    connection_id: str | None = None,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    _activate(user)
+    target_conn_id = connection_id or request.headers.get("X-Connection-ID")
+    _activate(user, target_conn_id)
     try:
+        from app.database.database_manager import get_engine, get_current_db_type
+        engine = get_engine()
+        db_type = get_current_db_type()
+        if engine is None or db_type == "none":
+            return {
+                "status": "success",
+                "scan_state": "not_scanned",
+                "critical_count": 0,
+                "warning_count": 0,
+                "info_count": 0,
+                "total_count": 0,
+                "total_anomalies": 0,
+                "scan_timestamp": "",
+                "database_name": "Not Connected",
+                "database_type": "none",
+                "clean_tables": [],
+                "anomalies": [],
+            }
+
         from app.intelligence.anomaly.detector import detect_anomalies
-        report = detect_anomalies(force_refresh=False)
+        report = detect_anomalies(force_refresh=force_refresh)
         rep_dict = report.to_dict() if hasattr(report, "to_dict") else report
+        crit = rep_dict.get("critical_count", 0) if isinstance(rep_dict, dict) else 0
+        warn = rep_dict.get("warning_count", 0) if isinstance(rep_dict, dict) else 0
+        info = rep_dict.get("info_count", 0) if isinstance(rep_dict, dict) else 0
+        tot = rep_dict.get("total_anomalies", 0) if isinstance(rep_dict, dict) else 0
+        scan_state = "completed_with_findings" if tot > 0 else "completed_no_findings"
+
         return {
             "status": "success",
-            "critical_count": rep_dict.get("summary", {}).get("critical_count", 0),
-            "warning_count": rep_dict.get("summary", {}).get("warning_count", 0),
-            "info_count": rep_dict.get("summary", {}).get("info_count", 0),
-            "total_count": rep_dict.get("total_anomalies", 0),
-            "clean_tables": rep_dict.get("clean_tables", []),
-            "anomalies": rep_dict.get("anomalies", []),
+            "scan_state": scan_state,
+            "critical_count": crit,
+            "warning_count": warn,
+            "info_count": info,
+            "total_count": tot,
+            "total_anomalies": tot,
+            "scan_timestamp": rep_dict.get("scan_timestamp", "") if isinstance(rep_dict, dict) else "",
+            "database_name": rep_dict.get("database_name", "Connected DB") if isinstance(rep_dict, dict) else "Connected DB",
+            "database_type": rep_dict.get("database_type", db_type) if isinstance(rep_dict, dict) else db_type,
+            "clean_tables": rep_dict.get("clean_tables", []) if isinstance(rep_dict, dict) else [],
+            "anomalies": rep_dict.get("anomalies", []) if isinstance(rep_dict, dict) else [],
         }
     except Exception as e:
         return {
             "status": "error",
+            "scan_state": "scan_failed",
             "critical_count": 0,
             "warning_count": 0,
             "info_count": 0,
             "total_count": 0,
+            "total_anomalies": 0,
+            "scan_timestamp": "",
+            "database_name": "unknown",
+            "database_type": "none",
             "clean_tables": [],
             "anomalies": [],
             "error": str(e),
@@ -1566,6 +2223,29 @@ def list_proactive_alerts(
             category=category,
             limit=bounded_limit,
         )
+        if not alerts:
+            from app.database.database_manager import get_engine, get_current_db_type
+            engine = get_engine()
+            db_type = get_current_db_type()
+            if engine is not None and db_type != "none":
+                try:
+                    evaluate_proactive_metrics(
+                        engine=engine,
+                        db_type=db_type,
+                        user_id=user.user_id,
+                        deduplicate=True,
+                        save_to_store=True,
+                    )
+                    alerts = get_alerts(
+                        user_id=user.user_id,
+                        status=status,
+                        severity=severity,
+                        category=category,
+                        limit=bounded_limit,
+                    )
+                except Exception:
+                    pass
+
         return {
             "alerts": [a.to_dict() for a in alerts],
             "count": len(alerts),
@@ -3632,6 +4312,7 @@ def list_governance_security_events_endpoint(
     offset: int = 0,
     event_type: Optional[str] = None,
     severity: Optional[str] = None,
+    ip_address: Optional[str] = None,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Retrieves logged security events (blocked DDL, injection attempts, etc.)."""
@@ -3649,6 +4330,7 @@ def list_governance_security_events_endpoint(
             database_identity=db_id,
             severity=sev_enum,
             event_type=ev_enum,
+            ip_address=ip_address,
             limit=bounded_limit,
             offset=offset,
         )
@@ -3887,5 +4569,211 @@ def verify_audit_chain_endpoint(
         return {"status": "error", "message": str(e)}
 
 
+class SecurityScanRequest(BaseModel):
+    connection_id: Optional[str] = None
+    tables: Optional[list[str]] = None
+
+
+@app.post("/security/scan")
+@limiter.limit("20/minute")
+def security_scan_endpoint(
+    req: SecurityScanRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Executes a read-only database cybersecurity and sensitive-data exposure audit
+    on the user's active or specified database connection.
+    """
+    _activate(user, req.connection_id)
+    try:
+        from app.connectors.registry import get_connection_registry
+        from app.security.posture_scanner import DatabasePostureScanner
+
+        reg = get_connection_registry()
+        conn = reg.get_connector(user.user_id, req.connection_id) if req.connection_id else None
+        if not conn:
+            conn = reg.get_active_connector(user.user_id)
+
+        if not conn:
+            return {
+                "status": "error",
+                "message": "No active database connected to scan.",
+                "connection_id": "",
+                "database_type": "none",
+                "database_name": "none",
+                "scanned_at": datetime.now(timezone.utc).isoformat(),
+                "posture_score": None,
+                "risk_level": "UNKNOWN",
+                "score_explanation": "No database connected.",
+                "tls_status": "UNKNOWN",
+                "privilege_status": "UNKNOWN",
+                "tables_scanned": 0,
+                "total_findings": 0,
+                "findings": [],
+            }
+
+        scanner = DatabasePostureScanner(
+            connector=conn,
+            user_id=user.user_id,
+            selected_tables=req.tables,
+        )
+        result = scanner.run_full_scan()
+        return result
+    except Exception as e:
+        logging.error(f"Database security scan error: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Security scan failed: {str(e)}",
+            "connection_id": req.connection_id or "",
+            "database_type": "error",
+            "database_name": "error",
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "posture_score": None,
+            "risk_level": "UNKNOWN",
+            "score_explanation": "Scan failed due to an error.",
+            "tls_status": "UNKNOWN",
+            "privilege_status": "UNKNOWN",
+            "tables_scanned": 0,
+            "total_findings": 0,
+            "findings": [],
+        }
+
+
+class SecurityExplainRequest(BaseModel):
+    finding: dict[str, Any]
+
+
+@app.post("/security/explain")
+@limiter.limit("30/minute")
+def security_explain_endpoint(
+    req: SecurityExplainRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Generates a structured, actionable AI explanation and prioritized remediation advice
+    for a specific security finding, with zero raw secret exposure.
+    """
+    _activate(user)
+    try:
+        from app.security.posture_scanner import explain_security_finding
+        explanation = explain_security_finding(req.finding, use_llm=True)
+        return {
+            "status": "success",
+            "explanation": explanation,
+        }
+    except Exception as e:
+        logging.error(f"Security explain error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+# ── IP Threat Intelligence & Intrusion Detection Endpoints ────────────────────
+class IPReputationQueryRequest(BaseModel):
+    ip_address: str
+
+
+class IPUnblockRequest(BaseModel):
+    ip_address: str
+
+
+@app.get("/security/ip-threats")
+@limiter.limit("60/minute")
+def list_ip_threats_endpoint(
+    request: Request,
+    ip_address: Optional[str] = None,
+    severity: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Returns recorded IP threat alerts and intrusion events from the SecurityEventManager.
+    """
+    _activate(user)
+    try:
+        store = get_audit_store()
+        sev_enum = SecurityEventSeverity(severity) if severity else None
+        events = store.list_security_events(
+            user_id=user.user_id,
+            severity=sev_enum,
+            ip_address=ip_address,
+            limit=limit,
+            offset=offset,
+        )
+
+        # Filter events that have source_ip in metadata or are intrusion/threat events
+        threat_events = []
+        for e in events:
+            meta = e.metadata or {}
+            ip = meta.get("source_ip")
+            if ip or e.event_type in (
+                SecurityEventType.BRUTE_FORCE_DETECTED,
+                SecurityEventType.SUSPICIOUS_BURST_DETECTED,
+                SecurityEventType.ENDPOINT_SCAN_DETECTED,
+                SecurityEventType.IP_BLOCKED,
+                SecurityEventType.AUTH_FAILURE,
+                SecurityEventType.INJECTION_PATTERN_DETECTED,
+                SecurityEventType.RATE_LIMIT_EXCEEDED,
+                SecurityEventType.UNAUTHORIZED_ACCESS,
+            ):
+                threat_events.append(e.to_dict())
+
+        engine = get_intrusion_engine()
+        active_blocks = engine.list_active_blocks()
+
+        return {
+            "status": "success",
+            "threat_events": threat_events,
+            "active_blocks": active_blocks,
+            "total_returned": len(threat_events),
+        }
+    except Exception as e:
+        logging.error(f"IP threats listing error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/security/ip-threats/reputation")
+@limiter.limit("30/minute")
+def query_ip_reputation_endpoint(
+    req: IPReputationQueryRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Queries local evidence or optional threat intelligence provider for IP reputation.
+    """
+    _activate(user)
+    try:
+        provider = get_reputation_provider()
+        rep = provider.query_reputation(req.ip_address)
+        return {"status": "success", "reputation": rep}
+    except Exception as e:
+        logging.error(f"IP reputation query error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/security/ip-threats/unblock")
+@limiter.limit("20/minute")
+def unblock_ip_endpoint(
+    req: IPUnblockRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Administrative endpoint to remove an active temporary IP block.
+    """
+    _activate(user)
+    try:
+        engine = get_intrusion_engine()
+        success = engine.remove_block(req.ip_address, admin_user_id=user.user_id)
+        return {
+            "status": "success" if success else "not_found",
+            "message": f"IP {req.ip_address} unblocked." if success else f"No active block found for {req.ip_address}.",
+            "unblocked": success,
+        }
+    except Exception as e:
+        logging.error(f"IP unblock error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 

@@ -27,6 +27,35 @@ class ConnectorStatus(str, Enum):
 
 
 @dataclass
+class ConnectorCapabilities:
+    """Explicit capability matrix for a database connector and connection instance."""
+    can_read_data: bool = True
+    can_insert_records: bool = True
+    can_update_records: bool = True
+    can_delete_records: bool = True
+    can_create_entities: bool = True
+    can_alter_schema: bool = True
+    can_manage_indexes: bool = True
+    can_execute_raw_queries: bool = True
+    supports_transactions: bool = True
+    read_only_reason: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "can_read_data": self.can_read_data,
+            "can_insert_records": self.can_insert_records,
+            "can_update_records": self.can_update_records,
+            "can_delete_records": self.can_delete_records,
+            "can_create_entities": self.can_create_entities,
+            "can_alter_schema": self.can_alter_schema,
+            "can_manage_indexes": self.can_manage_indexes,
+            "can_execute_raw_queries": self.can_execute_raw_queries,
+            "supports_transactions": self.supports_transactions,
+            "read_only_reason": self.read_only_reason,
+        }
+
+
+@dataclass
 class QueryResult:
     """Standardized result returned by connector execution."""
     success: bool
@@ -169,6 +198,68 @@ class BaseConnector(abc.ABC):
         self._schema_cache = None
         self._schema_cached_at = 0.0
 
+    def get_records(
+        self,
+        entity: str,
+        limit: int = 25,
+        offset: int = 0,
+        sort_by: Optional[str] = None,
+        sort_dir: str = "asc",
+        search: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch paginated, sortable, searchable records from table or collection."""
+        raise NotImplementedError(f"{self.connector_type} does not support browsing records.")
+
+    def create_record(self, entity: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new record or document."""
+        raise NotImplementedError(f"{self.connector_type} does not support creating records.")
+
+    def update_record(self, entity: str, primary_key: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing record or document."""
+        raise NotImplementedError(f"{self.connector_type} does not support updating records.")
+
+    def delete_record(self, entity: str, primary_key: Dict[str, Any]) -> Dict[str, Any]:
+        """Delete a record or document."""
+        raise NotImplementedError(f"{self.connector_type} does not support deleting records.")
+
+    def create_entity(self, name: str, definition: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Create a new table or collection."""
+        raise NotImplementedError(f"{self.connector_type} does not support creating entities.")
+
+    def rename_entity(self, old_name: str, new_name: str) -> Dict[str, Any]:
+        """Rename an existing table or collection."""
+        raise NotImplementedError(f"{self.connector_type} does not support renaming entities.")
+
+    def drop_entity(self, name: str) -> Dict[str, Any]:
+        """Drop a table or collection."""
+        raise NotImplementedError(f"{self.connector_type} does not support dropping entities.")
+
+    def create_index(self, entity: str, fields: List[str], index_name: Optional[str] = None, unique: bool = False) -> Dict[str, Any]:
+        """Create an index on specified fields of table or collection."""
+        raise NotImplementedError(f"{self.connector_type} does not support creating indexes.")
+
+    def drop_index(self, entity: str, index_name: str) -> Dict[str, Any]:
+        """Drop an index from table or collection."""
+        raise NotImplementedError(f"{self.connector_type} does not support dropping indexes.")
+
+    def get_capabilities(self) -> ConnectorCapabilities:
+        """Return dynamic capabilities supported by this connection."""
+        if self.is_read_only:
+            return ConnectorCapabilities(
+                can_read_data=True,
+                can_insert_records=False,
+                can_update_records=False,
+                can_delete_records=False,
+                can_create_entities=False,
+                can_alter_schema=False,
+                can_manage_indexes=False,
+                can_execute_raw_queries=True,
+                supports_transactions=True,
+                read_only_reason=f"Connection '{self.name}' is configured in Read-Only mode.",
+            )
+        return ConnectorCapabilities()
+
     def touch_connected(self) -> None:
         """Update last connected timestamp and status."""
         self.status = ConnectorStatus.CONNECTED
@@ -200,6 +291,7 @@ class BaseConnector(abc.ABC):
             "connector_type": self.connector_type,
             "category": self.category.value,
             "is_read_only": self.is_read_only,
+            "capabilities": self.get_capabilities().to_dict(),
             "status": self.status.value,
             "created_at": self.created_at,
             "last_connected_at": self.last_connected_at,

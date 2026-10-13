@@ -170,6 +170,7 @@ class SecurityEventManager:
         user_id: str,
         database_identity: str,
         endpoint: str,
+        source_ip: str = "unknown",
     ) -> SecurityEventRecord:
         return cls.log_security_event(
             user_id=user_id,
@@ -180,5 +181,72 @@ class SecurityEventManager:
             resource=endpoint,
             description=f"Operation rate limit exceeded for endpoint: {endpoint}",
             mitigation="Returned HTTP 429 Too Many Requests.",
-            metadata={"endpoint": endpoint},
+            metadata={"endpoint": endpoint, "source_ip": source_ip},
         )
+
+    @classmethod
+    def log_ip_threat(
+        cls,
+        user_id: str,
+        database_identity: str,
+        event_type: SecurityEventType,
+        severity: SecurityEventSeverity,
+        source_ip: str,
+        resource: str,
+        description: str,
+        mitigation: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SecurityEventRecord:
+        meta = metadata or {}
+        meta["source_ip"] = source_ip
+        return cls.log_security_event(
+            user_id=user_id,
+            database_identity=database_identity,
+            event_type=event_type,
+            severity=severity,
+            source="intrusion_detector",
+            resource=resource,
+            description=description,
+            mitigation=mitigation,
+            metadata=meta,
+        )
+
+    @classmethod
+    def log_brute_force(
+        cls,
+        user_id: str,
+        source_ip: str,
+        attempt_count: int,
+        target_account: str,
+    ) -> SecurityEventRecord:
+        return cls.log_ip_threat(
+            user_id=user_id,
+            database_identity="auth_subsystem",
+            event_type=SecurityEventType.BRUTE_FORCE_DETECTED,
+            severity=SecurityEventSeverity.HIGH,
+            source_ip=source_ip,
+            resource="/auth/login",
+            description=f"Repeated authentication failures detected from {source_ip} targeting account '{target_account}'. Observed {attempt_count} failures.",
+            mitigation="Temporary exponential delay applied to source IP.",
+            metadata={"attempt_count": attempt_count, "target_account": target_account},
+        )
+
+    @classmethod
+    def log_endpoint_scan(
+        cls,
+        user_id: str,
+        source_ip: str,
+        probed_endpoints: List[str],
+    ) -> SecurityEventRecord:
+        return cls.log_ip_threat(
+            user_id=user_id,
+            database_identity="api_gateway",
+            event_type=SecurityEventType.ENDPOINT_SCAN_DETECTED,
+            severity=SecurityEventSeverity.MEDIUM,
+            source_ip=source_ip,
+            resource="API_ROUTER",
+            description=f"Automated path scanning pattern detected from {source_ip} probing {len(probed_endpoints)} unmapped endpoints.",
+            mitigation="Enforced request throttling on scanning IP.",
+            metadata={"probed_count": len(probed_endpoints), "probed_sample": probed_endpoints[:5]},
+        )
+

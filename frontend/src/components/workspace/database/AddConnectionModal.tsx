@@ -72,7 +72,7 @@ export default function AddConnectionModal({
     tableName: "",
     dbIndex: 0,
     authSource: "bg_ai_db",
-    isReadOnly: true,
+    isReadOnly: false,
   });
 
   const getConnType = (item: ConnectorCatalogItem): string =>
@@ -145,7 +145,7 @@ export default function AddConnectionModal({
       tableName: "",
       dbIndex: 0,
       authSource: type === "mongodb" ? (defaultDb || "bg_ai_db") : "admin",
-      isReadOnly: true,
+      isReadOnly: false,
     });
   };
 
@@ -928,27 +928,34 @@ export default function AddConnectionModal({
                   </div>
                 )}
 
-              {/* Safety & Read-Only Protection */}
+              {/* Safety & Access Mode */}
               <div className="flex items-center justify-between p-3 rounded-xl bg-violet-500/5 border border-violet-500/20">
                 <div className="flex items-center gap-2.5">
-                  <ShieldCheck size={16} className="text-violet-400" />
+                  <ShieldCheck size={16} className={formData.isReadOnly ? "text-amber-400" : "text-emerald-400"} />
                   <div>
                     <span className="text-xs font-semibold text-zinc-200">
-                      Read-Only Enforced Mode
+                      {formData.isReadOnly ? "Read-Only Enforced Mode" : "Read / Write Mode (Full CRUD)"}
                     </span>
                     <p className="text-[11px] text-zinc-400">
-                      Blocks mutations (DROP, INSERT, UPDATE, DELETE) automatically
+                      {formData.isReadOnly
+                        ? "Blocks mutations (INSERT, UPDATE, DELETE, DDL) on this connection"
+                        : "Permits AI-powered read, insert, update, delete, and index operations"}
                     </p>
                   </div>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={formData.isReadOnly}
-                  onChange={(e) =>
-                    setFormData({ ...formData, isReadOnly: e.target.checked })
-                  }
-                  className="rounded border-white/[0.1] bg-[#141418] text-violet-600 focus:ring-0"
-                />
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <span className={`text-[11px] font-medium ${formData.isReadOnly ? "text-amber-400" : "text-zinc-500"}`}>
+                    {formData.isReadOnly ? "Read-Only" : "Read/Write"}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={formData.isReadOnly}
+                    onChange={(e) =>
+                      setFormData({ ...formData, isReadOnly: e.target.checked })
+                    }
+                    className="rounded border-white/[0.1] bg-[#141418] text-violet-600 focus:ring-0"
+                  />
+                </label>
               </div>
 
               {/* Test Result Banner */}

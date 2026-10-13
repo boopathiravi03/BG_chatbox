@@ -103,7 +103,7 @@ def is_auto_generated_column(
     if not isinstance(metadata, dict):
         return False
 
-    if column_name.lower() in _AUDIT_COLUMNS:
+    if column_name.lower() in _AUDIT_COLUMNS or column_name.lower() == "_id":
         return True
 
     if metadata.get("default") is not None:

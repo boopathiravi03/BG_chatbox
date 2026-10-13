@@ -65,7 +65,7 @@ class CSVConnector(RelationalConnector):
         name: str,
         file_path: str,
         delimiter: str = ",",
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(
@@ -186,7 +186,7 @@ class ExcelConnector(RelationalConnector):
         connection_id: str,
         name: str,
         file_path: str,
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(
@@ -286,7 +286,7 @@ class JSONConnector(RelationalConnector):
         connection_id: str,
         name: str,
         file_path: str,
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(

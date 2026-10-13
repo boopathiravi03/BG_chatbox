@@ -82,6 +82,10 @@ const tabTitles: Record<WorkspaceTab, { title: string; subtitle: string }> = {
     title: "Data Health Doctor",
     subtitle: "Diagnostics, Quality Scores & AI Resolutions",
   },
+  security: {
+    title: "Database Cybersecurity & Governance",
+    subtitle: "Real-time Threat Monitoring, Sensitive Data Scans & Tamper-Evident Audit Logs",
+  },
   chat: {
     title: "AI Command",
     subtitle: "Conversational Intelligence & Data Assistant",
@@ -131,17 +135,35 @@ export default function WorkspaceHeader({
 
   const activeConn =
     connections.find((c) => c.connection_id === activeConnectionId || c.is_active) ||
-    connections[0];
+    (dbConnected ? connections.find((c) => c.status === "connected") || connections[0] : null);
+
+  const getFallbackLabel = (t: string | null) => {
+    if (!t || t === "none") return "Connected Database";
+    switch (t.toLowerCase()) {
+      case "mysql": return "MySQL";
+      case "postgres": case "postgresql": return "PostgreSQL";
+      case "sqlite": return "SQLite";
+      case "mongodb": return "MongoDB";
+      case "redis": return "Redis";
+      case "mariadb": return "MariaDB";
+      case "mssql": case "sqlserver": return "SQL Server";
+      case "qdrant": return "Qdrant";
+      case "chroma": return "Chroma";
+      case "csv": return "CSV Data";
+      case "excel": return "Excel";
+      case "json": return "JSON Data";
+      default: return t.toUpperCase();
+    }
+  };
 
   const dbLabel =
     activeConn?.name ||
-    (dbType === "mysql"
-      ? "MySQL"
-      : dbType === "postgres"
-      ? "PostgreSQL"
-      : dbType === "sqlite"
-      ? "SQLite"
-      : null);
+    (dbInfo?.database && dbInfo.database !== "Not Connected" ? dbInfo.database : null) ||
+    getFallbackLabel(dbType);
+
+  const isTrulyConnected = Boolean(
+    dbConnected && (activeConn ? activeConn.status === "connected" : dbType && dbType !== "none")
+  );
 
   const getSmallIcon = (type?: string, category?: string) => {
     if (category === "file") {
@@ -181,7 +203,7 @@ export default function WorkspaceHeader({
 
       {/* Right: Database Pill & Actions */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {dbConnected || connections.length > 0 ? (
+        {isTrulyConnected && dbLabel ? (
           <div className="relative flex items-center gap-1.5" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen((prev) => !prev)}
@@ -234,7 +256,7 @@ export default function WorkspaceHeader({
                               {conn.name}
                             </div>
                             <div className="text-[10px] text-zinc-400 font-mono truncate">
-                              {conn.connector_type} • {conn.stats?.tables ? `${conn.stats.tables} tbls` : conn.status}
+                              {conn.connector_type} • {conn.stats?.collections ? `${conn.stats.collections} collections` : conn.stats?.tables ? `${conn.stats.tables} tbls` : conn.status}
                             </div>
                           </div>
                         </div>

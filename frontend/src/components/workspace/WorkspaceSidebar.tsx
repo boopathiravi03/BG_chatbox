@@ -18,6 +18,7 @@ import {
   TrendingUp,
   AlertTriangle,
   Bot,
+  ShieldCheck,
 } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
 
@@ -31,6 +32,7 @@ export type WorkspaceTab =
   | "agents"
   | "sqllab"
   | "health"
+  | "security"
   | "chat"
   | "reports"
   | "settings";
@@ -42,6 +44,7 @@ interface WorkspaceSidebarProps {
   onToggleCollapse: () => void;
   dbConnected: boolean;
   dbType: string | null;
+  connectionName?: string;
   connectionsCount?: number;
   onConnectDatabase: () => void;
   onDisconnect: () => void;
@@ -64,6 +67,7 @@ const getNavItems = (connectionsCount?: number): { id: WorkspaceTab; label: stri
   { id: "agents", label: "AI Agents", icon: Bot, badge: "SAFE" },
   { id: "sqllab", label: "SQL Lab", icon: Terminal },
   { id: "health", label: "Data Health", icon: Activity },
+  { id: "security", label: "Cybersecurity", icon: ShieldCheck, badge: "SEC" },
   { id: "chat", label: "AI Command", icon: MessageSquare, badge: "AI" },
   { id: "reports", label: "Reports", icon: FileText },
   { id: "settings", label: "Settings", icon: Settings },
@@ -76,6 +80,7 @@ export default function WorkspaceSidebar({
   onToggleCollapse,
   dbConnected,
   dbType,
+  connectionName,
   connectionsCount,
   onConnectDatabase,
   onDisconnect,
@@ -84,14 +89,27 @@ export default function WorkspaceSidebar({
 }: WorkspaceSidebarProps) {
   const { theme } = useTheme();
 
-  const dbLabel =
-    dbType === "mysql"
-      ? "MySQL"
-      : dbType === "postgres"
-      ? "PostgreSQL"
-      : dbType === "sqlite"
-      ? "SQLite"
-      : null;
+  const getDbLabel = (type: string | null, name?: string) => {
+    if (name) return name;
+    if (!type || type === "none") return "Connected";
+    switch (type.toLowerCase()) {
+      case "mysql": return "MySQL";
+      case "postgres": case "postgresql": return "PostgreSQL";
+      case "sqlite": return "SQLite";
+      case "mongodb": return "MongoDB";
+      case "redis": return "Redis";
+      case "mariadb": return "MariaDB";
+      case "mssql": case "sqlserver": return "SQL Server";
+      case "qdrant": return "Qdrant";
+      case "chroma": return "Chroma";
+      case "csv": return "CSV Data";
+      case "excel": return "Excel";
+      case "json": return "JSON Data";
+      default: return type.toUpperCase();
+    }
+  };
+
+  const dbLabel = getDbLabel(dbType, connectionName);
 
   const navItems = getNavItems(connectionsCount);
 

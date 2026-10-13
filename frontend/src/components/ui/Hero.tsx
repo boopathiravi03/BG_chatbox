@@ -56,14 +56,25 @@ export default function Hero({
   onOpenDetails,
   composer,
 }: HeroProps) {
-  const dbLabel =
-    dbType === "mysql"
-      ? "MySQL"
-      : dbType === "postgres"
-        ? "PostgreSQL"
-        : dbType === "sqlite"
-          ? "SQLite"
-          : null;
+  const getDbLabel = (t: string | null | undefined) => {
+    if (!t || t === "none") return null;
+    switch (t.toLowerCase()) {
+      case "mysql": return "MySQL";
+      case "postgres": case "postgresql": return "PostgreSQL";
+      case "sqlite": return "SQLite";
+      case "mongodb": return "MongoDB";
+      case "redis": return "Redis";
+      case "mariadb": return "MariaDB";
+      case "mssql": case "sqlserver": return "SQL Server";
+      case "qdrant": return "Qdrant";
+      case "chroma": return "Chroma";
+      case "csv": return "CSV Data";
+      case "excel": return "Excel";
+      case "json": return "JSON";
+      default: return t.toUpperCase();
+    }
+  };
+  const dbLabel = getDbLabel(dbType);
 
   return (
     <motion.div

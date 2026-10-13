@@ -9,6 +9,7 @@ def parse_crud_intent(
     user_message: str,
     schema: dict,
     database_type: str = "unknown",
+    target_table: Optional[str] = None,
 ) -> dict | None:
     """
     Use the LLM to turn natural language into a structured
@@ -22,11 +23,21 @@ def parse_crud_intent(
     if not schema:
         return None
 
-    schema_description = "\n".join(
-        f"- {table}: {', '.join(columns.keys())}"
-        for table, columns in schema.items()
-        if isinstance(columns, dict)
-    )
+    # Focus schema on target table if known, or tables mentioned in message
+    if target_table and target_table in schema and isinstance(schema[target_table], dict):
+        schema_description = f"- {target_table}: {', '.join(schema[target_table].keys())}"
+    else:
+        msg_lower = user_message.lower()
+        matching_tables = [
+            t for t in schema.keys()
+            if t.lower() in msg_lower or t.lower()[:-1] in msg_lower
+        ]
+        subset = {t: schema[t] for t in matching_tables} if matching_tables else schema
+        schema_description = "\n".join(
+            f"- {table}: {', '.join(columns.keys())}"
+            for table, columns in subset.items()
+            if isinstance(columns, dict)
+        )
 
     prompt = f"""
 You are BG AI's CRUD intent parser.

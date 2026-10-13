@@ -31,6 +31,7 @@ import {
   reconnectDatabaseConnection,
   deleteDatabaseConnection,
   disconnectAllDatabaseConnections,
+  updateConnectionSettings,
 } from "../../../services/api";
 import { useToast } from "../../../context/ToastContext";
 import AddConnectionModal from "./AddConnectionModal";
@@ -170,6 +171,26 @@ export default function DatabaseConnectionsManager({
     }
   };
 
+  const handleToggleReadOnly = async (conn: DatabaseConnectionItem) => {
+    try {
+      const nextReadOnly = !conn.is_read_only;
+      const res = await updateConnectionSettings(conn.connection_id, {
+        is_read_only: nextReadOnly,
+      });
+      if (res.status === "success") {
+        toast.success(
+          `Connection '${conn.name}' switched to ${nextReadOnly ? "Read-Only" : "Read/Write"} mode.`
+        );
+        fetchConnections();
+        onConnectionsChanged?.();
+      } else {
+        toast.error("Failed to update connection mode.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update connection mode.");
+    }
+  };
+
   const getConnectorIcon = (type: string, category: string) => {
     if (category === "file") {
       if (type === "csv") return <FileText className="w-5 h-5 text-emerald-400" />;
@@ -265,15 +286,18 @@ export default function DatabaseConnectionsManager({
         <div className="p-4 rounded-2xl bg-[#141418] border border-white/[0.08] flex items-center justify-between">
           <div>
             <span className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">
-              Governance Mode
+              Access Governance
             </span>
-            <div className="flex items-center gap-1.5 mt-1">
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-300">
-                <ShieldCheck size={14} /> Read-Only Shield
+            <div className="flex items-center gap-2 mt-1">
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400">
+                <ShieldCheck size={14} /> {connections.filter((c) => !c.is_read_only).length} Read/Write
+              </span>
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-400">
+                {connections.filter((c) => c.is_read_only).length} Read-Only
               </span>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400">
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
             <ShieldCheck size={22} />
           </div>
         </div>
@@ -474,12 +498,21 @@ export default function DatabaseConnectionsManager({
                       </span>
                     </div>
 
-                    {/* Read-Only Mode */}
+                    {/* Access Mode */}
                     <div className="flex items-center justify-between text-xs text-zinc-400">
                       <span className="text-[11px] text-zinc-500">Access Mode</span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20">
-                        <ShieldCheck size={10} /> READ-ONLY
-                      </span>
+                      <button
+                        onClick={() => handleToggleReadOnly(conn)}
+                        className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                          conn.is_read_only
+                            ? "bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/25"
+                            : "bg-emerald-500/10 text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/25"
+                        }`}
+                        title={`Click to switch to ${conn.is_read_only ? "Read/Write" : "Read-Only"} mode`}
+                      >
+                        <ShieldCheck size={10} />
+                        {conn.is_read_only ? "READ-ONLY" : "READ/WRITE"}
+                      </button>
                     </div>
                   </div>
                 </div>

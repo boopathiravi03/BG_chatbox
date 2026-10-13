@@ -13,11 +13,12 @@ import {
   Layers,
   ArrowRight,
 } from "lucide-react";
-import { getSchema, getDatabaseInfo, runQuery } from "../../../services/api";
+import { getSchema, getDatabaseInfo, runQuery, getIntelligenceReport } from "../../../services/api";
 import { useToast } from "../../../context/ToastContext";
 
 interface DataHealthViewProps {
   dbConnected: boolean;
+  activeConnectionId?: string | null;
   onConnectDatabase: () => void;
 }
 
@@ -37,10 +38,11 @@ interface HealthIssue {
 
 export default function DataHealthView({
   dbConnected,
+  activeConnectionId,
   onConnectDatabase,
 }: DataHealthViewProps) {
   const [loading, setLoading] = useState(true);
-  const [score, setScore] = useState(94);
+  const [score, setScore] = useState<number | null>(null);
   const [issues, setIssues] = useState<HealthIssue[]>([]);
   const [selectedFix, setSelectedFix] = useState<HealthIssue | null>(null);
   const [fixExecuting, setFixExecuting] = useState(false);
@@ -49,6 +51,7 @@ export default function DataHealthView({
   useEffect(() => {
     if (!dbConnected) {
       setIssues([]);
+      setScore(null);
       setLoading(false);
       return;
     }
@@ -56,7 +59,11 @@ export default function DataHealthView({
     const inspectHealth = async () => {
       setLoading(true);
       try {
-        const schema = await getSchema();
+        const [schema, intelRep] = await Promise.all([
+          getSchema(activeConnectionId || undefined),
+          getIntelligenceReport().catch(() => null),
+        ]);
+
         if (schema && typeof schema === "object" && !schema.error) {
           const detectedIssues: HealthIssue[] = [];
           const tables = Object.keys(schema).filter((k) => k !== "status");
@@ -106,9 +113,32 @@ export default function DataHealthView({
             });
           });
 
-          // Compute score based on issues
-          const calculatedScore = Math.max(70, 100 - detectedIssues.length * 6);
-          setScore(calculatedScore);
+          // Enrich with null heavy columns if available from intel report
+          if (intelRep?.data_quality?.null_heavy_columns) {
+            intelRep.data_quality.null_heavy_columns.forEach((nh: any) => {
+              detectedIssues.push({
+                id: `null_${nh.table}_${nh.column}`,
+                table: nh.table,
+                column: nh.column,
+                severity: "medium",
+                type: "High Null Ratio",
+                description: `Column '${nh.column}' in '${nh.table}' has ${nh.null_percentage}% missing values.`,
+                proposedFix: {
+                  description: `Audit ingestion pipelines for '${nh.table}.${nh.column}'.`,
+                  sql: `SELECT * FROM "${nh.table}" WHERE "${nh.column}" IS NULL LIMIT 50;`,
+                  affectedRecordsEstimate: nh.null_count || 0,
+                },
+              });
+            });
+          }
+
+          // Compute score based on real backend report or heuristics
+          if (intelRep && typeof intelRep.health_score === "number") {
+            setScore(intelRep.health_score);
+          } else {
+            const calculatedScore = Math.max(50, 100 - detectedIssues.length * 6);
+            setScore(calculatedScore);
+          }
           setIssues(detectedIssues);
         }
       } catch (err) {
@@ -119,7 +149,7 @@ export default function DataHealthView({
     };
 
     inspectHealth();
-  }, [dbConnected]);
+  }, [dbConnected, activeConnectionId]);
 
   const handleExecuteFix = async () => {
     if (!selectedFix || fixExecuting) return;
@@ -129,7 +159,7 @@ export default function DataHealthView({
       if (res && res.success !== false) {
         toast.success(`Fix applied successfully: ${selectedFix.type}`);
         setIssues((prev) => prev.filter((i) => i.id !== selectedFix.id));
-        setScore((prev) => Math.min(100, prev + 6));
+        setScore((prev) => (prev !== null ? Math.min(100, prev + 6) : 100));
         setSelectedFix(null);
       } else {
         toast.error(res?.error || "Failed to execute database fix.");
@@ -169,7 +199,9 @@ export default function DataHealthView({
       <div className="p-6 rounded-2xl bg-[#121216] border border-white/[0.08] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex flex-col items-center justify-center text-emerald-400 shrink-0">
-            <span className="text-2xl font-black font-mono leading-none">{score}</span>
+            <span className="text-2xl font-black font-mono leading-none">
+              {loading ? "..." : (score !== null ? score : 100)}
+            </span>
             <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-500 mt-1">
               Score
             </span>

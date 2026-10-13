@@ -18,6 +18,7 @@ import requests
 
 from app.connectors.base import (
     BaseConnector,
+    ConnectorCapabilities,
     ConnectorCategory,
     ConnectorStatus,
     QueryResult,
@@ -34,7 +35,7 @@ class VectorConnector(BaseConnector):
         connection_id: str,
         name: str,
         connector_type: str,
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(
@@ -44,6 +45,33 @@ class VectorConnector(BaseConnector):
             category=ConnectorCategory.VECTOR,
             is_read_only=is_read_only,
             user_id=user_id,
+        )
+
+    def get_capabilities(self) -> ConnectorCapabilities:
+        if self.is_read_only:
+            return ConnectorCapabilities(
+                can_read_data=True,
+                can_insert_records=False,
+                can_update_records=False,
+                can_delete_records=False,
+                can_create_entities=False,
+                can_alter_schema=False,
+                can_manage_indexes=False,
+                can_execute_raw_queries=False,
+                supports_transactions=False,
+                read_only_reason=f"Connection '{self.name}' is explicitly configured as Read-Only.",
+            )
+        return ConnectorCapabilities(
+            can_read_data=True,
+            can_insert_records=True,
+            can_update_records=True,
+            can_delete_records=True,
+            can_create_entities=True,
+            can_alter_schema=False,
+            can_manage_indexes=True,
+            can_execute_raw_queries=False,
+            supports_transactions=False,
+            read_only_reason=None,
         )
 
     def execute_query(
@@ -134,7 +162,7 @@ class QdrantConnector(VectorConnector):
         port: int = 6333,
         api_key: Optional[str] = None,
         prefer_grpc: bool = False,
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(
@@ -395,7 +423,7 @@ class ChromaConnector(VectorConnector):
         port: int = 8000,
         tenant: str = "default_tenant",
         database: str = "default_database",
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(

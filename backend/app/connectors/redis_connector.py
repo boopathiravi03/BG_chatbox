@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from app.connectors.base import (
     BaseConnector,
+    ConnectorCapabilities,
     ConnectorCategory,
     ConnectorStatus,
     QueryResult,
@@ -22,19 +23,24 @@ from app.connectors.base import (
 
 logger = logging.getLogger(__name__)
 
-# Commands that mutate state or risk server stability - strictly prohibited
-BLOCKED_MUTATING_COMMANDS = {
-    "SET", "SETEX", "SETNX", "SETRANGE", "MSET", "MSETNX", "GETSET",
-    "DEL", "UNLINK", "FLUSHALL", "FLUSHDB", "RESTORE", "CONFIG",
+# Server administration and destructive commands - strictly prohibited
+DANGEROUS_ADMIN_COMMANDS = {
+    "FLUSHALL", "FLUSHDB", "RESTORE", "CONFIG",
     "SHUTDOWN", "BGREWRITEAOF", "BGSAVE", "SAVE", "SLAVEOF", "REPLICAOF",
-    "SCRIPT", "EVAL", "EVALSHA", "LPUSH", "LPUSHX", "RPUSH", "RPUSHX",
+    "SCRIPT", "EVAL", "EVALSHA", "SWAPDB", "MOVE", "MIGRATE",
+}
+
+# Mutation commands permitted in Read/Write mode, blocked in Read-Only mode
+MUTATING_COMMANDS = {
+    "SET", "SETEX", "SETNX", "SETRANGE", "MSET", "MSETNX", "GETSET",
+    "DEL", "UNLINK", "LPUSH", "LPUSHX", "RPUSH", "RPUSHX",
     "LPOP", "RPOP", "RPOPLPUSH", "LMOVE", "LSET", "LREM", "LTRIM",
     "SADD", "SREM", "SPOP", "SMOVE", "ZADD", "ZREM", "ZINCRBY",
     "ZREMRANGEBYRANK", "ZREMRANGEBYSCORE", "ZREMRANGEBYLEX",
     "HDEL", "HSET", "HSETNX", "HINCRBY", "HINCRBYFLOAT",
     "INCR", "DECR", "INCRBY", "DECRBY", "INCRBYFLOAT", "APPEND",
     "EXPIRE", "PEXPIRE", "EXPIREAT", "PEXPIREAT", "PERSIST",
-    "SWAPDB", "MOVE", "MIGRATE", "RENAME", "RENAMENX",
+    "RENAME", "RENAMENX",
 }
 
 # Permitted read-only inspection commands
@@ -63,7 +69,7 @@ class RedisConnector(BaseConnector):
         password: Optional[str] = None,
         db: int = 0,
         ssl: bool = False,
-        is_read_only: bool = True,
+        is_read_only: bool = False,
         user_id: str = "default_user",
     ):
         super().__init__(
@@ -331,11 +337,23 @@ class RedisConnector(BaseConnector):
             cmd_name = tokens[0].upper()
             cmd_args = tokens[1:]
 
-        # Enforce Read-Only Safety: Reject blocked mutating commands
-        if cmd_name in BLOCKED_MUTATING_COMMANDS or (self.is_read_only and cmd_name not in SAFE_READ_COMMANDS):
+        # Guard 1: Block dangerous server administrative commands
+        if cmd_name in DANGEROUS_ADMIN_COMMANDS:
             return QueryResult(
                 success=False,
-                error=f"Command '{cmd_name}' is blocked by BG AI Redis read-only security policy.",
+                error=f"Server administration command '{cmd_name}' is blocked by BG AI security policy.",
+                query_dialect="redis",
+                executed_query=raw_cmd,
+                source_id=self.connection_id,
+                source_name=self.name,
+                execution_time_ms=(time.perf_counter() - start) * 1000.0,
+            )
+
+        # Guard 2: Enforce Read-Only mode when configured
+        if self.is_read_only and (cmd_name in MUTATING_COMMANDS or cmd_name not in SAFE_READ_COMMANDS):
+            return QueryResult(
+                success=False,
+                error=f"Connection '{self.name}' is configured as READ-ONLY. Mutating command '{cmd_name}' is forbidden.",
                 query_dialect="redis",
                 executed_query=raw_cmd,
                 source_id=self.connection_id,
@@ -493,6 +511,33 @@ class RedisConnector(BaseConnector):
             executed_query=executed_query,
             source_id=self.connection_id,
             source_name=self.name,
+        )
+
+    def get_capabilities(self) -> ConnectorCapabilities:
+        if self.is_read_only:
+            return ConnectorCapabilities(
+                can_read_data=True,
+                can_insert_records=False,
+                can_update_records=False,
+                can_delete_records=False,
+                can_create_entities=False,
+                can_alter_schema=False,
+                can_manage_indexes=False,
+                can_execute_raw_queries=True,
+                supports_transactions=False,
+                read_only_reason=f"Connection '{self.name}' is explicitly configured as Read-Only.",
+            )
+        return ConnectorCapabilities(
+            can_read_data=True,
+            can_insert_records=True,
+            can_update_records=True,
+            can_delete_records=True,
+            can_create_entities=False,
+            can_alter_schema=False,
+            can_manage_indexes=False,
+            can_execute_raw_queries=True,
+            supports_transactions=False,
+            read_only_reason=None,
         )
 
     def to_sanitized_config(self) -> Dict[str, Any]:

@@ -47,6 +47,9 @@ const AgentCenterView = lazy(
 const DatabaseConnectionsManager = lazy(
   () => import("../components/workspace/database/DatabaseConnectionsManager"),
 );
+const SecurityCenterView = lazy(
+  () => import("../components/workspace/views/SecurityCenterView"),
+);
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("overview");
@@ -117,63 +120,170 @@ export default function Home() {
     }
   }, [activeSessionId]);
 
-  const refreshConnections = async () => {
+  const refreshAllDatabaseState = async () => {
     if (!getAuthToken()) {
       setConnections([]);
       setActiveConnectionId(null);
-      return;
-    }
-    try {
-      const data = await listDatabaseConnections();
-      const conns = data.connections || [];
-      setConnections(conns);
-      setActiveConnectionId(data.active_connection_id || null);
-      if (conns.length > 0) {
-        setDbConnected(true);
-      }
-    } catch {
-      // Keep current
-    }
-  };
-
-  const refreshDbStatus = async () => {
-    if (!getAuthToken()) {
       setDbConnected(false);
       setDbType(null);
       setDbInfo({});
       return;
     }
+
     try {
+      // 1. Fetch connections from multi-database manager
+      const connData = await listDatabaseConnections().catch(() => ({ connections: [], active_connection_id: null }));
+      const conns = connData.connections || [];
+      const activeId = connData.active_connection_id || null;
+      setConnections(conns);
+      setActiveConnectionId(activeId);
+
+      // Find the active connector
+      const activeConn = conns.find((c) => c.connection_id === activeId || c.is_active);
+
+      // 2. Fetch database type and info
       const [info, typeData] = await Promise.all([
-        getDatabaseInfo(),
-        getDatabaseType(),
+        getDatabaseInfo(activeId || undefined).catch(() => null),
+        getDatabaseType(activeId || undefined).catch(() => null),
       ]);
 
-      const type = typeData.db_type || "none";
-      setDbType(type);
-      setDbConnected(type !== "none");
-      if (info) setDbInfo(info);
-    } catch {
+      if (activeConn) {
+        const isConn = activeConn.status === "connected";
+        setDbConnected(isConn);
+        setDbType(activeConn.connector_type);
+        setDbInfo(
+          info && (info.connected || (info.database && info.database !== "Not Connected"))
+            ? info
+            : {
+                database: activeConn.name,
+                db_type: activeConn.connector_type,
+                connected: isConn,
+                tables: activeConn.stats?.tables ?? activeConn.stats?.collections ?? 0,
+                collections: activeConn.stats?.collections ?? 0,
+                rows: activeConn.stats?.rows ?? activeConn.stats?.documents ?? 0,
+                documents: activeConn.stats?.documents ?? 0,
+              }
+        );
+      } else {
+        const type = typeData?.db_type && typeData.db_type !== "none" ? typeData.db_type : null;
+        const isConn = Boolean(typeData?.connected && type);
+        setDbConnected(isConn);
+        setDbType(type);
+        setDbInfo(info || {});
+      }
+    } catch (err) {
+      console.error("Error refreshing database state:", err);
       setDbConnected(false);
       setDbType(null);
       setDbInfo({});
     }
   };
 
+  const refreshConnections = () => refreshAllDatabaseState();
+  const refreshDbStatus = () => refreshAllDatabaseState();
+
   useEffect(() => {
-    refreshDbStatus();
-    refreshConnections();
+    refreshAllDatabaseState();
   }, []);
 
   const handleSelectActiveConnection = async (connectionId: string) => {
     try {
       await setActiveDatabaseConnection(connectionId);
       setActiveConnectionId(connectionId);
-      await Promise.all([refreshDbStatus(), refreshConnections()]);
+      await refreshAllDatabaseState();
     } catch (err) {
       console.error("Failed to set active connection", err);
     }
   };
+
+  // Track introduced database connections to avoid repeating introductory summaries in AI Command
+  const introducedConnectionsRef = useRef<Set<string>>(new Set());
+
+  // Restore previously introduced connections from sessionStorage
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem("bgai_introduced_connections");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((k) => introducedConnectionsRef.current.add(k));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Bug 2 Fix: Connection-aware, once-per-connection introduction for AI Command
+  useEffect(() => {
+    if (activeTab !== "chat" || !dbConnected) return;
+
+    // Build stable connection identity
+    const dbName =
+      dbInfo?.database && dbInfo.database !== "Not Connected"
+        ? dbInfo.database
+        : connections.find((c) => c.connection_id === activeConnectionId)?.name || "";
+
+    if (!dbName && !activeConnectionId) return;
+
+    const connectionKey = `${activeConnectionId || "default"}:${dbType || "unknown"}:${dbName}`;
+
+    // Check if this connection was already introduced in this session
+    if (introducedConnectionsRef.current.has(connectionKey)) return;
+
+    // Check if current messages list already has an intro for this connectionKey
+    if (messages.some((m) => m.intro_key === connectionKey)) {
+      introducedConnectionsRef.current.add(connectionKey);
+      return;
+    }
+
+    // Mark as introduced immediately to prevent React StrictMode duplicate execution
+    introducedConnectionsRef.current.add(connectionKey);
+    try {
+      sessionStorage.setItem(
+        "bgai_introduced_connections",
+        JSON.stringify(Array.from(introducedConnectionsRef.current))
+      );
+    } catch {
+      // ignore
+    }
+
+    const isDoc = dbType === "mongodb";
+    const isKv = dbType === "redis";
+    const isVec = dbType === "qdrant" || dbType === "chroma";
+
+    const entityLabel = isDoc ? "collections" : isKv ? "namespaces" : isVec ? "vector collections" : "tables";
+    const recordLabel = isDoc ? "documents" : isKv ? "keys" : isVec ? "embeddings" : "records";
+
+    const entityCount = (dbInfo as any)?.collections ?? (dbInfo as any)?.tables ?? (dbInfo?.tables ?? 0);
+    const recordCount = (dbInfo as any)?.documents ?? (dbInfo as any)?.rows ?? (dbInfo?.rows ?? 0);
+
+    const displayName = dbName || `${(dbType || "Database").toUpperCase()} Data Source`;
+
+    const summaryText =
+      `**Connected to ${displayName}** (\`${(dbType || "sql").toLowerCase()}\`)\n\n` +
+      `• **${entityLabel.charAt(0).toUpperCase() + entityLabel.slice(1)}:** ${entityCount.toLocaleString()} verified ${entityLabel}\n` +
+      `• **Total ${recordLabel.charAt(0).toUpperCase() + recordLabel.slice(1)}:** ${recordCount.toLocaleString()} ${recordLabel}\n` +
+      `• **Status:** Active & synchronized for natural language queries and AI analysis.\n\n` +
+      `*Ask any question in plain English or select a suggestion.*`;
+
+    const introMsg: Message = {
+      role: "assistant",
+      content: summaryText,
+      is_intro: true,
+      intro_key: connectionKey,
+      connection_id: activeConnectionId || undefined,
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+
+    setMessages((prev) => {
+      if (prev.some((m) => m.intro_key === connectionKey)) return prev;
+      return [...prev, introMsg];
+    });
+  }, [activeTab, dbConnected, activeConnectionId, dbType, dbInfo, connections, messages]);
 
   const [sessionId] = useState(() => {
     let id = localStorage.getItem("bg_ai_session_id");
@@ -185,6 +295,8 @@ export default function Home() {
   });
 
   const handleSend = async (content: string, selectedSourceIds?: string[]) => {
+    if (loading) return;
+
     // If not currently in chat tab, switch to chat to show full conversation and results
     if (activeTab !== "chat") {
       setActiveTab("chat");
@@ -292,6 +404,8 @@ export default function Home() {
     values: Record<string, string>,
     table: string,
   ) => {
+    if (loading) return;
+
     const userMessage: Message = {
       role: "user",
       content: Object.entries(values)
@@ -360,6 +474,7 @@ export default function Home() {
           ),
         );
       }
+      refreshDbStatus().catch((err) => console.warn("Background status refresh:", err));
     } catch (error) {
       const errorMessage: Message = {
         role: "assistant",
@@ -400,6 +515,8 @@ export default function Home() {
       setDbConnected(false);
       setDbType(null);
       setDbInfo({});
+      setConnections([]);
+      setActiveConnectionId(null);
       setMessages([]);
       setActiveSessionId(null);
       setSessions([]);
@@ -436,6 +553,7 @@ export default function Home() {
   };
 
   const handleConfirmQuery = async () => {
+    if (loading) return;
     setLoading(true);
     setStatus("executing");
 
@@ -459,8 +577,10 @@ export default function Home() {
       };
 
       setMessages((prev) => [...prev, resultMessage]);
-      await refreshDbStatus();
       setStatus(data.success ? "done" : "error");
+
+      // Asynchronous background status sync without freezing perceived responsiveness
+      refreshDbStatus().catch((err) => console.warn("Background status refresh:", err));
     } catch (error) {
       const errorMessage: Message = {
         role: "assistant",
@@ -483,6 +603,10 @@ export default function Home() {
     setActiveTab("sqllab");
   };
 
+  const activeConnectionName =
+    connections.find((c) => c.connection_id === activeConnectionId || c.is_active)?.name ||
+    (dbInfo?.database && dbInfo.database !== "Not Connected" ? dbInfo.database : undefined);
+
   return (
     <div className="flex h-screen bg-[#09090b] text-[#f4f4f5] relative overflow-hidden font-sans">
       <Background />
@@ -498,6 +622,10 @@ export default function Home() {
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         dbConnected={dbConnected}
         dbType={dbType}
+        connectionName={
+          connections.find((c) => c.connection_id === activeConnectionId || c.is_active)?.name ||
+          (dbInfo?.database && dbInfo.database !== "Not Connected" ? dbInfo.database : undefined)
+        }
         connectionsCount={connections.length}
         onConnectDatabase={() => {
           setConnectModalType("sqlite");
@@ -536,6 +664,7 @@ export default function Home() {
             <OverviewView
               dbConnected={dbConnected}
               dbType={dbType}
+              activeConnectionId={activeConnectionId}
               initialDbInfo={dbInfo}
               onTabChange={setActiveTab}
               onConnectDatabase={() => {
@@ -610,6 +739,8 @@ export default function Home() {
             <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading Anomaly Center...</div>}>
               <AnomalyCenterView
                 dbConnected={dbConnected}
+                activeConnectionId={activeConnectionId}
+                activeDbName={activeConnectionName || (dbInfo?.database !== "Not Connected" ? dbInfo?.database : undefined)}
                 onConnectDatabase={() => {
                   setConnectModalType("sqlite");
                   setShowConnectModal(true);
@@ -658,11 +789,27 @@ export default function Home() {
           {activeTab === "health" && (
             <DataHealthView
               dbConnected={dbConnected}
+              activeConnectionId={activeConnectionId}
               onConnectDatabase={() => {
                 setConnectModalType("sqlite");
                 setShowConnectModal(true);
               }}
             />
+          )}
+
+          {activeTab === "security" && (
+            <Suspense fallback={<div className="p-8 text-center text-zinc-400">Loading Cybersecurity Center...</div>}>
+              <SecurityCenterView
+                dbConnected={dbConnected}
+                activeConnectionId={activeConnectionId}
+                dbType={dbType}
+                onConnectDatabase={() => {
+                  setConnectModalType("sqlite");
+                  setShowConnectModal(true);
+                }}
+                onTabChange={setActiveTab}
+              />
+            </Suspense>
           )}
 
           {activeTab === "chat" && (
@@ -680,6 +827,7 @@ export default function Home() {
               onCancelQuery={handleCancelQuery}
               dbConnected={dbConnected}
               dbType={dbType}
+              activeConnectionId={activeConnectionId}
               onOpenDatabase={() => setShowDatabase(true)}
               onConnectDatabase={(type?: "sqlite" | "mysql" | "postgres") => {
                 setConnectModalType(type || "sqlite");
@@ -732,6 +880,7 @@ export default function Home() {
       {showDatabase && (
         <Suspense fallback={null}>
           <DatabasePopup
+            connectionId={activeConnectionId || undefined}
             onClose={() => setShowDatabase(false)}
             onDisconnected={handleDisconnect}
           />

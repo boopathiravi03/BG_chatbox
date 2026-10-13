@@ -15,6 +15,7 @@ import {
   Layers,
   Database,
   Calendar,
+  Clock,
 } from "lucide-react";
 import type { WorkspaceTab } from "../WorkspaceSidebar";
 import type { AnomalyFinding, AnomalyScanReport } from "../../../types";
@@ -22,6 +23,8 @@ import { getAnomalyReport } from "../../../services/api";
 
 interface AnomalyCenterViewProps {
   dbConnected: boolean;
+  activeDbName?: string;
+  activeConnectionId?: string | null;
   onConnectDatabase: () => void;
   onTabChange?: (tab: WorkspaceTab) => void;
   onOpenSqlLabWithQuery?: (query: string) => void;
@@ -31,6 +34,8 @@ interface AnomalyCenterViewProps {
 
 export default function AnomalyCenterView({
   dbConnected,
+  activeDbName,
+  activeConnectionId,
   onConnectDatabase,
   onTabChange,
   onOpenSqlLabWithQuery,
@@ -50,7 +55,7 @@ export default function AnomalyCenterView({
     setLoading(true);
     setError(null);
     try {
-      const data = await getAnomalyReport(forceRefresh);
+      const data = await getAnomalyReport(forceRefresh, activeConnectionId);
       setReport(data);
     } catch (err: any) {
       setError(err.message || "Failed to scan for anomalies.");
@@ -61,7 +66,18 @@ export default function AnomalyCenterView({
 
   useEffect(() => {
     fetchAnomalies(false);
-  }, [dbConnected]);
+  }, [dbConnected, activeConnectionId]);
+
+  const formatTimestamp = (ts?: string | null) => {
+    if (!ts) return null;
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch {
+      return ts;
+    }
+  };
 
   if (!dbConnected) {
     return (
@@ -90,21 +106,69 @@ export default function AnomalyCenterView({
     return a.severity === activeFilter;
   });
 
+  const connectionIdentity =
+    report?.database_name && report.database_name !== "Not Connected"
+      ? report.database_name
+      : activeDbName || "Active Database";
+
+  const scanTimestamp = report?.scan_timestamp;
+
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-8">
       {/* Header */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-[#141218] via-[#16141a] to-[#121216] border border-white/[0.08] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1.5 max-w-2xl">
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] font-medium">
-            <AlertTriangle size={12} />
-            <span>Explainable Outlier & Drift Detection</span>
+        <div className="space-y-2 max-w-2xl">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] font-medium">
+              <AlertTriangle size={12} />
+              <span>Explainable Outlier & Drift Detection</span>
+            </div>
+
+            {/* Scan State Badge */}
+            {loading ? (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-semibold flex items-center gap-1">
+                <RefreshCw size={10} className="animate-spin" /> SCANNING...
+              </span>
+            ) : error ? (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-300 font-semibold">
+                SCAN FAILED
+              </span>
+            ) : report && report.total_anomalies > 0 ? (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 font-semibold">
+                SCAN COMPLETED ({report.total_anomalies} FINDINGS)
+              </span>
+            ) : report && report.total_anomalies === 0 ? (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
+                SCAN COMPLETED (CLEAN)
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-500/15 border border-zinc-500/30 text-zinc-400 font-semibold">
+                NOT SCANNED
+              </span>
+            )}
+
+            {/* Connection Identity */}
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-zinc-300 flex items-center gap-1">
+              <Database size={11} className="text-zinc-400" />
+              <span>{connectionIdentity}</span>
+            </span>
           </div>
+
           <h2 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
             Anomaly Center
           </h2>
-          <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-            Continuous statistical audit detecting numeric outliers (IQR), sudden chronological shifts, and relational integrity breaches.
-          </p>
+
+          <div className="flex items-center gap-3 text-xs sm:text-sm text-zinc-400 flex-wrap">
+            <span>
+              Continuous statistical audit detecting numeric outliers (IQR), sudden chronological shifts, and relational integrity breaches.
+            </span>
+            {scanTimestamp && (
+              <span className="text-[11px] text-zinc-500 font-mono flex items-center gap-1">
+                <Clock size={11} />
+                <span>Last scan: {formatTimestamp(scanTimestamp)}</span>
+              </span>
+            )}
+          </div>
         </div>
 
         <button
@@ -116,6 +180,22 @@ export default function AnomalyCenterView({
           <span>{loading ? "Scanning..." : "Rescan Database"}</span>
         </button>
       </div>
+
+      {/* Error state if scan failed */}
+      {error && !loading && (
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between gap-3 text-xs text-rose-300">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>Scan failed: {error}</span>
+          </div>
+          <button
+            onClick={() => fetchAnomalies(true)}
+            className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium cursor-pointer"
+          >
+            Retry Scan
+          </button>
+        </div>
+      )}
 
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -8,15 +8,26 @@ from app.database.database_manager import get_engine
 def _database_identity() -> str | None:
     engine = get_engine()
 
-    if engine is None:
-        return None
+    if engine is not None:
+        try:
+            return engine.url.render_as_string(
+                hide_password=True
+            )
+        except Exception:
+            pass
 
     try:
-        return engine.url.render_as_string(
-            hide_password=True
-        )
+        from app.database.connection_context import get_request_user_id
+        from app.connectors.registry import get_connection_registry
+        uid = get_request_user_id()
+        if uid:
+            conn = get_connection_registry().get_active_connector(uid)
+            if conn:
+                return f"{conn.connector_type}://{conn.connection_id}"
     except Exception:
-        return None
+        pass
+
+    return None
 
 
 def store_pending(

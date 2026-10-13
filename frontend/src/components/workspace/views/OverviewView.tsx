@@ -44,11 +44,14 @@ import EnterpriseKnowledgeSection from "../knowledge/EnterpriseKnowledgeSection"
 interface OverviewViewProps {
   dbConnected: boolean;
   dbType: string | null;
+  activeConnectionId?: string | null;
   initialDbInfo?: {
     database?: string;
     tables?: number;
     rows?: number;
     size?: string;
+    collections?: number;
+    documents?: number;
   };
   onTabChange: (tab: WorkspaceTab) => void;
   onConnectDatabase: () => void;
@@ -59,6 +62,7 @@ interface OverviewViewProps {
 export default function OverviewView({
   dbConnected,
   dbType,
+  activeConnectionId,
   initialDbInfo,
   onTabChange,
   onConnectDatabase,
@@ -69,7 +73,10 @@ export default function OverviewView({
     database?: string;
     tables?: number;
     rows?: number;
+    columns?: number;
     size?: string;
+    collections?: number;
+    documents?: number;
   }>(initialDbInfo || {});
   const [tableCount, setTableCount] = useState<number>(0);
   const [tablesList, setTablesList] = useState<string[]>([]);
@@ -102,6 +109,8 @@ export default function OverviewView({
   };
 
   useEffect(() => {
+    let isCancelled = false;
+
     if (!dbConnected || !getAuthToken()) {
       setDbInfo({});
       setTableCount(0);
@@ -114,37 +123,54 @@ export default function OverviewView({
       return;
     }
 
-    if (initialDbInfo && initialDbInfo.database) {
+    if (initialDbInfo && initialDbInfo.database && initialDbInfo.database !== "Not Connected") {
       setDbInfo(initialDbInfo);
+      const initialEntityCount = (initialDbInfo as any).collections ?? (initialDbInfo as any).tables;
+      if (typeof initialEntityCount === "number" && initialEntityCount >= 0) {
+        setTableCount(initialEntityCount);
+      }
     }
 
     const loadData = async () => {
       setLoading(true);
       try {
-        const fetchInfoPromise = initialDbInfo?.database
-          ? Promise.resolve(initialDbInfo)
-          : getDatabaseInfo();
-
         const [info, schema, report, anomaly, biResp] =
           await Promise.allSettled([
-            fetchInfoPromise,
-            getSchema(),
+            getDatabaseInfo(activeConnectionId || undefined),
+            getSchema(activeConnectionId || undefined),
             getIntelligenceReport(),
-            getAnomalySummary(),
+            getAnomalySummary(false, activeConnectionId || undefined),
             getBusinessInsights(),
           ]);
 
+        if (isCancelled) return;
+
         if (info.status === "fulfilled" && info.value) {
-          setDbInfo(info.value as any);
+          const val: any = info.value;
+          if (val.connected || (val.database && val.database !== "Not Connected")) {
+            setDbInfo(val);
+            const count = val.tables ?? val.collections;
+            if (typeof count === "number" && count > 0) {
+              setTableCount(count);
+            }
+          } else if (initialDbInfo && initialDbInfo.database && initialDbInfo.database !== "Not Connected") {
+            setDbInfo(initialDbInfo);
+          }
         }
         if (
           schema.status === "fulfilled" &&
           schema.value &&
-          typeof schema.value === "object"
+          typeof schema.value === "object" &&
+          !schema.value.error &&
+          schema.value.status !== "error"
         ) {
-          const names = Object.keys(schema.value).filter((k) => k !== "status");
+          const names = Object.keys(schema.value).filter(
+            (k) => k !== "status" && k !== "error" && k !== "message"
+          );
           setTablesList(names);
-          setTableCount(names.length);
+          if (names.length > 0) {
+            setTableCount(names.length);
+          }
         }
         if (report.status === "fulfilled" && report.value) {
           const r = report.value;
@@ -158,10 +184,15 @@ export default function OverviewView({
         }
         if (anomaly.status === "fulfilled" && anomaly.value) {
           setAnomalySummary({
-            total: anomaly.value.total_count ?? anomaly.value.total ?? 0,
+            total:
+              anomaly.value.total_anomalies ??
+              anomaly.value.total_count ??
+              anomaly.value.total ??
+              0,
             critical:
               anomaly.value.critical_count ?? anomaly.value.critical ?? 0,
-            warning: anomaly.value.warning_count ?? anomaly.value.warning ?? 0,
+            warning:
+              anomaly.value.warning_count ?? anomaly.value.warning ?? 0,
           });
         }
         if (
@@ -172,14 +203,29 @@ export default function OverviewView({
           setInsights(biResp.value.insights);
         }
       } catch (err) {
-        console.error("Error loading overview data:", err);
+        if (!isCancelled) {
+          console.error("Error loading overview data:", err);
+        }
       } finally {
-        setLoading(false);
+        if (!isCancelled) {
+          setLoading(false);
+        }
       }
     };
 
     loadData();
-  }, [dbConnected]);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    dbConnected,
+    dbType,
+    activeConnectionId,
+    initialDbInfo?.database,
+    (initialDbInfo as any)?.tables,
+    (initialDbInfo as any)?.rows,
+  ]);
 
   const handleRefreshInsights = async () => {
     setInsightsLoading(true);
@@ -290,7 +336,96 @@ export default function OverviewView({
   }
 
   // Database is connected: Render full BI overview
-  const totalRows = dbInfo.rows || 0;
+  const isDocumentStore = dbType === "mongodb";
+  const isVectorStore = dbType === "qdrant" || dbType === "chroma";
+  const isKeyValStore = dbType === "redis";
+  const isFileStore = dbType === "csv" || dbType === "excel" || dbType === "json";
+
+  const entityCount =
+    (typeof (dbInfo as any).collections === "number" && (dbInfo as any).collections > 0)
+      ? (dbInfo as any).collections
+      : (typeof (dbInfo as any).tables === "number" && (dbInfo as any).tables > 0)
+      ? (dbInfo as any).tables
+      : tableCount > 0
+      ? tableCount
+      : tablesList.length > 0
+      ? tablesList.length
+      : (typeof (initialDbInfo as any)?.collections === "number" && (initialDbInfo as any).collections > 0)
+      ? (initialDbInfo as any).collections
+      : (typeof (initialDbInfo as any)?.tables === "number" && (initialDbInfo as any).tables > 0)
+      ? (initialDbInfo as any).tables
+      : (dbInfo as any).collections ?? (dbInfo as any).tables ?? tableCount ?? 0;
+
+  const recordCount =
+    (typeof (dbInfo as any).documents === "number" && (dbInfo as any).documents > 0)
+      ? (dbInfo as any).documents
+      : (typeof (dbInfo as any).rows === "number" && (dbInfo as any).rows > 0)
+      ? (dbInfo as any).rows
+      : (typeof (initialDbInfo as any)?.documents === "number" && (initialDbInfo as any).documents > 0)
+      ? (initialDbInfo as any).documents
+      : (typeof (initialDbInfo as any)?.rows === "number" && (initialDbInfo as any).rows > 0)
+      ? (initialDbInfo as any).rows
+      : (dbInfo as any).documents ?? (dbInfo as any).rows ?? 0;
+
+  const columnCount =
+    (typeof (dbInfo as any).columns === "number" && (dbInfo as any).columns > 0)
+      ? (dbInfo as any).columns
+      : (typeof (initialDbInfo as any)?.columns === "number" && (initialDbInfo as any).columns > 0)
+      ? (initialDbInfo as any).columns
+      : 0;
+
+  const entityTitle = isDocumentStore
+    ? "Total Collections"
+    : isVectorStore
+    ? "Vector Collections"
+    : isKeyValStore
+    ? "Key Namespaces"
+    : "Total Tables";
+
+  const entitySubtitle = isDocumentStore
+    ? "Live collections"
+    : isVectorStore
+    ? "Vector partitions"
+    : isKeyValStore
+    ? "Active keyspaces"
+    : "Live schema entities";
+
+  const recordTitle = isDocumentStore
+    ? "Total Documents"
+    : isVectorStore
+    ? "Vector Embeddings"
+    : isKeyValStore
+    ? "Stored Key Entries"
+    : "Total Records";
+
+  const recordSubtitle = isDocumentStore
+    ? "Estimated document count"
+    : isVectorStore
+    ? "High-dim embeddings"
+    : isKeyValStore
+    ? "Verified key count"
+    : "Verified row counts";
+
+  const engineDriver = isDocumentStore
+    ? "PyMongo Driver (NoSQL)"
+    : isKeyValStore
+    ? "redis-py Driver"
+    : isVectorStore
+    ? "Vector Engine Client"
+    : isFileStore
+    ? "In-Memory Tabular Driver"
+    : "SQLAlchemy Driver";
+
+  const rawDbName = dbInfo.database;
+  const activeDbName =
+    rawDbName && rawDbName !== "Not Connected"
+      ? rawDbName
+      : initialDbInfo?.database && initialDbInfo.database !== "Not Connected"
+      ? initialDbInfo.database
+      : dbType
+      ? `${dbType.toUpperCase()} Database`
+      : "Active Database";
+
   const dbEngine = (dbType || "Connected DB").toUpperCase();
 
   return (
@@ -304,7 +439,7 @@ export default function OverviewView({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-white tracking-tight">
-                {dbInfo.database || "Active Database"}
+                {activeDbName}
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
                 LIVE {dbEngine}
@@ -339,24 +474,41 @@ export default function OverviewView({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-5 rounded-xl bg-[#121216] border border-white/[0.06] space-y-1">
           <div className="flex items-center justify-between text-zinc-400 text-xs">
-            <span>Total Tables</span>
+            <span>{entityTitle}</span>
             <Table size={15} className="text-indigo-400" />
           </div>
           <p className="text-2xl font-bold text-white font-mono">
-            {tableCount > 0 ? tableCount.toLocaleString() : "-"}
+            {loading && entityCount === 0 ? (
+              <span className="text-zinc-500 text-sm font-sans animate-pulse">Loading...</span>
+            ) : !dbConnected ? (
+              <span className="text-zinc-500 text-sm font-sans">Not Connected</span>
+            ) : (
+              entityCount.toLocaleString()
+            )}
           </p>
-          <p className="text-[11px] text-zinc-400">Live schema entities</p>
+          <div className="flex items-center justify-between text-[11px] text-zinc-400">
+            <span>{entitySubtitle}</span>
+            {columnCount > 0 && (
+              <span className="font-mono text-zinc-300 font-medium">{columnCount} cols</span>
+            )}
+          </div>
         </div>
 
         <div className="p-5 rounded-xl bg-[#121216] border border-white/[0.06] space-y-1">
           <div className="flex items-center justify-between text-zinc-400 text-xs">
-            <span>Total Records</span>
+            <span>{recordTitle}</span>
             <Layers size={15} className="text-emerald-400" />
           </div>
           <p className="text-2xl font-bold text-white font-mono">
-            {totalRows > 0 ? totalRows.toLocaleString() : "Profiled"}
+            {loading && recordCount === 0 ? (
+              <span className="text-zinc-500 text-sm font-sans animate-pulse">Loading...</span>
+            ) : !dbConnected ? (
+              <span className="text-zinc-500 text-sm font-sans">Not Connected</span>
+            ) : (
+              recordCount.toLocaleString()
+            )}
           </p>
-          <p className="text-[11px] text-zinc-400">Verified row counts</p>
+          <p className="text-[11px] text-zinc-400">{recordSubtitle}</p>
         </div>
 
         <div className="p-5 rounded-xl bg-[#121216] border border-white/[0.06] space-y-1">
@@ -380,15 +532,29 @@ export default function OverviewView({
             <Activity size={15} className="text-sky-400" />
           </div>
           <p className="text-2xl font-bold text-white font-mono">{dbEngine}</p>
-          <p className="text-[11px] text-zinc-400">SQLAlchemy driver</p>
+          <p className="text-[11px] text-zinc-400">{engineDriver}</p>
         </div>
       </div>
 
       {/* Phase 8.3: Proactive Intelligence Section */}
       <ProactiveIntelligenceSection
         dbConnected={dbConnected}
+        activeDbName={activeDbName}
+        activeConnectionId={activeConnectionId}
         onConnectDatabase={onConnectDatabase}
         onNavigateToAgents={onNavigateToAgents}
+        onNavigateToAnomalyCenter={() => onTabChange("anomalies")}
+        onScanCompleted={() => {
+          getAnomalySummary(false, activeConnectionId || undefined).then((anom) => {
+            if (anom) {
+              setAnomalySummary({
+                total: anom.total_anomalies ?? anom.total_count ?? anom.total ?? 0,
+                critical: anom.critical_count ?? anom.critical ?? 0,
+                warning: anom.warning_count ?? anom.warning ?? 0,
+              });
+            }
+          }).catch(() => {});
+        }}
       />
 
       {/* Phase 8.4: AI Decision & Planning Intelligence Section */}

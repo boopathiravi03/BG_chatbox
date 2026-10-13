@@ -11,15 +11,26 @@ from app.tools.execute_query import execute_query, validate_sql
 def _current_database_identity() -> str | None:
     engine = get_engine()
 
-    if engine is None:
-        return None
+    if engine is not None:
+        try:
+            return engine.url.render_as_string(
+                hide_password=True
+            )
+        except Exception:
+            pass
 
     try:
-        return engine.url.render_as_string(
-            hide_password=True
-        )
+        from app.database.connection_context import get_request_user_id
+        from app.connectors.registry import get_connection_registry
+        uid = get_request_user_id()
+        if uid:
+            conn = get_connection_registry().get_active_connector(uid)
+            if conn:
+                return f"{conn.connector_type}://{conn.connection_id}"
     except Exception:
-        return None
+        pass
+
+    return None
 
 
 def execute_confirmed(session_id: str) -> dict[str, Any]:
@@ -45,21 +56,26 @@ def execute_confirmed(session_id: str) -> dict[str, Any]:
         }
 
     current_engine = get_engine()
-
+    active_connector = None
     if current_engine is None:
-        clear_pending(session_id)
-        return {
-            "success": False,
-            "confirmed": False,
-            "error": "No database is currently connected.",
-        }
+        try:
+            from app.database.connection_context import get_request_user_id
+            from app.connectors.registry import get_connection_registry
+            uid = get_request_user_id()
+            if uid:
+                active_connector = get_connection_registry().get_active_connector(uid)
+        except Exception:
+            pass
 
-    try:
-        current_identity = current_engine.url.render_as_string(
-            hide_password=True
-        )
-    except Exception:
-        current_identity = None
+        if active_connector is None:
+            clear_pending(session_id)
+            return {
+                "success": False,
+                "confirmed": False,
+                "error": "No database is currently connected.",
+            }
+
+    current_identity = _current_database_identity()
 
     if pending.get("database_identity") != current_identity:
         clear_pending(session_id)
@@ -72,29 +88,43 @@ def execute_confirmed(session_id: str) -> dict[str, Any]:
             ),
         }
 
-    validation = validate_sql(sql)
+    if current_engine is not None:
+        validation = validate_sql(sql)
 
-    if not validation.get("allowed"):
-        clear_pending(session_id)
-        return {
-            "success": False,
-            "confirmed": False,
-            "error": validation.get("reason", "Operation rejected."),
-        }
+        if not validation.get("allowed"):
+            clear_pending(session_id)
+            return {
+                "success": False,
+                "confirmed": False,
+                "error": validation.get("reason", "Operation rejected."),
+            }
 
-    if not validation.get("requires_confirmation"):
-        clear_pending(session_id)
-        return {
-            "success": False,
-            "confirmed": False,
-            "error": "This operation is not a valid pending database change.",
-        }
+        if not validation.get("requires_confirmation"):
+            clear_pending(session_id)
+            return {
+                "success": False,
+                "confirmed": False,
+                "error": "This operation is not a valid pending database change.",
+            }
 
     result = execute_query(sql)
 
     if result.get("success"):
         try:
-            refresh_database_profile()
+            from app.database.database_context import get_database_profile
+            prof = get_database_profile()
+            if prof and hasattr(prof, "tables") and table:
+                affected = result.get("affected_rows") or 1
+                if operation == "insert":
+                    if hasattr(prof, "total_rows") and prof.total_rows is not None:
+                        prof.total_rows += affected
+                    if table in prof.tables and hasattr(prof.tables[table], "row_count") and prof.tables[table].row_count is not None:
+                        prof.tables[table].row_count += affected
+                elif operation == "delete":
+                    if hasattr(prof, "total_rows") and prof.total_rows is not None:
+                        prof.total_rows = max(0, prof.total_rows - affected)
+                    if table in prof.tables and hasattr(prof.tables[table], "row_count") and prof.tables[table].row_count is not None:
+                        prof.tables[table].row_count = max(0, prof.tables[table].row_count - affected)
         except Exception:
             pass
         clear_pending(session_id)

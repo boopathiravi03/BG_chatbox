@@ -181,6 +181,11 @@ def disconnect_database(clear_profile=True):
             clear_database_profile()
         except Exception:
             pass
+        try:
+            from app.tools.get_schema import clear_engine_schema_cache
+            clear_engine_schema_cache()
+        except Exception:
+            pass
 
 
 # ============================================================

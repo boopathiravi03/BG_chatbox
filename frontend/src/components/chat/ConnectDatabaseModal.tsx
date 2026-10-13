@@ -224,7 +224,7 @@ export default function ConnectDatabaseModal({
     apiKey: "",
     collectionName: "",
     tenant: "default_tenant",
-    isReadOnly: true,
+    isReadOnly: false,
   });
 
   // Load backend catalog dynamically
@@ -733,15 +733,15 @@ export default function ConnectDatabaseModal({
                     </div>
                   </div>
 
-                  <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                  <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={form.isReadOnly}
                       onChange={(e) => updateField("isReadOnly", e.target.checked)}
                       className="rounded border-zinc-700 text-violet-600 focus:ring-violet-500 bg-zinc-900"
                     />
-                    <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-400">
-                      <ShieldCheck size={12} /> Read-Only Mode
+                    <span className={`flex items-center gap-1 text-[11px] font-medium ${form.isReadOnly ? "text-amber-400" : "text-emerald-400"}`}>
+                      <ShieldCheck size={12} /> {form.isReadOnly ? "Read-Only Mode" : "Read/Write Mode"}
                     </span>
                   </label>
                 </div>

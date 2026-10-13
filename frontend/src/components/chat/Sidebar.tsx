@@ -39,6 +39,7 @@ interface Props {
   onDatabaseConnected?: () => void;
   onDeleteSession?: (id: string) => void;
   onDisconnect?: () => void;
+  activeConnectionId?: string | null;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onOpenDatabase?: () => void;
@@ -117,6 +118,7 @@ export default function Sidebar({
   onDatabaseConnected,
   onDeleteSession,
   onDisconnect,
+  activeConnectionId,
   collapsed = false,
   onToggleCollapse,
   onOpenDatabase,
@@ -782,6 +784,7 @@ export default function Sidebar({
       {showDatabase && (
         <Suspense fallback={null}>
           <DatabasePopup
+            connectionId={activeConnectionId || undefined}
             onClose={() => setShowDatabase(false)}
             onDisconnected={() => {
               fetchDbInfo();

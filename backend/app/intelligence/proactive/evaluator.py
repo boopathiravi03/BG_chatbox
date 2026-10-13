@@ -381,7 +381,51 @@ def evaluate_proactive_metrics(
                     generated_alerts.append(alert)
             except Exception as ex:
                 logger.debug(f"Orphan query error on {from_t} -> {to_t}: {ex}")
-                continue
+        # ── 3.5 Bridge Active Anomaly Findings ────────────────────────────────
+        try:
+            from app.intelligence.anomaly.detector import detect_anomalies
+            anom_rep = detect_anomalies(force_refresh=False)
+            if anom_rep and hasattr(anom_rep, "anomalies"):
+                for finding in anom_rep.anomalies:
+                    metric_key = f"{finding.table}.{finding.column or 'general'}.{finding.id}"
+                    sev = AlertSeverity.CRITICAL if finding.severity == "CRITICAL" else (
+                        AlertSeverity.WARNING if finding.severity == "WARNING" else AlertSeverity.INFO
+                    )
+                    alert = BusinessAlert(
+                        title=f"{finding.metric}: {finding.table}" + (f".{finding.column}" if finding.column else ""),
+                        category=AlertCategory.ANOMALY_DETECTED,
+                        severity=sev,
+                        metric=metric_key,
+                        user_id=user_id,
+                        previous_value=0.0,
+                        current_value=1.0,
+                        delta=1.0,
+                        delta_percent=None,
+                        threshold_applied=finding.detection_method,
+                        source_tables=[finding.table] if finding.table else [],
+                        source_columns=[finding.column] if finding.column else [],
+                        lineage_steps=[
+                            f"Statistical anomaly detected via {finding.detection_method}",
+                            finding.deviation_str or "Outlier/Integrity breach",
+                        ],
+                        sql=None,
+                        evidence={
+                            "observed_value": str(finding.observed_value) if finding.observed_value is not None else "",
+                            "expected_value": str(finding.expected_value) if finding.expected_value is not None else "",
+                            "deviation": finding.deviation_str or "",
+                            "explanation": finding.explanation or "",
+                        },
+                        explanation=finding.explanation or "",
+                        recommendation=f"Inspect '{finding.table}' in Anomaly Center to investigate this {finding.severity.lower()} finding.",
+                        action_suggestion={
+                            "agent": "anomaly_agent",
+                            "task": f"Analyze anomaly finding {finding.id} in {finding.table}",
+                        },
+                        status=AlertStatus.NEW,
+                    )
+                    generated_alerts.append(alert)
+        except Exception as ex:
+            logger.debug(f"Anomaly bridge evaluation error: {ex}")
 
     # ── 4. Deduplication & Persistence ────────────────────────────────────────
     final_alerts: list[BusinessAlert] = []

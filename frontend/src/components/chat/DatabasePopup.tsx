@@ -29,16 +29,18 @@ import { useToast } from "../../context/ToastContext";
 import DisconnectConfirmationModal from "./DisconnectConfirmationModal";
 
 interface Props {
+  connectionId?: string;
   onClose: () => void;
   onDisconnected?: () => void;
 }
 
-export default function DatabasePopup({ onClose, onDisconnected }: Props) {
+export default function DatabasePopup({ connectionId, onClose, onDisconnected }: Props) {
   const [schema, setSchema] = useState<Record<string, any>>({});
   const [dbInfo, setDbInfo] = useState<{
     database?: string;
     tables?: number;
     rows?: number;
+    columns?: number;
     size?: string;
   }>({});
   const [loading, setLoading] = useState(true);
@@ -63,8 +65,8 @@ export default function DatabasePopup({ onClose, onDisconnected }: Props) {
     const fetchData = async () => {
       try {
         const [schemaData, infoData] = await Promise.all([
-          getSchema(),
-          getDatabaseInfo(),
+          getSchema(connectionId),
+          getDatabaseInfo(connectionId),
         ]);
         setSchema(schemaData || {});
         setDbInfo(infoData || {});
@@ -77,7 +79,7 @@ export default function DatabasePopup({ onClose, onDisconnected }: Props) {
     };
 
     fetchData();
-  }, []);
+  }, [connectionId]);
 
   const tables = Object.keys(schema);
   const filteredTables = tables.filter((t) =>
