@@ -202,10 +202,17 @@ export async function getAnalytics() {
   return apiFetch("/analytics");
 }
 
-export async function confirmQuery(sessionId: string) {
+export async function confirmQuery(
+  sessionId: string,
+  options?: { fingerprint?: string; highRiskConfirmed?: boolean }
+) {
   return apiFetch("/confirm-query", {
     method: "POST",
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      fingerprint: options?.fingerprint,
+      high_risk_confirmed: options?.highRiskConfirmed ?? false,
+    }),
   });
 }
 
@@ -1803,6 +1810,115 @@ export async function dropDatabaseIndex(payload: {
     }),
   });
 }
+
+// =============================================================================
+// AI DATABASE GUARDIAN
+// =============================================================================
+
+export interface GuardianMetricItem {
+  name: string;
+  value: any;
+  unit: string;
+  status: "available" | "unavailable" | "permission_denied" | "unsupported_engine";
+  description: string;
+  freshness_seconds: number;
+  collected_at: string;
+}
+
+export interface GuardianTelemetry {
+  database_type: string;
+  database_identity: string;
+  collected_at: string;
+  is_live: boolean;
+  latency_ms: number;
+  metrics: Record<string, GuardianMetricItem>;
+  warnings: string[];
+}
+
+export interface GuardianIncident {
+  incident_id: string;
+  user_id: string;
+  database_identity: string;
+  database_type: string;
+  title: string;
+  severity: "critical" | "warning" | "info";
+  status: "detected" | "investigating" | "diagnosed" | "acknowledged" | "resolved";
+  category: string;
+  detected_at: string;
+  updated_at: string;
+  observed_facts: Record<string, any>;
+  trigger_rule: string;
+  likely_root_cause: string;
+  confidence_score: number;
+  confidence_justification?: string;
+  limitations?: string[];
+  verification_steps: string[];
+  ai_advisory?: string;
+  recovery_rule?: string;
+  recovered_at?: string;
+  acknowledged_by?: string;
+  acknowledged_at?: string;
+  resolved_by?: string;
+  resolved_at?: string;
+  resolution_notes?: string;
+}
+
+export interface GuardianDiagnosisReport {
+  report_id: string;
+  database_type: string;
+  database_identity: string;
+  overall_health: "healthy" | "warning" | "critical" | "unknown";
+  health_score: number;
+  generated_at: string;
+  telemetry: GuardianTelemetry;
+  active_incidents: GuardianIncident[];
+  summary_advisory: string;
+  recommendations: Array<{
+    title: string;
+    severity: string;
+    category: string;
+    likely_root_cause: string;
+    verification_steps: string[];
+  }>;
+}
+
+export async function getGuardianMetrics(
+  connectionId?: string
+): Promise<{ status: string; telemetry?: GuardianTelemetry; message?: string }> {
+  const query = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/guardian/metrics${query}`);
+}
+
+export async function runGuardianDiagnosis(
+  connectionId?: string
+): Promise<{ status: string; report?: GuardianDiagnosisReport; message?: string }> {
+  const query = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/guardian/diagnose${query}`, {
+    method: "POST",
+  });
+}
+
+export async function listGuardianIncidents(params?: {
+  databaseIdentity?: string;
+  statusFilter?: string;
+}): Promise<{ status: string; incidents: GuardianIncident[]; total: number; message?: string }> {
+  const query = new URLSearchParams();
+  if (params?.databaseIdentity) query.append("database_identity", params.databaseIdentity);
+  if (params?.statusFilter) query.append("status_filter", params.statusFilter);
+  const qStr = query.toString() ? `?${query.toString()}` : "";
+  return apiFetch(`/guardian/incidents${qStr}`);
+}
+
+export async function updateGuardianIncidentStatus(
+  incidentId: string,
+  payload: { status: "acknowledged" | "resolved"; notes?: string }
+): Promise<{ status: string; incident?: GuardianIncident; message?: string }> {
+  return apiFetch(`/guardian/incidents/${encodeURIComponent(incidentId)}/status`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 
 
 

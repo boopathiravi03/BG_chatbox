@@ -41,7 +41,7 @@ interface Props {
   onSend?: (message: string) => void;
   onInsertSubmit?: (values: Record<string, string>, table: string) => void;
   isTyping?: boolean;
-  onConfirm?: (sql: string) => void;
+  onConfirm?: (options?: { fingerprint?: string; highRiskConfirmed?: boolean }) => void;
   onCancel?: () => void;
   onConnectDatabase?: (type?: "sqlite" | "mysql" | "postgres") => void;
 }
@@ -152,37 +152,86 @@ export default function MessageBubble({
           <div>
             {/* Confirmation Alert */}
             {message.requires_confirmation && (
-              <div className="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-4 sm:p-5">
-                <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm sm:text-base">
-                  <AlertTriangle size={17} />
-                  <span>Database Modification Requires Confirmation</span>
+              <div className={`mb-5 rounded-2xl border p-4 sm:p-5 ${
+                message.is_high_risk 
+                  ? "border-rose-500/40 bg-rose-500/[0.06]" 
+                  : "border-amber-500/30 bg-amber-500/[0.04]"
+              }`}>
+                <div className="flex items-center gap-2 font-semibold text-sm sm:text-base">
+                  {message.is_high_risk ? (
+                    <div className="flex items-center gap-2 text-rose-400">
+                      <AlertTriangle size={18} className="animate-pulse" />
+                      <span className="font-bold">CRITICAL: High-Risk Database Modification</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-amber-400">
+                      <AlertTriangle size={17} />
+                      <span>Database Modification Requires Confirmation</span>
+                    </div>
+                  )}
                 </div>
                 <p className="mt-2 text-xs sm:text-sm text-zinc-200 leading-relaxed">
                   {message.operation === "delete"
-                    ? "The following record(s) will be permanently deleted from the database."
+                    ? "The specified record(s) will be permanently deleted from the database."
                     : message.operation === "update"
                       ? "The specified record(s) will be modified."
                       : "A new record will be inserted into the database."}
                 </p>
-                {message.affected_rows_preview !== undefined && (
-                  <div className="mt-3 rounded-xl bg-black/40 p-3 text-xs sm:text-sm text-zinc-200">
-                    <span>Matching records: </span>
-                    <span className="font-bold text-amber-400 text-sm">
-                      {message.affected_rows_preview}
-                    </span>
+
+                {/* Impact row estimate */}
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs sm:text-sm">
+                  {message.estimated_affected_rows !== undefined && (
+                    <div className="rounded-xl bg-black/40 p-3 text-zinc-200 flex items-center justify-between">
+                      <span>Total affected records:</span>
+                      <span className={`font-bold font-mono text-sm ${message.is_high_risk ? "text-rose-400" : "text-amber-400"}`}>
+                        {message.estimated_affected_rows}
+                      </span>
+                    </div>
+                  )}
+                  {message.affected_rows_preview !== undefined && (
+                    <div className="rounded-xl bg-black/40 p-3 text-zinc-200 flex items-center justify-between">
+                      <span>Preview sample:</span>
+                      <span className="font-bold font-mono text-zinc-300 text-sm">
+                        {message.affected_rows_preview} row(s)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Filter conditions preview */}
+                {message.conditions && message.conditions.length > 0 && (
+                  <div className="mt-3 rounded-xl bg-black/40 p-3 text-xs text-zinc-300 space-y-1">
+                    <span className="font-semibold text-zinc-400 uppercase tracking-wider text-[10px]">Validated Filters:</span>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {message.conditions.map((c: any, i: number) => (
+                        <span key={i} className="px-2 py-0.5 rounded bg-white/5 border border-white/10 font-mono text-indigo-300">
+                          {c.column} {c.operator} {c.value !== null ? JSON.stringify(c.value) : "NULL"}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
+
                 {message.sql && (
                   <div className="mt-3.5">
                     <SQLBlock sql={message.sql} />
                   </div>
                 )}
-                <div className="mt-4 flex items-center gap-2.5">
+
+                <div className="mt-4 flex flex-wrap items-center gap-2.5">
                   <button
-                    onClick={() => onConfirm?.(message.sql || "")}
-                    className="rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs sm:text-sm font-semibold text-white transition-colors shadow-sm"
+                    onClick={() => onConfirm?.({
+                      fingerprint: message.fingerprint,
+                      highRiskConfirmed: !!message.is_high_risk,
+                    })}
+                    className={`rounded-xl px-4 py-2 text-xs sm:text-sm font-semibold text-white transition-all shadow-sm ${
+                      message.is_high_risk
+                        ? "bg-rose-600 hover:bg-rose-500 animate-pulse"
+                        : "bg-emerald-600 hover:bg-emerald-500"
+                    }`}
                   >
-                    Confirm {message.operation || "Execution"}
+                    {message.is_high_risk ? "Confirm High-Risk " : "Confirm "}
+                    {message.operation ? message.operation.toUpperCase() : "Execution"}
                   </button>
                   <button
                     onClick={() => onCancel?.()}

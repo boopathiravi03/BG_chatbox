@@ -13,12 +13,13 @@ from app.crud.deterministic import (
     detect_write_operation,
 )
 from app.crud.intent import parse_crud_intent
-from app.crud.matcher import match_records, quote_identifier
+from app.crud.matcher import count_matching_records, match_records, quote_identifier
 from app.crud.planner import (
     preview_delete,
     preview_insert,
     preview_update,
 )
+from app.crud.predicates import validate_and_build_where
 from app.crud.resolver import find_text_columns, resolve_table
 from app.tools.execute_query import validate_sql
 
@@ -86,6 +87,16 @@ def handle_crud_request(
         return None
 
     # ---------------------------------------------------------
+    # NON-RELATIONAL CONNECTOR HONEST SAFEGUARD:
+    # SQL DML cannot be executed on document/vector engines.
+    # ---------------------------------------------------------
+    if database_type.lower() in {"mongodb", "mongo", "redis", "qdrant", "chroma"}:
+        return {
+            "type": "error",
+            "message": f"Conversational CRUD is currently supported for relational SQL databases (SQLite, MySQL, PostgreSQL, MariaDB). Native {database_type.upper()} conversational mutations are planned.",
+            "requires_confirmation": False,
+        }
+
     # 1. Deterministic Intent Detection first (0.4 ms)
     # Handles straightforward requests like "add customer", "insert into users", etc.
     # ---------------------------------------------------------
@@ -204,36 +215,54 @@ def _handle_update(
             "requires_confirmation": False,
         }
 
-    match = intent.get("match") or {}
-    where_column = match.get("column")
-    where_value = match.get("value")
-    changes = intent.get("changes") or {}
-
-    if not where_column or where_value is None:
+    if table not in schema:
         return {
             "type": "error",
-            "message": "For safety, UPDATE requires a WHERE condition identifying the record(s) you want to change.",
+            "message": f"Table '{table}' does not exist in the active database schema.",
             "requires_confirmation": False,
         }
 
-    where_clause = f"{quote_identifier(where_column)} = {_quote_value(where_value)}"
+    # Gather conditions (compound or single match)
+    conditions = intent.get("conditions") or []
+    if not conditions:
+        match = intent.get("match") or {}
+        if match.get("column") and ("value" in match or match.get("operator")):
+            conditions = [{
+                "column": match.get("column"),
+                "operator": match.get("operator", "="),
+                "value": match.get("value"),
+            }]
+
+    where_result = validate_and_build_where(table, conditions, schema)
+    if not where_result["valid"]:
+        return {
+            "type": "error",
+            "message": where_result["error"] or "Invalid WHERE condition.",
+            "requires_confirmation": False,
+        }
+
+    where_clause = where_result["where_clause"]
+    normalized_conditions = where_result["normalized_conditions"]
+
+    changes = intent.get("changes") or {}
+    table_schema = schema.get(table, {})
 
     valid_changes = {
         column: value
         for column, value in changes.items()
-        if column in schema.get(table, {})
+        if column in table_schema
     }
 
     if not valid_changes:
         return {
             "type": "error",
-            "message": "I understood which record you want to update, but I could not determine which field should be changed.",
+            "message": "I understood which record you want to update, but no valid target column to change was recognized.",
             "requires_confirmation": False,
         }
 
     primary_keys = {
         column
-        for column, info in schema.get(table, {}).items()
+        for column, info in table_schema.items()
         if info.get("primary_key")
     }
 
@@ -245,18 +274,21 @@ def _handle_update(
                 "requires_confirmation": False,
             }
 
-    preview = match_records(table, where_clause, schema)
+    # 1. Total affected rows count calculation (Mass-write safeguard)
+    count_res = count_matching_records(table, where_clause, schema)
+    total_matching = count_res.get("count") if count_res.get("success") else None
 
+    # 2. Preview bounded records
+    preview = match_records(table, where_clause, schema, limit=100)
     if not preview.get("success"):
         return {
             "type": "error",
-            "message": preview.get("error", "Could not find the matching record."),
+            "message": preview.get("error", "Could not query records matching condition."),
             "requires_confirmation": False,
         }
 
     rows = preview.get("rows", [])
-
-    if not rows:
+    if not rows and (total_matching is not None and total_matching == 0):
         return {
             "type": "error",
             "message": "I could not find any record matching the specified condition.",
@@ -264,7 +296,6 @@ def _handle_update(
         }
 
     planned = preview_update(table, where_clause, valid_changes, schema)
-
     if not planned.get("success"):
         return {
             "type": "error",
@@ -274,7 +305,6 @@ def _handle_update(
 
     sql = planned["sql"]
     validation = validate_sql(sql)
-
     if not validation.get("allowed"):
         return {
             "type": "error",
@@ -282,17 +312,29 @@ def _handle_update(
             "requires_confirmation": False,
         }
 
-    store_pending(
+    # Evaluate mass-write risk (> 100 rows)
+    estimated_affected = total_matching if total_matching is not None else len(rows)
+    is_high_risk = estimated_affected > 100
+
+    pending_record = store_pending(
         session_id=session_id,
         operation="update",
         table=table,
         sql=sql,
         preview_rows=rows,
         extra={
-            "where_column": where_column,
-            "where_value": where_value,
+            "where_clause": where_clause,
+            "conditions": normalized_conditions,
             "update_values": valid_changes,
+            "estimated_affected_rows": estimated_affected,
+            "is_high_risk": is_high_risk,
         },
+    )
+
+    explanation = (
+        f"I found {estimated_affected} matching record(s) in '{table}'. "
+        + ("⚠️ HIGH-RISK OPERATION: Over 100 records will be modified. Review carefully. " if is_high_risk else "")
+        + "Review the proposed UPDATE and confirm before making the change."
     )
 
     return {
@@ -311,9 +353,13 @@ def _handle_update(
         },
         "requires_confirmation": True,
         "affected_rows_preview": len(rows),
-        "explanation": f"I found {len(rows)} matching record(s) in '{table}'. Review the proposed UPDATE and confirm before making the change.",
+        "estimated_affected_rows": estimated_affected,
+        "is_high_risk": is_high_risk,
+        "fingerprint": pending_record.get("fingerprint"),
+        "explanation": explanation,
         "before_rows": rows,
         "proposed_changes": valid_changes,
+        "conditions": normalized_conditions,
         "followups": [],
     }
 
@@ -332,31 +378,50 @@ def _handle_delete(
             "requires_confirmation": False,
         }
 
-    match = intent.get("match") or {}
-    where_column = match.get("column")
-    where_value = match.get("value")
-
-    if not where_column or where_value is None:
+    if table not in schema:
         return {
             "type": "error",
-            "message": "For safety, DELETE requires a WHERE condition identifying the record(s) you want to remove.",
+            "message": f"Table '{table}' does not exist in the active database schema.",
             "requires_confirmation": False,
         }
 
-    where_clause = f"{quote_identifier(where_column)} = {_quote_value(where_value)}"
+    # Gather conditions (compound or single match)
+    conditions = intent.get("conditions") or []
+    if not conditions:
+        match = intent.get("match") or {}
+        if match.get("column") and ("value" in match or match.get("operator")):
+            conditions = [{
+                "column": match.get("column"),
+                "operator": match.get("operator", "="),
+                "value": match.get("value"),
+            }]
 
-    preview = match_records(table, where_clause, schema)
+    where_result = validate_and_build_where(table, conditions, schema)
+    if not where_result["valid"]:
+        return {
+            "type": "error",
+            "message": where_result["error"] or "Invalid WHERE condition.",
+            "requires_confirmation": False,
+        }
 
+    where_clause = where_result["where_clause"]
+    normalized_conditions = where_result["normalized_conditions"]
+
+    # 1. Total affected rows count calculation (Mass-write safeguard)
+    count_res = count_matching_records(table, where_clause, schema)
+    total_matching = count_res.get("count") if count_res.get("success") else None
+
+    # 2. Preview bounded records
+    preview = match_records(table, where_clause, schema, limit=100)
     if not preview.get("success"):
         return {
             "type": "error",
-            "message": preview.get("error", "Could not check the record before deletion."),
+            "message": preview.get("error", "Could not check records before deletion."),
             "requires_confirmation": False,
         }
 
     rows = preview.get("rows", [])
-
-    if not rows:
+    if not rows and (total_matching is not None and total_matching == 0):
         return {
             "type": "error",
             "message": "No matching record was found. Nothing was deleted.",
@@ -364,7 +429,6 @@ def _handle_delete(
         }
 
     planned = preview_delete(table, where_clause, schema)
-
     if not planned.get("success"):
         return {
             "type": "error",
@@ -374,7 +438,6 @@ def _handle_delete(
 
     sql = planned["sql"]
     validation = validate_sql(sql)
-
     if not validation.get("allowed"):
         return {
             "type": "error",
@@ -382,16 +445,28 @@ def _handle_delete(
             "requires_confirmation": False,
         }
 
-    store_pending(
+    # Evaluate mass-write risk (> 100 rows)
+    estimated_affected = total_matching if total_matching is not None else len(rows)
+    is_high_risk = estimated_affected > 100
+
+    pending_record = store_pending(
         session_id=session_id,
         operation="delete",
         table=table,
         sql=sql,
         preview_rows=rows,
         extra={
-            "where_column": where_column,
-            "where_value": where_value,
+            "where_clause": where_clause,
+            "conditions": normalized_conditions,
+            "estimated_affected_rows": estimated_affected,
+            "is_high_risk": is_high_risk,
         },
+    )
+
+    explanation = (
+        f"I found {estimated_affected} matching record(s). "
+        + ("⚠️ HIGH-RISK DESTRUCTIVE OPERATION: Over 100 records will be permanently deleted! " if is_high_risk else "")
+        + "Review the proposed DELETE and confirm before removing anything."
     )
 
     return {
@@ -410,8 +485,12 @@ def _handle_delete(
         },
         "requires_confirmation": True,
         "affected_rows_preview": len(rows),
-        "explanation": f"I found {len(rows)} matching record(s). Review the proposed DELETE and confirm before removing anything.",
+        "estimated_affected_rows": estimated_affected,
+        "is_high_risk": is_high_risk,
+        "fingerprint": pending_record.get("fingerprint"),
+        "explanation": explanation,
         "before_rows": rows,
+        "conditions": normalized_conditions,
         "followups": [],
     }
 
@@ -482,7 +561,7 @@ def _handle_insert_form(
             "requires_confirmation": False,
         }
 
-    store_pending(
+    pending_record = store_pending(
         session_id=session_id,
         operation="insert",
         table=table,
@@ -496,6 +575,7 @@ def _handle_insert_form(
         "table": table,
         "generated_sql": sql,
         "sql": sql,
+        "fingerprint": pending_record.get("fingerprint"),
         "result": {
             "success": True,
             "columns": [],

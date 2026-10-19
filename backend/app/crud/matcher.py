@@ -98,9 +98,54 @@ def match_records(
             "columns": [],
         }
 
+def count_matching_records(
+    table: str,
+    where_clause: str | None,
+    schema: dict,
+) -> dict[str, Any]:
+    """
+    Execute a bounded COUNT(*) query with the exact WHERE clause
+    to determine total affected rows without fetching records.
+    """
+    engine = get_engine()
+
+    if engine is not None:
+        table_sql = quote_identifier(table)
+        sql = f"SELECT COUNT(*) AS cnt FROM {table_sql}"
+        if where_clause:
+            sql += f" WHERE {where_clause}"
+
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(sql))
+                row = result.fetchone()
+                cnt = row[0] if row else 0
+                return {
+                    "success": True,
+                    "count": int(cnt),
+                }
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "count": None,
+            }
+
+    # Fallback to active connector if applicable
+    try:
+        from app.database.connection_context import get_request_user_id
+        from app.connectors.registry import get_connection_registry
+        uid = get_request_user_id()
+        if uid:
+            conn = get_connection_registry().get_active_connector(uid)
+            if conn and hasattr(conn, "count_records"):
+                cnt = conn.count_records(table=table, where_clause=where_clause)
+                return {"success": True, "count": int(cnt)}
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "count": None}
+
     return {
         "success": False,
         "error": "No database is currently connected.",
-        "rows": [],
-        "columns": [],
+        "count": None,
     }

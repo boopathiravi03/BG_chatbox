@@ -170,6 +170,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class FirebaseLoginRequest(BaseModel):
+    id_token: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     message: str = ""
     session_id: str = "default"
@@ -181,6 +187,8 @@ class ChatRequest(BaseModel):
 
 class ConfirmQueryRequest(BaseModel):
     session_id: str
+    fingerprint: Optional[str] = None
+    high_risk_confirmed: bool = False
 
 
 class DatabaseConnection(BaseModel):
@@ -323,6 +331,42 @@ def auth_login(req: LoginRequest, request: Request):
     }
 
 
+@app.post("/auth/firebase")
+@limiter.limit("20/minute")
+def auth_firebase_login(req: FirebaseLoginRequest, request: Request):
+    from app.security.firebase_auth import verify_firebase_id_token
+    from app.security.sessions import sync_firebase_user
+
+    payload = verify_firebase_id_token(req.id_token)
+    if not payload:
+        client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
+        get_intrusion_engine().record_auth_failure(
+            ip_address=client_ip,
+            username=req.username or "firebase_user",
+            user_id="auth_failure",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired Firebase authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    uid = payload["uid"]
+    email = payload.get("email") or req.email
+    name = payload.get("name") or req.username
+
+    user = sync_firebase_user(uid, email=email, display_name=name)
+    token = create_access_token(user["user_id"], user["username"])
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user_id": user["user_id"],
+        "username": user["username"],
+        "email": user.get("email"),
+    }
+
+
 @app.get("/auth/me")
 def auth_me(user: AuthenticatedUser = Depends(get_current_user)):
     info = get_user_by_id(user.user_id)
@@ -400,7 +444,11 @@ def confirm_query(request: ConfirmQueryRequest, user: AuthenticatedUser = Depend
     _activate(user)
     try:
         from app.crud.service import execute_confirmed
-        return execute_confirmed(f"{user.user_id}:{request.session_id}")
+        return execute_confirmed(
+            f"{user.user_id}:{request.session_id}",
+            fingerprint=request.fingerprint,
+            high_risk_confirmed=request.high_risk_confirmed,
+        )
     except Exception as e:
         return {"success": False, "confirmed": False, "error": str(e)}
 
@@ -769,7 +817,7 @@ def create_connection(
         cfg = req.dict(exclude_unset=True)
         if req.config and isinstance(req.config, dict):
             cfg.update(req.config)
-        connector = reg.create_connector_from_config(user.user_id, cfg)
+        connector = reg.create_connector_from_config(user.user_id, cfg, auto_register=False)
         ok = connector.connect()
 
         if not ok:
@@ -778,6 +826,9 @@ def create_connection(
                 "message": connector.last_error or "Failed to connect to database.",
                 "connection": connector.to_dict(),
             }
+
+        # Only register connector on successful connection
+        reg.register_connector(connector)
 
         if req.set_as_active:
             reg.set_active_connector(user.user_id, connector.connection_id)
@@ -4775,5 +4826,158 @@ def unblock_ip_endpoint(
     except Exception as e:
         logging.error(f"IP unblock error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+# =============================================================================
+# ── AI DATABASE GUARDIAN ROUTES ──────────────────────────────────────────────
+# =============================================================================
+from app.guardian.service import GuardianService
+from app.guardian.models import IncidentStatus, IncidentSeverity
+from app.connectors.registry import get_connection_registry
+
+
+class GuardianIncidentStatusRequest(BaseModel):
+    status: str  # acknowledged | resolved
+    notes: Optional[str] = None
+
+
+@app.get("/guardian/metrics")
+@limiter.limit("60/minute")
+def get_guardian_metrics(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Returns real live engine telemetry metrics for the active connection.
+    Guarantees: Zero fabricated metrics; reports unsupported as unavailable.
+    """
+    _activate(user, connection_id=connection_id, request=request)
+    try:
+        reg = get_connection_registry()
+        connector = reg.get_connector(user.user_id, connection_id) if connection_id else reg.get_active_connector(user.user_id)
+        
+        engine = get_engine()
+        db_type = get_current_db_type()
+        identity = (connector.name if connector else None) or get_database_connection_info() or db_type
+        
+        telemetry = GuardianService.get_live_telemetry(
+            user_id=user.user_id,
+            engine=engine,
+            db_type=db_type,
+            identity=identity,
+            connector=connector,
+        )
+        return {
+            "status": "success",
+            "telemetry": telemetry.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Guardian metrics error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/guardian/diagnose")
+@limiter.limit("30/minute")
+def run_guardian_diagnosis(
+    request: Request,
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Triggers an on-demand comprehensive operational diagnosis.
+    Separates facts, rule-based detections, root cause hypotheses, and safe verification steps.
+    """
+    _activate(user, connection_id=connection_id, request=request)
+    try:
+        reg = get_connection_registry()
+        connector = reg.get_connector(user.user_id, connection_id) if connection_id else reg.get_active_connector(user.user_id)
+        
+        engine = get_engine()
+        db_type = get_current_db_type()
+        identity = (connector.name if connector else None) or get_database_connection_info() or db_type
+        
+        report = GuardianService.run_diagnosis(
+            user_id=user.user_id,
+            engine=engine,
+            db_type=db_type,
+            identity=identity,
+            connector=connector,
+        )
+        return {
+            "status": "success",
+            "report": report.to_dict(),
+        }
+    except Exception as e:
+        logging.error(f"Guardian diagnosis error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/guardian/incidents")
+@limiter.limit("60/minute")
+def list_guardian_incidents(
+    request: Request,
+    database_identity: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Lists user-isolated operational incidents from durable SQLite storage.
+    """
+    _activate(user, request=request)
+    try:
+        incidents = GuardianService.list_user_incidents(
+            user_id=user.user_id,
+            database_identity=database_identity,
+            status_filter=status_filter,
+        )
+        return {
+            "status": "success",
+            "incidents": [inc.to_dict() for inc in incidents],
+            "total": len(incidents),
+        }
+    except Exception as e:
+        logging.error(f"Guardian incidents query error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/guardian/incidents/{incident_id}/status")
+@limiter.limit("30/minute")
+def update_guardian_incident_status(
+    incident_id: str,
+    req: GuardianIncidentStatusRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Acknowledge or resolve an incident. Never performs automatic mutations.
+    """
+    _activate(user, request=request)
+    try:
+        norm_status = req.status.lower().strip()
+        if norm_status not in ("acknowledged", "resolved"):
+            raise HTTPException(status_code=400, detail="Invalid status. Must be 'acknowledged' or 'resolved'.")
+        
+        new_status = IncidentStatus.ACKNOWLEDGED if norm_status == "acknowledged" else IncidentStatus.RESOLVED
+        updated = GuardianService.update_incident_status(
+            user_id=user.user_id,
+            incident_id=incident_id,
+            new_status=new_status,
+            actor_name=user.username,
+            notes=req.notes,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Incident not found or unauthorized.")
+        
+        return {
+            "status": "success",
+            "incident": updated.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Guardian incident update error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
 
 

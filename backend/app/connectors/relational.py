@@ -37,6 +37,53 @@ MUTATION_STARTERS = {"insert", "update", "delete", "replace"}
 DDL_STARTERS = {"drop", "alter", "truncate", "create"}
 
 
+def sanitize_connection_error(exc: Exception, connector_type: str = "database") -> str:
+    """
+    Categorizes connection errors and strips any sensitive information
+    (raw passwords, full connection URIs, internal tracepaths).
+    Distinguishes:
+    - Authentication / Authorization failures (e.g. MariaDB/MySQL 1045, Postgres 28P01)
+    - Host unreachable / network errors (e.g. 2003, ECONNREFUSED)
+    - Target database does not exist (e.g. 1049, 3D000)
+    - Connection timeouts
+    """
+    raw = str(exc)
+    c_lower = connector_type.lower()
+    c_name = "MariaDB" if c_lower == "mariadb" else ("MySQL" if c_lower == "mysql" else ("PostgreSQL" if c_lower == "postgres" else connector_type.capitalize()))
+
+    # 1. Authentication / Authorization (MariaDB/MySQL 1045, Postgres 28P01 / 28000)
+    if "1045" in raw or "28P01" in raw or "28000" in raw or "password authentication failed" in raw.lower() or "access denied for user" in raw.lower():
+        # Match user@host if available without disclosing password
+        m = re.search(r"Access denied for user '([^']+)'@'([^']+)'", raw, re.IGNORECASE)
+        user_host = f" for '{m.group(1)}'@'{m.group(2)}'" if m else ""
+        return (
+            f"Authentication failed{user_host}: Access denied by {c_name} server. "
+            f"Please verify: 1) Password correctness, 2) User/Host allowance in MariaDB/MySQL (`user`@`host`), "
+            f"and 3) Granted database permissions."
+        )
+
+    # 2. Database Unknown / Does Not Exist (MySQL/MariaDB 1049, Postgres 3D000)
+    if "1049" in raw or "3D000" in raw or ("database" in raw.lower() and "does not exist" in raw.lower()) or "unknown database" in raw.lower():
+        m = re.search(r"Unknown database '([^']+)'", raw, re.IGNORECASE)
+        db_name = f" '{m.group(1)}'" if m else ""
+        return f"Database{db_name} does not exist on {c_name} server. Please verify the database name."
+
+    # 3. Network / Unreachable / Refused (MySQL/MariaDB 2003, 111, Connection refused)
+    if "2003" in raw or "connection refused" in raw.lower() or "can't connect to" in raw.lower() or "could not connect to server" in raw.lower() or "econnrefused" in raw.lower():
+        return (
+            f"Cannot reach {c_name} server. Please verify the host address, port, and that the database service is running."
+        )
+
+    # 4. Timeout
+    if "timed out" in raw.lower() or "timeout" in raw.lower():
+        return f"Connection to {c_name} server timed out. Check firewall rules and network routing."
+
+    # 5. Generic sanitized fallback (never return raw string directly if it contains password)
+    clean_err = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", raw)
+    # Strip any potential (using password: YES) confusion or internal traceback snippets
+    return f"{c_name} connection error: {clean_err}"
+
+
 class RelationalConnector(BaseConnector):
     """Base class for all SQLAlchemy-backed relational database connectors."""
 
@@ -124,11 +171,12 @@ class RelationalConnector(BaseConnector):
                 "capabilities": self.get_capabilities().to_dict(),
             }
         except Exception as e:
-            self.mark_error(str(e))
+            sanitized = sanitize_connection_error(e, self.connector_type)
+            self.mark_error(sanitized)
             return {
                 "success": False,
                 "connected": False,
-                "error": str(e),
+                "error": sanitized,
             }
 
     def get_schema(self, force_refresh: bool = False) -> Dict[str, Any]:
@@ -766,16 +814,19 @@ class MySQLConnector(RelationalConnector):
         self.username = username
         self._password = password
 
+    def get_connection_url(self) -> URL:
+        return URL.create(
+            drivername="mysql+pymysql",
+            username=self.username,
+            password=self._password,
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        )
+
     def connect(self) -> bool:
         try:
-            mysql_url = URL.create(
-                drivername="mysql+pymysql",
-                username=self.username,
-                password=self._password,
-                host=self.host,
-                port=self.port,
-                database=self.database,
-            )
+            mysql_url = self.get_connection_url()
             self._engine = create_engine(
                 mysql_url,
                 pool_pre_ping=True,
@@ -787,7 +838,7 @@ class MySQLConnector(RelationalConnector):
             self.touch_connected()
             return True
         except Exception as e:
-            self.mark_error(str(e))
+            self.mark_error(sanitize_connection_error(e, "mysql"))
             return False
 
     def to_sanitized_config(self) -> Dict[str, Any]:
@@ -829,16 +880,19 @@ class MariaDBConnector(RelationalConnector):
         self.username = username
         self._password = password
 
+    def get_connection_url(self) -> URL:
+        return URL.create(
+            drivername="mysql+pymysql",
+            username=self.username,
+            password=self._password,
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        )
+
     def connect(self) -> bool:
         try:
-            mariadb_url = URL.create(
-                drivername="mysql+pymysql",
-                username=self.username,
-                password=self._password,
-                host=self.host,
-                port=self.port,
-                database=self.database,
-            )
+            mariadb_url = self.get_connection_url()
             self._engine = create_engine(
                 mariadb_url,
                 pool_pre_ping=True,
@@ -850,7 +904,7 @@ class MariaDBConnector(RelationalConnector):
             self.touch_connected()
             return True
         except Exception as e:
-            self.mark_error(str(e))
+            self.mark_error(sanitize_connection_error(e, "mariadb"))
             return False
 
     def to_sanitized_config(self) -> Dict[str, Any]:

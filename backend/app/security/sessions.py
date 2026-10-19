@@ -47,6 +47,19 @@ def get_current_user(
 
     payload = decode_access_token(credentials.credentials)
     if payload is None:
+        # Check if incoming token is a direct Google Firebase ID token
+        try:
+            from app.security.firebase_auth import verify_firebase_id_token
+            fb_payload = verify_firebase_id_token(credentials.credentials)
+            if fb_payload:
+                uid = fb_payload.get("uid")
+                email = fb_payload.get("email")
+                name = fb_payload.get("name")
+                u_info = sync_firebase_user(uid=uid, email=email, display_name=name)
+                return AuthenticatedUser(user_id=u_info["user_id"], username=u_info["username"])
+        except Exception:
+            pass
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token.",
@@ -64,6 +77,63 @@ def get_current_user(
         )
 
     return AuthenticatedUser(user_id=user_id, username=username)
+
+
+# ── Firebase User Sync ────────────────────────────────────────────────────────
+def sync_firebase_user(
+    uid: str,
+    email: Optional[str] = None,
+    display_name: Optional[str] = None,
+) -> dict:
+    """
+    Sync or retrieve a Firebase-authenticated user in the local BG AI user registry.
+    Ensures user_id integrity for per-user database connections and telemetry.
+    """
+    from datetime import datetime
+    db = get_user_db()
+    try:
+        record = db.query(UserRecord).filter(UserRecord.id == uid).first()
+        if not record and email:
+            record = db.query(UserRecord).filter(
+                UserRecord.email == email.strip().lower()
+            ).first()
+
+        clean_username = (
+            (display_name or (email.split("@")[0] if email else f"user_{uid[:8]}"))
+            .strip()
+            .lower()
+        )
+
+        if not record:
+            existing = db.query(UserRecord).filter(
+                UserRecord.username == clean_username
+            ).first()
+            if existing:
+                clean_username = f"{clean_username}_{uid[:4]}"
+
+            record = UserRecord(
+                id=uid,
+                username=clean_username,
+                email=email.strip().lower() if email else None,
+                hashed_password="FIREBASE_AUTHENTICATED",
+                is_active=True,
+                created_at=datetime.utcnow(),
+                last_login=datetime.utcnow(),
+            )
+            db.add(record)
+        else:
+            record.last_login = datetime.utcnow()
+            if email and not record.email:
+                record.email = email.strip().lower()
+
+        db.commit()
+        return {
+            "user_id": record.id,
+            "username": record.username,
+            "email": record.email,
+        }
+    finally:
+        db.close()
 
 
 # ── User CRUD operations ──────────────────────────────────────────────────────

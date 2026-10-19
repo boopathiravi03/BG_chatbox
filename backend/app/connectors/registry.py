@@ -151,24 +151,30 @@ class ConnectionRegistry:
             return False
 
     def create_connector_from_config(
-        self, user_id: str, config: Dict[str, Any]
+        self, user_id: str, config: Dict[str, Any], auto_register: bool = True
     ) -> BaseConnector:
         """
-        Factory to instantiate and register a connector from connection parameters.
+        Factory to instantiate and optionally register a connector from connection parameters.
         """
-        c_type = (config.get("connector_type") or config.get("db_type") or "sqlite").lower()
+        c_type = (config.get("connector_type") or config.get("db_type") or "sqlite").lower().strip()
         conn_id = config.get("connection_id") or f"conn_{uuid.uuid4().hex[:10]}"
-        name = config.get("name") or f"{c_type.upper()} Data Source"
+        name = (config.get("name") or f"{c_type.upper()} Data Source").strip()
         is_read_only = bool(config.get("is_read_only", False))
 
         connector: BaseConnector
+
+        # Clean string fields to prevent accidental leading/trailing whitespace
+        host = str(config.get("host", "localhost") or "localhost").strip()
+        database = str(config.get("database", "") or "").strip()
+        username = str(config.get("username", "") or "").strip()
+        password = str(config.get("password") or "")
 
         if c_type == "sqlite":
             path = config.get("database") or config.get("database_path") or ":memory:"
             connector = SQLiteConnector(
                 connection_id=conn_id,
                 name=name,
-                database_path=path,
+                database_path=str(path).strip(),
                 is_read_only=is_read_only,
                 user_id=user_id,
             )
@@ -176,11 +182,11 @@ class ConnectionRegistry:
             connector = MySQLConnector(
                 connection_id=conn_id,
                 name=name,
-                host=config.get("host", "localhost"),
+                host=host,
                 port=int(config.get("port", 3306)),
-                database=config.get("database", ""),
-                username=config.get("username", "root"),
-                password=config.get("password", ""),
+                database=database,
+                username=username or "root",
+                password=password,
                 is_read_only=is_read_only,
                 user_id=user_id,
             )
@@ -188,11 +194,11 @@ class ConnectionRegistry:
             connector = MariaDBConnector(
                 connection_id=conn_id,
                 name=name,
-                host=config.get("host", "localhost"),
+                host=host,
                 port=int(config.get("port", 3306)),
-                database=config.get("database", ""),
-                username=config.get("username", "root"),
-                password=config.get("password", ""),
+                database=database,
+                username=username or "root",
+                password=password,
                 is_read_only=is_read_only,
                 user_id=user_id,
             )
@@ -200,11 +206,11 @@ class ConnectionRegistry:
             connector = PostgreSQLConnector(
                 connection_id=conn_id,
                 name=name,
-                host=config.get("host", "localhost"),
+                host=host,
                 port=int(config.get("port", 5432)),
-                database=config.get("database", ""),
-                username=config.get("username", "postgres"),
-                password=config.get("password", ""),
+                database=database,
+                username=username or "postgres",
+                password=password,
                 is_read_only=is_read_only,
                 user_id=user_id,
             )
@@ -298,7 +304,9 @@ class ConnectionRegistry:
         else:
             raise ValueError(f"Unsupported connector type: '{c_type}'")
 
-        return self.register_connector(connector)
+        if auto_register:
+            return self.register_connector(connector)
+        return connector
 
 
 # Global singleton registry instance

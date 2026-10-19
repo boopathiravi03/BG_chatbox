@@ -19,7 +19,7 @@ interface ChatAreaProps {
   onSessionClick?: (session: any) => void;
   uploadVersion?: number;
   onStop?: () => void;
-  onConfirmQuery?: (sql: string) => void;
+  onConfirmQuery?: (options?: { fingerprint?: string; highRiskConfirmed?: boolean }) => void;
   onCancelQuery?: () => void;
   dbConnected?: boolean;
   dbType?: string | null;

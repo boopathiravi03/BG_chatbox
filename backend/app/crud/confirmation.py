@@ -27,7 +27,21 @@ def _database_identity() -> str | None:
     except Exception:
         pass
 
-    return None
+import hashlib
+import json
+import time
+
+PENDING_OPERATION_TTL_SECONDS = 300  # 5 minutes
+
+
+def _generate_fingerprint(
+    operation: str,
+    table: str,
+    sql: str,
+    database_identity: str | None,
+) -> str:
+    payload = f"{operation}:{table}:{sql}:{database_identity or ''}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def store_pending(
@@ -37,17 +51,28 @@ def store_pending(
     sql: str,
     preview_rows: list[dict[str, Any]] | None = None,
     extra: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any]:
     from app.agent.orchestrator import conversation_state
 
-    conversation_state[session_id] = {
+    db_id = _database_identity()
+    fingerprint = _generate_fingerprint(operation, table, sql, db_id)
+    now = time.time()
+
+    pending_data = {
         "pending_sql": sql,
         "operation": operation,
         "table": table,
         "preview_rows": preview_rows or [],
-        "database_identity": _database_identity(),
+        "database_identity": db_id,
+        "fingerprint": fingerprint,
+        "created_at": now,
+        "expires_at": now + PENDING_OPERATION_TTL_SECONDS,
+        "is_executing": False,
         **(extra or {}),
     }
+
+    conversation_state[session_id] = pending_data
+    return pending_data
 
 
 def get_pending(
@@ -55,7 +80,17 @@ def get_pending(
 ) -> dict[str, Any] | None:
     from app.agent.orchestrator import conversation_state
 
-    return conversation_state.get(session_id)
+    pending = conversation_state.get(session_id)
+    if not pending:
+        return None
+
+    # Enforce expiration
+    expires_at = pending.get("expires_at")
+    if expires_at and time.time() > expires_at:
+        conversation_state.pop(session_id, None)
+        return None
+
+    return pending
 
 
 def clear_pending(session_id: str) -> None:

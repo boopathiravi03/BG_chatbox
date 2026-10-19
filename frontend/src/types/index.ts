@@ -50,6 +50,10 @@ export interface Message {
   table?: string;
 
   affected_rows_preview?: number;
+  estimated_affected_rows?: number;
+  is_high_risk?: boolean;
+  fingerprint?: string;
+  conditions?: Array<{ column: string; operator: string; value: any }>;
 
   confirmed?: boolean;
 

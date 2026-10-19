@@ -552,13 +552,16 @@ export default function Home() {
     setMessages((prev) => [...prev, cancelMessage]);
   };
 
-  const handleConfirmQuery = async () => {
+  const handleConfirmQuery = async (options?: { fingerprint?: string; highRiskConfirmed?: boolean }) => {
     if (loading) return;
     setLoading(true);
     setStatus("executing");
 
     try {
-      const data = await confirmQuery(sessionId);
+      const data = await confirmQuery(sessionId, {
+        fingerprint: options?.fingerprint,
+        highRiskConfirmed: options?.highRiskConfirmed ?? false,
+      });
 
       const resultMessage: Message = {
         role: "assistant",
