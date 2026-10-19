@@ -110,8 +110,9 @@ function formatAuthError(err: any): string {
     case 'auth/invalid-credential':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
-    case 'auth/invalid-email':
       return 'Invalid username/email or password.';
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.';
     case 'auth/email-already-in-use':
       return 'An account with this email address already exists. Please sign in instead.';
     case 'auth/weak-password':
@@ -127,7 +128,7 @@ function formatAuthError(err: any): string {
     case 'auth/popup-blocked':
       return 'Sign-in window was blocked. Please permit popups or use email/password sign-in.';
     case 'auth/internal-error':
-      return 'Invalid username/email or password.';
+      return 'Authentication could not be completed. Please verify your credentials and try again.';
     default:
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
         return 'Network connection error. Please verify your internet connection and local backend status.';
@@ -207,136 +208,125 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const isEmailInput = cleanIdent.includes('@');
     logAuthDiagnostic('SIGN_IN_START', { isEmail: isEmailInput, identifierLength: cleanIdent.length });
 
-    // 1. Desktop-first: Attempt local SQLite authentication first (fast, offline-capable)
-    logAuthDiagnostic('LOCAL_SQLITE_AUTH_START', { identifier: cleanIdent });
-    let localErrorMessage: string | null = null;
-    let localConnectionFailed = false;
+    // Helper: exchange Firebase token with backend
+    const exchangeFirebaseToken = async (cred: any, displayUsername: string) => {
+      logAuthDiagnostic('FIREBASE_TOKEN_RETRIEVAL_START');
+      const idToken = await cred.user.getIdToken();
+      logAuthDiagnostic('FIREBASE_TOKEN_RETRIEVAL_SUCCESS');
 
-    try {
-      const localRes = await authBackendFetch('/auth/login', {
-        body: { username: cleanIdent, password },
+      logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_START');
+      const res = await authBackendFetch('/auth/firebase', {
+        body: {
+          id_token: idToken,
+          email: cred.user.email,
+          username: displayUsername,
+        },
       });
 
-      logAuthDiagnostic('LOCAL_SQLITE_AUTH_STATUS', { status: localRes.status });
-
-      if (localRes.ok) {
-        const localData = await localRes.json();
-        if (localData.access_token) {
-          setAuthToken(localData.access_token);
-          setToken(localData.access_token);
-          setUser({
-            user_id: localData.user_id,
-            username: localData.username,
-            email: localData.email,
-          });
-          logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'local_sqlite' });
+      logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_STATUS', { status: res.status });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.access_token) {
+          setAuthToken(data.access_token);
+          setToken(data.access_token);
+          setUser({ user_id: data.user_id, username: data.username, email: data.email });
+          logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'firebase' });
           return { success: true };
         }
-      } else if (localRes.status === 403) {
-        logAuthDiagnostic('LOCAL_SQLITE_AUTH_FORBIDDEN');
-        return {
-          success: false,
-          error: 'Desktop security verification failed. Please restart BG AI.',
-        };
-      } else {
-        const localErr = await localRes.json().catch(() => ({}));
-        localErrorMessage = localErr.detail || 'Invalid username or password.';
-        logAuthDiagnostic('LOCAL_SQLITE_AUTH_REJECTED', {
-          status: localRes.status,
-          category: localErrorMessage,
-        });
       }
-    } catch (locErr: any) {
-      logAuthDiagnostic('LOCAL_SQLITE_AUTH_ERROR', { error: locErr?.message });
-      if (locErr?.message?.includes('Failed to fetch') || locErr?.message?.includes('NetworkError')) {
-        localConnectionFailed = true;
-      }
-    }
+      const errData = await res.json().catch(() => ({}));
+      return { success: false, error: errData.detail || 'Backend sync failed' };
+    };
 
-    if (localConnectionFailed) {
-      return {
-        success: false,
-        error: 'Cannot connect to local BG AI backend. Please verify the application service is running.',
-      };
-    }
-
-    // 2. Cloud Fallback: If local rejected with 401, check if user exists in Firebase cloud
-    let targetEmail: string | null = isEmailInput ? cleanIdent : null;
-    if (!targetEmail) {
-      logAuthDiagnostic('RESOLVE_USERNAME_START');
+    // Helper: try local SQLite login
+    const tryLocalLogin = async () => {
       try {
-        const lookupRes = await authBackendFetch('/auth/lookup-email', {
-          body: { username: cleanIdent },
+        logAuthDiagnostic('LOCAL_SQLITE_AUTH_START', { identifier: cleanIdent });
+        const localRes = await authBackendFetch('/auth/login', {
+          body: { username: cleanIdent, password },
         });
-        if (lookupRes.ok) {
-          const lookupData = await lookupRes.json();
-          if (lookupData.found && lookupData.email) {
-            targetEmail = lookupData.email;
-            logAuthDiagnostic('RESOLVE_USERNAME_SUCCESS', { hasEmail: true });
-          }
-        }
-      } catch (e: any) {
-        logAuthDiagnostic('RESOLVE_USERNAME_NETWORK_ERROR', { error: e?.message });
-      }
-    }
+        logAuthDiagnostic('LOCAL_SQLITE_AUTH_STATUS', { status: localRes.status });
 
-    let firebaseError: any = null;
-
-    if (targetEmail) {
-      try {
-        logAuthDiagnostic('FIREBASE_SIGN_IN_START');
-        const cred = await signInWithEmailAndPassword(auth, targetEmail, password);
-        logAuthDiagnostic('FIREBASE_SIGN_IN_SUCCESS');
-
-        logAuthDiagnostic('FIREBASE_TOKEN_RETRIEVAL_START');
-        const idToken = await cred.user.getIdToken();
-        logAuthDiagnostic('FIREBASE_TOKEN_RETRIEVAL_SUCCESS');
-
-        logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_START');
-        const res = await authBackendFetch('/auth/firebase', {
-          body: {
-            id_token: idToken,
-            email: cred.user.email,
-            username: isEmailInput ? cred.user.email?.split('@')[0] : cleanIdent,
-          },
-        });
-
-        logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_STATUS', { status: res.status });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.access_token) {
-            setAuthToken(data.access_token);
-            setToken(data.access_token);
-            setUser({ user_id: data.user_id, username: data.username, email: data.email });
-            logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'firebase' });
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          if (localData.access_token) {
+            setAuthToken(localData.access_token);
+            setToken(localData.access_token);
+            setUser({
+              user_id: localData.user_id,
+              username: localData.username,
+              email: localData.email,
+            });
+            logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'local_sqlite' });
             return { success: true };
           }
+        } else if (localRes.status === 403) {
+          return {
+            success: false,
+            error: 'Desktop security verification failed. Please restart BG AI.',
+          };
         } else {
-          const data = await res.json().catch(() => ({}));
-          logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_REJECTED', {
-            status: res.status,
-            category: data.detail || 'Backend verification failed',
-          });
+          const localErr = await localRes.json().catch(() => ({}));
+          return {
+            success: false,
+            error: localErr.detail || 'Invalid username or password.',
+          };
         }
-      } catch (fbErr: any) {
-        firebaseError = fbErr;
-        logAuthDiagnostic('FIREBASE_SIGN_IN_FAILED', {
-          code: fbErr?.code,
-          category: 'firebase_auth_error',
-        });
+      } catch (locErr: any) {
+        logAuthDiagnostic('LOCAL_SQLITE_AUTH_ERROR', { error: locErr?.message });
+        return {
+          success: false,
+          error: 'Cannot connect to local BG AI backend. Please verify the application service is running.',
+        };
       }
+      return { success: false, error: 'Invalid username/email or password.' };
+    };
+
+    // 1. If an email is supplied: prioritize Firebase Authentication first (cloud account)
+    if (isEmailInput) {
+      logAuthDiagnostic('FIREBASE_SIGN_IN_START', { email: cleanIdent });
+      try {
+        const cred = await signInWithEmailAndPassword(auth, cleanIdent, password);
+        logAuthDiagnostic('FIREBASE_SIGN_IN_SUCCESS');
+        const exchange = await exchangeFirebaseToken(cred, cleanIdent.split('@')[0]);
+        if (exchange.success) return exchange;
+      } catch (fbErr: any) {
+        logAuthDiagnostic('FIREBASE_SIGN_IN_FAILED', { code: fbErr?.code, message: fbErr?.message });
+        // If rate-limited or account disabled, don't fall back
+        if (fbErr?.code === 'auth/too-many-requests' || fbErr?.code === 'auth/user-disabled') {
+          return { success: false, error: formatAuthError(fbErr) };
+        }
+      }
+
+      // If Firebase failed (e.g. offline, or user only exists in local SQLite), fallback to local SQLite
+      const localResult = await tryLocalLogin();
+      return localResult;
     }
 
-    if (
-      firebaseError &&
-      firebaseError.code &&
-      !['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/internal-error', 'auth/network-request-failed'].includes(firebaseError.code)
-    ) {
-      return { success: false, error: formatAuthError(firebaseError) };
+    // 2. If a username is supplied: try local SQLite first (fast, local-first)
+    const localResult = await tryLocalLogin();
+    if (localResult.success) return localResult;
+
+    // If local failed with invalid credentials, check if username maps to a Firebase account via email lookup
+    try {
+      const lookupRes = await authBackendFetch('/auth/lookup-email', {
+        body: { username: cleanIdent },
+      });
+      if (lookupRes.ok) {
+        const lookupData = await lookupRes.json();
+        if (lookupData.found && lookupData.email) {
+          logAuthDiagnostic('RESOLVE_USERNAME_SUCCESS', { hasEmail: true });
+          const cred = await signInWithEmailAndPassword(auth, lookupData.email, password);
+          logAuthDiagnostic('FIREBASE_SIGN_IN_SUCCESS');
+          const exchange = await exchangeFirebaseToken(cred, cleanIdent);
+          if (exchange.success) return exchange;
+        }
+      }
+    } catch (e: any) {
+      logAuthDiagnostic('RESOLVE_USERNAME_NETWORK_ERROR', { error: e?.message });
     }
 
-    return { success: false, error: localErrorMessage || 'Invalid username/email or password.' };
+    return localResult;
   }, []);
 
   const register = useCallback(async (username: string, password: string, email = '') => {
@@ -405,7 +395,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    // 2. Fallback: If Firebase failed due to provider config or network, register locally in backend
+    // If Firebase specifically returned an account validation error (email taken, weak password, invalid email),
+    // immediately return that clear error instead of falling back to SQLite!
+    if (
+      firebaseError &&
+      ['auth/email-already-in-use', 'auth/weak-password', 'auth/invalid-email'].includes(firebaseError.code)
+    ) {
+      return { success: false, error: formatAuthError(firebaseError) };
+    }
+
+    // 2. Fallback: If Firebase failed due to offline network, register locally in backend
     logAuthDiagnostic('LOCAL_SQLITE_REGISTER_START');
     try {
       const localRes = await authBackendFetch('/auth/register', {

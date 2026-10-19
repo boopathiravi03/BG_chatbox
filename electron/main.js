@@ -435,6 +435,16 @@ app.whenReady().then(async () => {
           "https://fonts.googleapis.com " +
           "https://fonts.gstatic.com " +
           "https://cdn.jsdelivr.net; " +
+          "connect-src 'self' data: blob: " +
+          "http://127.0.0.1:* http://localhost:* " +
+          "https://*.googleapis.com " +
+          "https://*.firebaseio.com " +
+          "https://*.firebaseapp.com " +
+          "https://identitytoolkit.googleapis.com " +
+          "https://securetoken.googleapis.com " +
+          "https://thebg.co.in; " +
+          "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; " +
+          "img-src 'self' data: blob: https://*.googleusercontent.com https://*.gstatic.com https://*.googleapis.com; " +
           "media-src 'self' data: blob: file:;"
         ]
       }

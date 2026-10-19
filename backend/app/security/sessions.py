@@ -145,19 +145,29 @@ def register_user(username: str, password: str, email: str = "") -> dict:
     """
     db = get_user_db()
     try:
+        clean_user = username.strip().lower()
+        clean_email = email.strip().lower() if email else None
+
         existing = db.query(UserRecord).filter(
-            UserRecord.username == username.strip().lower()
+            UserRecord.username == clean_user
         ).first()
         if existing:
             raise ValueError(f"Username '{username}' is already taken.")
+
+        if clean_email:
+            existing_email = db.query(UserRecord).filter(
+                UserRecord.email == clean_email
+            ).first()
+            if existing_email:
+                raise ValueError(f"An account with email '{email}' already exists. Please sign in instead.")
 
         user_id = str(uuid.uuid4())
         hashed = hash_password(password)
 
         record = UserRecord(
             id=user_id,
-            username=username.strip().lower(),
-            email=email.strip() if email else None,
+            username=clean_user,
+            email=clean_email,
             hashed_password=hashed,
         )
         db.add(record)

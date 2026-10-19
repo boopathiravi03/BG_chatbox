@@ -3,7 +3,6 @@ import {
   getAuth,
   initializeAuth,
   browserLocalPersistence,
-  indexedDBLocalPersistence,
   inMemoryPersistence,
   GoogleAuthProvider,
 } from "firebase/auth";
@@ -27,17 +26,9 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
  * Placing browserLocalPersistence (localStorage) first ensures reliable, crash-free authentication.
  */
 export const auth = (() => {
-  if (getApps().length > 0) {
-    try {
-      return getAuth(app);
-    } catch {
-      // not yet initialized
-    }
-  }
-
   try {
     return initializeAuth(app, {
-      persistence: [browserLocalPersistence, indexedDBLocalPersistence, inMemoryPersistence],
+      persistence: [browserLocalPersistence, inMemoryPersistence],
     });
   } catch {
     return getAuth(app);
