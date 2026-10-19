@@ -26,15 +26,15 @@ if str(_current_dir) not in sys.path:
 # Force desktop mode
 os.environ["BGAI_DESKTOP_MODE"] = "1"
 
-from app.paths import get_app_data_dir, get_logs_dir
+from app.paths import get_app_data_dir, get_logs_dir, get_app_data_file
 from dotenv import load_dotenv
 
-# Priority: AppData/.env > current dir .env
-app_data_env = get_app_data_dir() / ".env"
+# Priority: AppData/.env > bundled .env > current dir .env
+app_data_env = get_app_data_file(".env")
 if app_data_env.exists():
-    load_dotenv(app_data_env)
+    load_dotenv(app_data_env, override=True)
 else:
-    load_dotenv()
+    load_dotenv(override=True)
 
 
 def find_free_port(preferred: int = 8001) -> int:

@@ -89,11 +89,51 @@ function getBackendExecutable() {
   return "python";
 }
 
+function loadEnvFile(envPath) {
+  if (!fs.existsSync(envPath)) return {};
+  try {
+    const content = fs.readFileSync(envPath, "utf-8");
+    const parsed = {};
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx !== -1) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed.slice(eqIdx + 1).trim();
+        parsed[key] = val;
+      }
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
 function startBackend() {
   return new Promise((resolve, reject) => {
     const exe = getBackendExecutable();
     const dataDir = getAppDataDir();
     const args = [];
+
+    // Seed and load .env configuration (GROQ_API_KEY, GROQ_MODEL, etc.)
+    const appDataEnv = path.join(dataDir, ".env");
+    const packagedEnv = path.join(process.resourcesPath || "", "backend", ".env");
+    const devEnv = path.join(__dirname, "..", "backend", ".env");
+
+    if (!fs.existsSync(appDataEnv)) {
+      if (fs.existsSync(packagedEnv)) {
+        try { fs.copyFileSync(packagedEnv, appDataEnv); } catch {}
+      } else if (fs.existsSync(devEnv)) {
+        try { fs.copyFileSync(devEnv, appDataEnv); } catch {}
+      }
+    }
+
+    const envConfig = {
+      ...loadEnvFile(devEnv),
+      ...loadEnvFile(packagedEnv),
+      ...loadEnvFile(appDataEnv),
+    };
 
     let cmd = exe;
     if (exe === "python") {
@@ -113,6 +153,7 @@ function startBackend() {
         cwd: app.isPackaged ? path.join(process.resourcesPath, "backend") : path.join(__dirname, "..", "backend"),
         env: {
           ...process.env,
+          ...envConfig,
           BGAI_DESKTOP_MODE: "1",
           BGAI_DATA_DIR: dataDir,
           BGAI_DESKTOP_SECRET: desktopSecret,

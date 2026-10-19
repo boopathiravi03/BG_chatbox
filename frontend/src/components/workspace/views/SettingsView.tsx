@@ -235,7 +235,7 @@ export default function SettingsView({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
           <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.04] space-y-1">
             <span className="text-zinc-500">Active LLM Model</span>
-            <p className="font-mono font-semibold text-white">openai/gpt-oss-20b</p>
+            <p className="font-mono font-semibold text-white">BG AI</p>
             <p className="text-[11px] text-zinc-500">Groq ultra-low-latency inference</p>
           </div>
 

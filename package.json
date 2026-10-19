@@ -42,6 +42,10 @@
         ]
       },
       {
+        "from": "backend/.env",
+        "to": "backend/.env"
+      },
+      {
         "from": "frontend/public/bg-ai-intro.mp4",
         "to": "bg-ai-intro.mp4"
       }
