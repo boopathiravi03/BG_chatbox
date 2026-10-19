@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import ClickSpark from "../reactbits/ClickSpark";
 import SpotlightCard from "../reactbits/SpotlightCard";
+import bgLogo from "@/assets/bg-logo.png";
 
 interface DatabaseOnboardingCardProps {
   onConnectDatabase?: (type?: "sqlite" | "mysql" | "postgres") => void;
@@ -42,9 +43,13 @@ export default function DatabaseOnboardingCard({
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 rounded-2xl overflow-hidden border border-indigo-500/35 bg-white/[0.06] p-1 shadow-lg shadow-indigo-500/10 shrink-0">
             <img
-              src="/bg-logo.png"
+              src={bgLogo}
               alt="BG AI Logo"
               className="w-full h-full object-contain rounded-xl"
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+              }}
             />
           </div>
           <div className="flex-1 min-w-0">

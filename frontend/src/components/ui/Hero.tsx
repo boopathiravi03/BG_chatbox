@@ -11,6 +11,7 @@ import { staggerContainer, staggerItem } from "../../lib/motion";
 import BlurText from "../reactbits/BlurText";
 import SpotlightCard from "../reactbits/SpotlightCard";
 import ClickSpark from "../reactbits/ClickSpark";
+import bgLogo from "@/assets/bg-logo.png";
 
 interface HeroProps {
   onSend?: (message: string) => void;
@@ -90,12 +91,16 @@ export default function Hero({
       >
         <div className="w-5 h-5 flex items-center justify-center rounded-md bg-indigo-500/20 p-0.5 shrink-0">
           <img
-            src="/bg-logo.png"
+            src={bgLogo}
             alt="BG AI Logo"
             width={20}
             height={20}
             decoding="async"
             className="w-full h-full object-contain filter drop-shadow-[0_1px_4px_rgba(99,102,241,0.6)]"
+            onError={(e) => {
+              const target = e.currentTarget as HTMLImageElement;
+              if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+            }}
           />
         </div>
         <span className="text-xs sm:text-sm font-semibold text-zinc-200 tracking-wide">

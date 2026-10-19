@@ -28,6 +28,7 @@ import { smoothTransition } from "../../lib/motion";
 import BlurText from "../reactbits/BlurText";
 import SpotlightCard from "../reactbits/SpotlightCard";
 import ScrollReveal from "../reactbits/ScrollReveal";
+import bgLogo from "@/assets/bg-logo.png";
 import ClickSpark from "../reactbits/ClickSpark";
 import WorkflowFlowchart from "./WorkflowFlowchart";
 
@@ -106,9 +107,13 @@ export default function AboutModal({
             <div className="flex items-center gap-3.5">
               <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/15 bg-white/[0.06] p-1 shadow-md shrink-0">
                 <img
-                  src="/bg-logo.png"
+                  src={bgLogo}
                   alt="BG AI Logo"
                   className="w-full h-full object-contain rounded-lg"
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+                  }}
                 />
               </div>
               <div>

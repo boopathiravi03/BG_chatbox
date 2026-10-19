@@ -7,6 +7,7 @@ import ResultTable from "./ResultTable";
 import ExplanationCard from "./ExplanationCard";
 import InsertForm from "./InsertForm";
 import DatabaseOnboardingCard from "./DatabaseOnboardingCard";
+import bgLogo from "@/assets/bg-logo.png";
 
 const ChartRenderer = lazy(() => import("./ChartRenderer"));
 const MermaidChart = lazy(() => import("./MermaidChart"));
@@ -120,13 +121,17 @@ export default function MessageBubble({
               <>
                 <div className="flex items-center justify-center w-6 h-6 rounded-lg overflow-hidden border border-white/15 bg-white/[0.05] p-0.5 shadow-sm">
                   <img
-                    src="/bg-logo.png"
+                    src={bgLogo}
                     alt="BG AI Logo"
                     width={24}
                     height={24}
                     loading="lazy"
                     decoding="async"
                     className="w-full h-full object-contain rounded-md"
+                    onError={(e) => {
+                      const target = e.currentTarget as HTMLImageElement;
+                      if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+                    }}
                   />
                 </div>
                 <span className="text-sm sm:text-base font-black text-white tracking-tight">

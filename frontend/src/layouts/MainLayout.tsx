@@ -6,6 +6,7 @@ import type { ChatSession } from "../types";
 import { useState, useEffect } from "react";
 import { Unplug, Menu, Info, PanelLeftOpen, Database } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import bgLogo from "@/assets/bg-logo.png";
 
 type Status = "ready" | "thinking" | "executing" | "done" | "error";
 
@@ -191,12 +192,16 @@ export default function MainLayout({
                 <div className="hidden md:flex items-center gap-3">
                   <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-indigo-600/15 border border-indigo-500/30 shadow-sm">
                     <img
-                      src="/bg-logo.png"
+                      src={bgLogo}
                       alt="BG AI Logo"
                       width={28}
                       height={28}
                       decoding="async"
                       className="w-7 h-7 rounded-lg object-contain filter drop-shadow-[0_1px_6px_rgba(99,102,241,0.5)]"
+                      onError={(e) => {
+                        const target = e.currentTarget as HTMLImageElement;
+                        if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+                      }}
                     />
                     <span className="text-base font-black text-white tracking-tight">
                       BG <span className="text-indigo-400">AI</span>

@@ -28,6 +28,7 @@ import { useTheme } from "../../context/ThemeContext";
 import { dropdownVariants } from "../../lib/motion";
 import ClickSpark from "../reactbits/ClickSpark";
 import AnimatedList from "../reactbits/AnimatedList";
+import bgLogo from "@/assets/bg-logo.png";
 
 interface Props {
   onClose?: () => void;
@@ -242,12 +243,16 @@ export default function Sidebar({
             <div className="flex items-center gap-3.5 min-w-0">
               <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600/15 border border-indigo-500/30 p-2 shadow-lg shadow-indigo-950/50 shrink-0 hover:border-indigo-400/50 hover:bg-indigo-600/25 transition-all group">
                 <img
-                  src="/bg-logo.png"
+                  src={bgLogo}
                   alt="BG AI Logo"
                   width={48}
                   height={48}
                   decoding="async"
                   className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)] group-hover:scale-105 transition-transform"
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+                  }}
                 />
               </div>
               <div className="truncate">
@@ -291,12 +296,16 @@ export default function Sidebar({
             <SidebarTooltip label="BG AI Database Intelligence">
               <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600/15 border border-indigo-500/30 p-2 shadow-lg shadow-indigo-950/50 hover:border-indigo-400/50 transition-all">
                 <img
-                  src="/bg-logo.png"
+                  src={bgLogo}
                   alt="BG AI Logo"
                   width={48}
                   height={48}
                   decoding="async"
                   className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.5)]"
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    if (!target.src.endsWith("bg-logo.png")) target.src = "./bg-logo.png";
+                  }}
                 />
               </div>
             </SidebarTooltip>

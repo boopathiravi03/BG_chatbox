@@ -21,6 +21,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
+import bgLogo from "@/assets/bg-logo.png";
 
 export type WorkspaceTab =
   | "overview"
@@ -118,8 +119,18 @@ export default function WorkspaceSidebar({
       {/* Workspace Brand Header */}
       <div className="h-16 px-4 flex items-center justify-between border-b border-white/[0.06] shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center p-1 shadow-md shadow-indigo-600/10 shrink-0">
-            <img src="/bg-logo.png" alt="BG AI" className="w-full h-full object-contain" />
+          <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center p-1 shadow-md shadow-indigo-600/10 shrink-0 overflow-hidden">
+            <img
+              src={bgLogo}
+              alt="BG AI"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                if (!target.src.endsWith("bg-logo.png")) {
+                  target.src = "./bg-logo.png";
+                }
+              }}
+            />
           </div>
           {!collapsed && (
             <div className="min-w-0">
