@@ -31,11 +31,13 @@ from app.intelligence.proactive.models import (
     AlertCategory,
 )
 
+from app.paths import get_app_data_file
+
 Base = declarative_base()
 _store_lock = threading.Lock()
 
 # Default SQLite application DB for proactive alerts (separated from user databases)
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[4] / "bgai_proactive.db"
+_DEFAULT_DB_PATH = get_app_data_file("bgai_proactive.db")
 
 _engine = None
 _SessionFactory = None

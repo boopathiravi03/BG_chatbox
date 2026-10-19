@@ -199,6 +199,8 @@ class IntrusionDetectionEngine:
         """Checks if an IP address is actively blocked."""
         if ip_address == "unknown":
             return False, None
+        if os.getenv("BGAI_DESKTOP_MODE") == "1" and (ip_address in ("127.0.0.1", "::1", "localhost") or ip_address.startswith("127.")):
+            return False, None
         with self._lock:
             block = self._active_blocks.get(ip_address)
             if block and block.is_active():

@@ -26,10 +26,12 @@ from app.intelligence.actions.models import (
     ActionStatus,
 )
 
+from app.paths import get_app_data_file
+
 Base = declarative_base()
 _store_lock = threading.Lock()
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[4] / "bgai_actions.db"
+_DEFAULT_DB_PATH = get_app_data_file("bgai_actions.db")
 _engine = None
 _SessionFactory = None
 

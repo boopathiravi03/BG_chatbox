@@ -29,8 +29,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+from app.paths import get_app_data_file
+
 # ── Audit database ─────────────────────────────────────────────────────────────
-_AUDIT_DB_PATH = Path(__file__).resolve().parents[3] / "bgai_audit.db"
+_AUDIT_DB_PATH = get_app_data_file("bgai_audit.db")
 
 _audit_engine = create_engine(
     f"sqlite:///{_AUDIT_DB_PATH}",

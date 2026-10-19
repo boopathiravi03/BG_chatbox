@@ -1,5 +1,12 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import {
+  getAuth,
+  initializeAuth,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
+  inMemoryPersistence,
+  GoogleAuthProvider,
+} from "firebase/auth";
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyAc7V0mjD2DkOEUCixVOlcmI2uip-_eAI4",
@@ -14,7 +21,32 @@ export const firebaseConfig = {
 // Initialize or reuse Firebase App singleton
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-export const auth = getAuth(app);
+/**
+ * Initialize Firebase Auth with resilient persistence for Electron (file://) and Web.
+ * Under file:// protocol in Electron, IndexedDB can fail with DOMException: The operation is insecure.
+ * Placing browserLocalPersistence (localStorage) first ensures reliable, crash-free authentication.
+ */
+export const auth = (() => {
+  if (getApps().length > 0) {
+    try {
+      return getAuth(app);
+    } catch {
+      // not yet initialized
+    }
+  }
+
+  try {
+    return initializeAuth(app, {
+      persistence: [browserLocalPersistence, indexedDBLocalPersistence, inMemoryPersistence],
+    });
+  } catch {
+    return getAuth(app);
+  }
+})();
+
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
+
 export default app;
+
 

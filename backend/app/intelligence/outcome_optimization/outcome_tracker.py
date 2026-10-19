@@ -31,10 +31,12 @@ from app.intelligence.outcome_optimization.models import (
     RecommendationSource,
 )
 
+from app.paths import get_app_data_file
+
 Base = declarative_base()
 _store_lock = threading.Lock()
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[4] / "bgai_outcome_opt.db"
+_DEFAULT_DB_PATH = get_app_data_file("bgai_outcome_opt.db")
 _engine = None
 _SessionFactory = None
 

@@ -16,15 +16,16 @@ from pathlib import Path
 
 from app.intelligence.orchestration.models import OrchestrationRun
 
+from app.paths import get_app_data_file
+
 _DB_LOCK = threading.RLock()
-_DEFAULT_DB_PATH = Path(__file__).resolve().parent / "bgai_orchestration.db"
 
 
 def _get_db_path() -> Path:
     override = os.getenv("BGAI_ORCHESTRATION_DB_PATH")
     if override:
         return Path(override)
-    return _DEFAULT_DB_PATH
+    return get_app_data_file("bgai_orchestration.db")
 
 
 def _init_db(conn: sqlite3.Connection) -> None:

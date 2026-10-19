@@ -35,11 +35,36 @@ import type {
   SecurityFindingExplanation,
 } from "../types";
 
-export const API_BASE = (
-  import.meta.env.VITE_API_URL ||
-  import.meta.env.VITE_API_BASE_URL ||
-  "http://127.0.0.1:8001"
-).replace(/\/+$/, "");
+declare global {
+  interface Window {
+    electronAPI?: {
+      getBackendUrl: () => string;
+      getDesktopSecret?: () => string;
+      getIntroVideoPath?: () => string;
+      isDesktop: () => boolean;
+      getVersion?: () => string;
+      openExternal?: (url: string) => Promise<void>;
+    };
+  }
+}
+
+export function getApiBase(): string {
+  if (typeof window !== "undefined" && window.electronAPI?.getBackendUrl) {
+    try {
+      const desktopUrl = window.electronAPI.getBackendUrl();
+      if (desktopUrl) return desktopUrl.replace(/\/+$/, "");
+    } catch {
+      // fallback to env
+    }
+  }
+  return (
+    import.meta.env.VITE_API_URL ||
+    import.meta.env.VITE_API_BASE_URL ||
+    "http://127.0.0.1:8001"
+  ).replace(/\/+$/, "");
+}
+
+export const API_BASE = getApiBase();
 
 const TOKEN_KEY = "bgai_session";
 
@@ -74,13 +99,26 @@ export async function apiFetch<T = any>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
+  // Attach per-launch secret if running in desktop Electron mode
+  if (typeof window !== "undefined" && window.electronAPI?.getDesktopSecret) {
+    try {
+      const secret = window.electronAPI.getDesktopSecret();
+      if (secret && !headers.has("X-BGAI-Desktop-Secret")) {
+        headers.set("X-BGAI-Desktop-Secret", secret);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   if (!(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
+  const base = getApiBase();
   const url = endpoint.startsWith("http")
     ? endpoint
-    : `${API_BASE}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+    : `${base}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
 
   let response: Response;
   try {

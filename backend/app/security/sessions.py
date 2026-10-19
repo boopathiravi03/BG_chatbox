@@ -167,27 +167,84 @@ def register_user(username: str, password: str, email: str = "") -> dict:
         db.close()
 
 
+def authenticate_user_detailed(username: str, password: str) -> tuple[Optional[dict], str]:
+    """
+    Verify credentials with precise status diagnosis.
+    Returns (user_dict, status_reason):
+    - status_reason: "SUCCESS", "USER_NOT_FOUND", "ACCOUNT_INACTIVE", "INVALID_PASSWORD", "DATABASE_ERROR"
+    Supports either username or email. Updates last_login timestamp on success.
+    """
+    from datetime import datetime
+    clean = username.strip().lower()
+    if not clean or not password:
+        return None, "INVALID_INPUT"
+
+    try:
+        db = get_user_db()
+    except Exception as e:
+        return None, f"DATABASE_ERROR: {str(e)}"
+
+    try:
+        record = db.query(UserRecord).filter(
+            (UserRecord.username == clean) | (UserRecord.email == clean)
+        ).first()
+        if not record:
+            return None, "USER_NOT_FOUND"
+        if not record.is_active:
+            return None, "ACCOUNT_INACTIVE"
+        if not verify_password(password, record.hashed_password):
+            return None, "INVALID_PASSWORD"
+
+        # Update last login
+        record.last_login = datetime.utcnow()
+        db.commit()
+        return {
+            "user_id": record.id,
+            "username": record.username,
+            "email": record.email,
+        }, "SUCCESS"
+    except Exception as e:
+        return None, f"DATABASE_ERROR: {str(e)}"
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 def authenticate_user(username: str, password: str) -> Optional[dict]:
     """
     Verify credentials. Returns user dict on success, None on failure.
     Updates last_login timestamp.
+    Supports either username or email.
     """
-    from datetime import datetime
+    user, _ = authenticate_user_detailed(username, password)
+    return user
+
+
+def lookup_user_email(identifier: str) -> Optional[dict]:
+    """
+    Looks up whether an identifier (username or email) corresponds to an existing user.
+    Returns dict with username and email, or None. Never returns password hash.
+    """
+    clean = identifier.strip().lower()
+    if not clean:
+        return None
     db = get_user_db()
     try:
         record = db.query(UserRecord).filter(
-            UserRecord.username == username.strip().lower()
+            (UserRecord.username == clean) | (UserRecord.email == clean)
         ).first()
         if not record:
             return None
-        if not verify_password(password, record.hashed_password):
-            return None
-        # Update last login
-        record.last_login = datetime.utcnow()
-        db.commit()
-        return {"user_id": record.id, "username": record.username}
+        return {
+            "user_id": record.id,
+            "username": record.username,
+            "email": record.email,
+        }
     finally:
         db.close()
+
 
 
 def get_user_by_id(user_id: str) -> Optional[dict]:

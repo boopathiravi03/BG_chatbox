@@ -34,10 +34,12 @@ from app.intelligence.knowledge.models import (
 
 logger = logging.getLogger("bgai.knowledge.store")
 
+from app.paths import get_app_data_file
+
 Base = declarative_base()
 _store_lock = threading.Lock()
 
-_DEFAULT_DB_PATH = Path(__file__).resolve().parents[4] / "bgai_knowledge.db"
+_DEFAULT_DB_PATH = get_app_data_file("bgai_knowledge.db")
 _engine = None
 _SessionFactory = None
 

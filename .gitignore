@@ -17,4 +17,10 @@ bgai_*.db
 backend/bgai_*.db
 backend/app/agents/audit_log.json
 *.sqlite
-
+backend/build/
+backend/dist/
+build/bgai_backend/
+*.log
+backend/scratch/read_live_db.py
+backend/scratch/test_auth_desktop.py
+backend/scratch/test_hashes.py

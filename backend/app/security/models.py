@@ -15,8 +15,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
+from app.paths import get_app_data_file
+
 # ── User database (separate from user data databases) ─────────────────────────
-_USERS_DB_PATH = Path(__file__).resolve().parents[3] / "bgai_users.db"
+_USERS_DB_PATH = get_app_data_file("bgai_users.db")
 
 _users_engine = create_engine(
     f"sqlite:///{_USERS_DB_PATH}",

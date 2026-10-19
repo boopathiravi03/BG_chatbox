@@ -18,16 +18,17 @@ from typing import Any, Dict, List, Optional
 
 from app.guardian.models import GuardianIncident, IncidentSeverity, IncidentStatus
 
+from app.paths import get_app_data_file
+
 logger = logging.getLogger("bgai.guardian.store")
 _STORE_LOCK = threading.RLock()
-_DEFAULT_DB_PATH = Path(__file__).resolve().parent / "bgai_guardian.db"
 
 
 def _get_db_path() -> Path:
     override = os.getenv("BGAI_GUARDIAN_DB_PATH")
     if override:
         return Path(override)
-    return _DEFAULT_DB_PATH
+    return get_app_data_file("bgai_guardian.db")
 
 
 def _get_connection() -> sqlite3.Connection:

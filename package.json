@@ -1,0 +1,71 @@
+{
+  "name": "bg-ai",
+  "version": "1.0.0",
+  "description": "BG AI — AI-Powered Conversational Database Intelligence Platform",
+  "author": "BG AI Team <contact@thebg.co.in>",
+  "main": "electron/main.js",
+  "scripts": {
+    "build:frontend": "npm --prefix frontend run build",
+    "build:backend": "python -m PyInstaller backend/bgai_backend.spec --distpath backend/dist --workpath backend/build --noconfirm",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win",
+    "build": "npm run build:frontend && npm run build:backend && npm run dist"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.bgai.platform",
+    "productName": "BG AI",
+    "copyright": "Copyright © 2026 BG AI",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "build/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.mp4",
+      "**/*.webm"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist/bgai_backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "frontend/public/bg-ai-intro.mp4",
+        "to": "bg-ai-intro.mp4"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "BG AI",
+      "uninstallDisplayName": "BG AI Platform",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
+

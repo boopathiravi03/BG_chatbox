@@ -15,9 +15,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from app.paths import get_app_data_dir
 
 # ── App init & Rate Limiter ───────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address)
+_desktop_mode = os.getenv("BGAI_DESKTOP_MODE") == "1"
+limiter = Limiter(key_func=get_remote_address, enabled=not _desktop_mode)
 app = FastAPI(title="BG AI", version="7.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -26,14 +28,41 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 _PRODUCTION_ORIGINS = ["https://thebg.co.in"]
 _DEV_ORIGINS = os.getenv("BGAI_EXTRA_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000").split(",")
 _ALLOWED_ORIGINS = _PRODUCTION_ORIGINS + [o.strip() for o in _DEV_ORIGINS if o.strip()]
+if os.getenv("BGAI_DESKTOP_MODE") == "1":
+    if "*" not in _ALLOWED_ORIGINS:
+        _ALLOWED_ORIGINS.extend(["null", "*"])
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-BGAI-Desktop-Secret"],
 )
+
+
+# ── Desktop Secret Auth Middleware ───────────────────────────────────────────
+class DesktopSecretMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        desktop_secret = os.getenv("BGAI_DESKTOP_SECRET")
+        if desktop_secret and os.getenv("BGAI_DESKTOP_MODE") == "1":
+            path = request.url.path
+            # Allow health checks, docs, and preflight OPTIONS without desktop secret
+            if (
+                request.method != "OPTIONS"
+                and path not in {"/health", "/docs", "/redoc", "/openapi.json"}
+                and not path.startswith("/docs")
+            ):
+                client_secret = request.headers.get("X-BGAI-Desktop-Secret")
+                if not client_secret or client_secret != desktop_secret:
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"status": "error", "error": "Access Denied: Invalid desktop authentication secret."},
+                    )
+        return await call_next(request)
+
+
+app.add_middleware(DesktopSecretMiddleware)
 
 
 # ── Security headers middleware ───────────────────────────────────────────────
@@ -121,7 +150,7 @@ app.add_middleware(IPThreatMiddleware)
 from app.security.auth import create_access_token
 from app.security.sessions import (
     get_current_user, AuthenticatedUser,
-    register_user, authenticate_user, get_user_by_id,
+    register_user, authenticate_user, lookup_user_email, get_user_by_id,
 )
 from app.database.connection_context import (
     set_user_context_for_request,
@@ -174,6 +203,10 @@ class FirebaseLoginRequest(BaseModel):
     id_token: str
     username: Optional[str] = None
     email: Optional[str] = None
+
+
+class LookupEmailRequest(BaseModel):
+    username: str
 
 
 class ChatRequest(BaseModel):
@@ -281,6 +314,11 @@ def home():
     return {"message": "BG AI Backend v7", "status": "operational"}
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "app": "BG AI", "version": "1.0.0"}
+
+
 @app.post("/auth/register")
 @limiter.limit("5/minute")
 def auth_register(req: RegisterRequest, request: Request):
@@ -306,10 +344,27 @@ def auth_register(req: RegisterRequest, request: Request):
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 
+@app.post("/auth/lookup-email")
+@limiter.limit("60/minute")
+def auth_lookup_email(req: LookupEmailRequest, request: Request):
+    clean = req.username.strip().lower()
+    if not clean:
+        return {"found": False, "email": None, "username": clean}
+    info = lookup_user_email(clean)
+    if info and info.get("email"):
+        return {"found": True, "email": info["email"], "username": info["username"]}
+    return {
+        "found": False,
+        "email": None,
+        "username": info["username"] if info else clean,
+    }
+
+
 @app.post("/auth/login")
 @limiter.limit("10/minute")
 def auth_login(req: LoginRequest, request: Request):
-    user = authenticate_user(req.username, req.password)
+    from app.security.sessions import authenticate_user_detailed
+    user, reason = authenticate_user_detailed(req.username, req.password)
     if not user:
         client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
         get_intrusion_engine().record_auth_failure(
@@ -317,17 +372,35 @@ def auth_login(req: LoginRequest, request: Request):
             username=req.username,
             user_id="auth_failure",
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        if reason == "ACCOUNT_INACTIVE":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is inactive. Please contact your administrator.",
+            )
+        elif reason == "USER_NOT_FOUND":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account not found. Please verify your username/email or register an account.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        elif reason.startswith("DATABASE_ERROR"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Local database connection error. Please restart BG AI.",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect password. Please verify your credentials and try again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     token = create_access_token(user["user_id"], user["username"])
     return {
         "access_token": token,
         "token_type": "bearer",
         "user_id": user["user_id"],
         "username": user["username"],
+        "email": user.get("email"),
     }
 
 
@@ -467,8 +540,11 @@ async def upload_database(
         if not safe_name.lower().endswith((".db", ".sqlite", ".sqlite3")):
             raise HTTPException(status_code=400, detail="Only .db / .sqlite / .sqlite3 files are accepted.")
 
-        upload_dir = Path(__file__).resolve().parents[2] / "database"
-        upload_dir.mkdir(exist_ok=True)
+        if os.getenv("BGAI_DESKTOP_MODE") == "1":
+            upload_dir = get_app_data_dir() / "database"
+        else:
+            upload_dir = Path(__file__).resolve().parents[2] / "database"
+        upload_dir.mkdir(parents=True, exist_ok=True)
         db_path = upload_dir / safe_name
         db_path.write_bytes(contents)
 
@@ -866,7 +942,10 @@ async def upload_file_source(
                 detail="Supported data file formats are: .csv, .tsv, .xlsx, .xls, .json",
             )
 
-        upload_dir = Path(__file__).resolve().parents[2] / "database" / "files"
+        if os.getenv("BGAI_DESKTOP_MODE") == "1":
+            upload_dir = get_app_data_dir() / "database" / "files"
+        else:
+            upload_dir = Path(__file__).resolve().parents[2] / "database" / "files"
         upload_dir.mkdir(parents=True, exist_ok=True)
         target_path = upload_dir / f"{uuid.uuid4().hex[:8]}_{filename}"
         contents = await file.read()

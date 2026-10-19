@@ -5,8 +5,10 @@ from fastapi import UploadFile, File
 from app.database.db import get_database_path, set_database
 from app.database.database_manager import connect_sqlite
 
-BACKUP_DIR = Path(__file__).resolve().parents[3] / "backups"
-BACKUP_DIR.mkdir(exist_ok=True)
+from app.paths import get_app_data_dir
+
+BACKUP_DIR = get_app_data_dir() / "backups"
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def create_backup() -> dict:

@@ -33,12 +33,13 @@
 - [14. Database Connection & Lifecycle](#14-database-connection--lifecycle)
 - [15. Security, Governance & Intrusion Safeguards](#15-security-governance--intrusion-safeguards)
 - [16. Testing & Quality Assurance](#16-testing--quality-assurance)
-- [17. Deployment Architecture](#17-deployment-architecture)
-- [18. Troubleshooting Guide](#18-troubleshooting-guide)
-- [19. Product Roadmap](#19-product-roadmap)
-- [20. Contributing](#20-contributing)
-- [21. License](#21-license)
-- [22. Acknowledgements & Authors](#22-acknowledgements--authors)
+- [17. Windows Desktop Application (Electron + PyInstaller)](#17-windows-desktop-application-electron--pyinstaller)
+- [18. Cloud Deployment Architecture](#18-cloud-deployment-architecture)
+- [19. Troubleshooting Guide](#19-troubleshooting-guide)
+- [20. Product Roadmap](#20-product-roadmap)
+- [21. Contributing](#21-contributing)
+- [22. License](#22-license)
+- [23. Acknowledgements & Authors](#23-acknowledgements--authors)
 
 ---
 
@@ -519,7 +520,148 @@ npm run build
 
 ---
 
-## 17. Deployment Architecture
+## 17. Windows Desktop Application (Electron + PyInstaller)
+
+BG AI provides a standalone, installable Windows desktop application that packages the full web workspace together with an autonomous local Python FastAPI backend server.
+
+### Architecture Overview
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                   Windows Host OS                      │
+│                                                        │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │             Electron Desktop Shell               │  │
+│  │                                                  │  │
+│  │  ┌─────────────────────┐   ┌──────────────────┐  │  │
+│  │  │   Vite + React 19   │   │  Preload Bridge  │  │  │
+│  │  │   Frontend UI       │◄──┤  (IPC / Context  │  │  │
+│  │  │   (Renderer)        │   │   Isolation)     │  │  │
+│  │  └──────────┬──────────┘   └─────────▲────────┘  │  │
+│  └─────────────┼────────────────────────┼───────────┘  │
+│                │ REST / WebSocket       │ Lifecycle    │
+│                ▼                        │ Monitoring   │
+│  ┌──────────────────────────────────────┴───────────┐  │
+│  │        Bundled Python FastAPI Server             │  │
+│  │        (bgai_backend.exe via PyInstaller)        │  │
+│  │                                                  │  │
+│  │  • Embedded Python 3.11 Runtime (No host Python) │  │
+│  │  • SQLAlchemy 2.0 / Relational & NoSQL Drivers   │  │
+│  │  • Dynamic Port Hunting (8001 -> 8010 fallback)  │  │
+│  │  • Parent-PID Heartbeat (Orphan process defense) │  │
+│  └──────────────────────┬───────────────────────────┘  │
+│                         │ File I/O                     │
+│                         ▼                              │
+│       ┌───────────────────────────────────┐            │
+│       │   %APPDATA%\BG_AI                 │            │
+│       │   • bgai_users.db                 │            │
+│       │   • bgai_audit.db                 │            │
+│       │   • bgai_guardian.db              │            │
+│       │   • desktop_backend.log           │            │
+│       │   • .env (Local API Keys)         │            │
+│       └───────────────────────────────────┘            │
+└────────────────────────────────────────────────────────┘
+```
+
+### Key Desktop Features & Safeguards
+
+1. **Zero Runtime Prerequisites:**
+   - The desktop installer packages an embedded Python 3.11 environment alongside all SQL drivers (PyMySQL, psycopg2, SQLite) and native modules using PyInstaller.
+   - Target machines **do not** require Python, Node.js, or Git installed globally.
+2. **Per-User AppData Architecture (`%APPDATA%\BG_AI`):**
+   - Windows installations inside `C:\Program Files\BG AI\` are read-only for standard users.
+   - All stateful SQLite stores (`bgai_users.db`, `bgai_audit.db`, `bgai_guardian.db`, etc.) and log files are routed to `%APPDATA%\BG_AI`, preventing permission errors and preserving user data across application updates.
+3. **Dynamic Port Allocation & Conflict Avoidance:**
+   - When Electron launches, it probes ports starting from `8001` through `8010` to find an open socket.
+   - It transmits the assigned port to the backend process via `--port` and `BGAI_PORT`, and passes the backend address dynamically to the React frontend through `window.electronAPI.getBackendUrl()`.
+4. **Strict Context Isolation & Process Security:**
+   - Renderer runs with `nodeIntegration: false` and `contextIsolation: true`.
+   - All desktop integrations (`openExternal`, `showItemInFolder`, `openAppDataFolder`) are mediated through a secure, validated preload bridge (`electron/preload.js`).
+   - External web navigation inside the application window is strictly blocked and delegated to the user's default OS browser.
+5. **Clean Shutdown & Orphan Process Defense:**
+   - The bundled backend process actively monitors its parent Electron process ID (`--parent-pid`). If Electron terminates, Python shuts down immediately.
+   - On application exit, Electron dispatches a graceful SIGTERM followed by a forced process-tree termination (`taskkill /F /T /PID`) to guarantee no orphan background processes linger.
+6. **Built-in Splash Screen & Diagnostic Recovery:**
+   - A dedicated native HTML/CSS splash screen displays real-time backend startup steps and health checks (`GET /health`).
+   - If startup encounters a missing dependency or locked port, actionable diagnostic logs and an "Open Logs" button are provided directly in the interface.
+
+---
+
+### Desktop Development Workflow
+
+To run the desktop application locally with live development servers:
+
+```powershell
+# From the project root:
+npm start
+```
+
+*Note: In development mode, Electron connects to `http://localhost:5173` if Vite is running, or automatically launches `backend/desktop_server.py` and opens the local React build.*
+
+---
+
+### Building the Windows Installer (`.exe`)
+
+BG AI features a single unified build pipeline that compiles the React bundle, packages the Python backend via PyInstaller, and bundles everything into an NSIS installer using `electron-builder`:
+
+```powershell
+# Run the complete automated desktop build:
+npm run build
+```
+
+This single command performs the following sequence:
+1. `npm run build:frontend` — Compiles the React + TypeScript frontend into `frontend/dist/`.
+2. `npm run build:backend` — Invokes PyInstaller (`backend/bgai_backend.spec`) to produce the standalone binary directory `backend/dist/bgai_backend/`.
+3. `npm run dist` — Packages the installer via Electron Builder into:
+   - **Standalone Installer:** `dist/BG AI Setup 1.0.0.exe` (~124 MB)
+   - **Unpacked Portable Directory:** `dist/win-unpacked/BG AI.exe`
+
+#### To Build Components Individually:
+
+```powershell
+# Build frontend only:
+npm run build:frontend
+
+# Build backend standalone executable only:
+npm run build:backend
+
+# Package without re-compiling backend (quick test):
+npm run dist
+```
+
+---
+
+### Installation & Updating
+
+1. **Installation:** Run `BG AI Setup 1.0.0.exe`. The NSIS installer allows choosing an installation directory (default: `%LOCALAPPDATA%\Programs\BG AI` or `C:\Program Files\BG AI`) and creates Desktop and Start Menu shortcuts.
+2. **Upgrading:** Running a newer version of the installer updates the binary files while preserving all databases, connection configs, and credentials located in `%APPDATA%\BG_AI`.
+3. **Uninstalling:** Standard Windows Add/Remove Programs uninstaller removes the application binaries while safely keeping user application data intact.
+
+---
+
+### Desktop Configuration & API Keys
+
+- **Groq API Key:** The desktop version loads configuration from `%APPDATA%\BG_AI\.env` if present, or from system environment variables. You can enter or update your Groq API key directly within the app settings or by editing:
+  ```text
+  %APPDATA%\BG_AI\.env
+  ```
+  Example contents:
+  ```ini
+  GROQ_API_KEY=gsk_your_groq_api_key_here
+  GROQ_MODEL=llama-3.3-70b-versatile
+  ```
+
+---
+
+### Code Signing Notice
+
+The generated installer `BG AI Setup 1.0.0.exe` is unsigned (self-packaged for local/enterprise distribution). When installing on Windows 10 or 11, Windows SmartScreen may display an unknown publisher alert:
+- Click **More info** -> **Run anyway**.
+- For enterprise deployments, sign the output executable using `signtool.exe` with a valid Authenticode Code Signing Certificate.
+
+---
+
+## 18. Cloud Deployment Architecture
 
 BG AI is structured for cloud deployment across separate frontend and backend tiers:
 
@@ -529,7 +671,7 @@ BG AI is structured for cloud deployment across separate frontend and backend ti
 
 ---
 
-## 18. Troubleshooting Guide
+## 19. Troubleshooting Guide
 
 | Issue | Root Cause | Solution |
 | :--- | :--- | :--- |
@@ -537,12 +679,14 @@ BG AI is structured for cloud deployment across separate frontend and backend ti
 | `HTTP 403 Forbidden: Access Denied` | Source IP is under temporary quarantine | Review active blocks in Cybersecurity -> IP Threats, or call `POST /security/ip-threats/unblock`. |
 | `Connection refused: localhost:8001` | Backend FastAPI server is not running | Start backend with `uvicorn app.main:app --port 8001 --reload` in `backend/`. |
 | `PyMySQL / psycopg2 missing` | Database drivers not installed in virtualenv | Run `pip install -r requirements.txt` inside the activated virtual environment. |
-| `Groq API Key Error / Invalid Key` | `GROQ_API_KEY` missing in `.env` | Set a valid `GROQ_API_KEY` in `backend/.env`. |
+| `Groq API Key Error / Invalid Key` | `GROQ_API_KEY` missing in `.env` | Set a valid `GROQ_API_KEY` in `backend/.env` (web mode) or `%APPDATA%\BG_AI\.env` (desktop mode). |
 | `Vite build fails on TypeScript` | Outdated dependencies or missing node modules | Run `npm install` followed by `npm run build` in `frontend/`. |
+| `Desktop Splash: Backend failed to start` | Port in use or firewall blocking loopback | Inspect `%APPDATA%\BG_AI\desktop_backend.log` for exact startup error. Ensure ports 8001-8010 are accessible. |
+| `Windows SmartScreen Warning` | Unsigned installer executable | Click "More info" -> "Run anyway", or sign the `.exe` with an Authenticode certificate. |
 
 ---
 
-## 19. Product Roadmap
+## 20. Product Roadmap
 
 The following capabilities are actively planned for future releases:
 
@@ -553,7 +697,7 @@ The following capabilities are actively planned for future releases:
 
 ---
 
-## 20. Contributing
+## 21. Contributing
 
 Contributions to BG AI are welcome. To contribute:
 
@@ -564,13 +708,13 @@ Contributions to BG AI are welcome. To contribute:
 
 ---
 
-## 21. License
+## 22. License
 
 This repository does not currently specify an open-source license. All rights are reserved by the original project authors. For permissions or licensing inquiries, please contact the maintainers.
 
 ---
 
-## 22. Acknowledgements & Authors
+## 23. Acknowledgements & Authors
 
 - **Developed By:** [Boopathi Ravi](https://github.com/boopathiravi03)
 - **Project Repository:** [boopathiravi03/BG_chatbox](https://github.com/boopathiravi03/BG_chatbox)
