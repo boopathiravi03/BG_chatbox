@@ -22,6 +22,8 @@ let splashWindow = null;
 let backendProcess = null;
 let backendPort = 8001;
 let backendUrl = `http://127.0.0.1:${backendPort}`;
+let frontendServer = null;
+let frontendUrl = null;
 let isQuitting = false;
 
 // ── Directory Helpers ────────────────────────────────────────────────────────
@@ -218,6 +220,86 @@ function killBackend() {
   }
 }
 
+// ── Local Frontend Loopback Server (for Firebase Auth & Google OAuth) ────────
+function startFrontendServer() {
+  return new Promise((resolve) => {
+    const distDir = path.join(__dirname, "..", "frontend", "dist");
+    const distIndex = path.join(distDir, "index.html");
+    if (!fs.existsSync(distIndex)) {
+      console.log("[Electron] frontend/dist/index.html not found, skipping frontend server");
+      return resolve(null);
+    }
+
+    const mimeTypes = {
+      ".html": "text/html",
+      ".js": "text/javascript",
+      ".css": "text/css",
+      ".json": "application/json",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".ico": "image/x-icon",
+      ".mp4": "video/mp4",
+      ".webm": "video/webm",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+      ".ttf": "font/ttf",
+    };
+
+    frontendServer = http.createServer((req, res) => {
+      let reqPath = decodeURI(req.url.split("?")[0]);
+      if (reqPath === "/" || !reqPath) reqPath = "/index.html";
+      let filePath = path.join(distDir, reqPath);
+
+      // SPA fallback: any missing path serves index.html
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        filePath = distIndex;
+      }
+
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = mimeTypes[ext] || "application/octet-stream";
+
+      fs.readFile(filePath, (err, content) => {
+        if (err) {
+          res.writeHead(500);
+          res.end("Internal Server Error");
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": contentType,
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(content);
+      });
+    });
+
+    frontendServer.listen(0, "127.0.0.1", () => {
+      const port = frontendServer.address().port;
+      frontendUrl = `http://localhost:${port}`;
+      console.log(`[Electron] Local frontend server running on ${frontendUrl}`);
+      logDesktopEvent(`Local frontend server running on ${frontendUrl}`);
+      resolve(frontendUrl);
+    });
+
+    frontendServer.on("error", (err) => {
+      console.error("[Electron] Frontend server error:", err);
+      logDesktopEvent(`Frontend server error: ${err.message}`);
+      resolve(null);
+    });
+  });
+}
+
+function stopFrontendServer() {
+  if (frontendServer) {
+    try {
+      frontendServer.close();
+    } catch {}
+    frontendServer = null;
+  }
+}
+
 // ── Window Creation ──────────────────────────────────────────────────────────
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
@@ -279,6 +361,7 @@ function createMainWindow() {
       url.includes("accounts.google.com") ||
       url.includes("google.com/o/oauth2")
     ) {
+      logDesktopEvent(`Permitting Google / Firebase OAuth popup: ${url.split("?")[0]}`);
       return {
         action: "allow",
         overrideBrowserWindowOptions: {
@@ -286,8 +369,7 @@ function createMainWindow() {
           height: 680,
           autoHideMenuBar: true,
           title: "Sign in with Google — BG AI",
-          parent: mainWindow,
-          modal: true,
+          modal: false,
           webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -301,6 +383,20 @@ function createMainWindow() {
       shell.openExternal(url);
     }
     return { action: "deny" };
+  });
+
+  // Ensure child popup windows (e.g. Google Sign-In) also use standard Chrome User-Agent
+  mainWindow.webContents.on("did-create-window", (childWindow) => {
+    const chromeUA =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    childWindow.webContents.setUserAgent(chromeUA);
+  });
+
+  // Capture diagnostic logs from renderer to desktop log
+  mainWindow.webContents.on("console-message", (_, level, message) => {
+    if (message.includes("[BG AI") || message.includes("Firebase") || message.includes("auth/") || level >= 2) {
+      logDesktopEvent(`[Renderer Console] ${message}`);
+    }
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -327,10 +423,12 @@ function createMainWindow() {
     mainWindow.show();
   });
 
-  // Load production bundle or Vite dev server
+  // Load production bundle via local server or Vite dev server
   const distIndex = path.join(__dirname, "..", "frontend", "dist", "index.html");
   if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  } else if (frontendUrl) {
+    mainWindow.loadURL(frontendUrl);
   } else if (fs.existsSync(distIndex)) {
     mainWindow.loadFile(distIndex);
   } else {
@@ -413,10 +511,10 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
-  // 1. Strip 'Electron/...' from User-Agent so Google OAuth does not block with disallowed_useragent
-  const defaultUA = session.defaultSession.getUserAgent();
-  const cleanUA = defaultUA.replace(/Electron\/[0-9\.]+\s?/, "");
-  session.defaultSession.setUserAgent(cleanUA);
+  // 1. Set pure Google Chrome User-Agent so Google OAuth does not block with disallowed_useragent
+  const chromeUA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  session.defaultSession.setUserAgent(chromeUA);
 
   // 2. Enforce Content-Security-Policy permitting local backend, Firebase Auth, Google OAuth, fonts, and media
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -455,6 +553,7 @@ app.whenReady().then(async () => {
 
   try {
     await startBackend();
+    await startFrontendServer();
     createMainWindow();
   } catch (err) {
     console.error("[Electron] Backend startup failed:", err);
@@ -478,6 +577,7 @@ app.on("before-quit", () => {
   isQuitting = true;
   saveWindowState();
   killBackend();
+  stopFrontendServer();
 });
 
 app.on("window-all-closed", () => {
