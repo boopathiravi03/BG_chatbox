@@ -646,6 +646,11 @@ ipcMain.handle("bgai:start-google-auth", async () => {
     process.env.GOOGLE_DESKTOP_CLIENT_ID ||
     DEFAULT_GOOGLE_DESKTOP_CLIENT_ID;
 
+  const desktopClientSecret =
+    envVars.GOOGLE_DESKTOP_CLIENT_SECRET ||
+    process.env.GOOGLE_DESKTOP_CLIENT_SECRET ||
+    "";
+
   if (!desktopClientId) {
     const errorMsg =
       "Google Sign-In on Desktop requires an OAuth Client ID of type 'Desktop app' (RFC 8252).\n" +
@@ -776,28 +781,62 @@ ipcMain.handle("bgai:start-google-auth", async () => {
           // 4. Exchange authorization code + code_verifier for tokens with PKCE (RFC 7636)
           try {
             logDesktopEvent("[OAuth] Exchanging authorization code with Google token endpoint");
+
+            const tokenRequestBody = {
+              client_id: desktopClientId,
+              code: code,
+              code_verifier: codeVerifier,
+              grant_type: "authorization_code",
+              redirect_uri: callbackUrl,
+            };
+
+            if (desktopClientSecret) {
+              tokenRequestBody.client_secret = desktopClientSecret;
+            }
+
             const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
               method: "POST",
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: new URLSearchParams({
-                client_id: desktopClientId,
-                code: code,
-                code_verifier: codeVerifier,
-                grant_type: "authorization_code",
-                redirect_uri: callbackUrl,
-              }),
+              body: new URLSearchParams(tokenRequestBody),
             });
 
             if (!tokenRes.ok) {
               const tokenErrText = await tokenRes.text();
-              logDesktopEvent(`[OAuth] Token exchange failed (${tokenRes.status}): ${tokenErrText}`);
+              let parsedErr = {};
+              try {
+                parsedErr = JSON.parse(tokenErrText);
+              } catch {}
+
+              const sanitizedErrorCode = parsedErr.error || "token_exchange_error";
+              const sanitizedErrorDesc = parsedErr.error_description || "Token exchange failed";
+
+              // Log strictly safe diagnostic information per security guidelines
+              logDesktopEvent(
+                `[OAuth Token Exchange Diagnostic] HTTP ${tokenRes.status} | ` +
+                `Error: ${sanitizedErrorCode} | ` +
+                `Description: ${sanitizedErrorDesc} | ` +
+                `PKCE verifier exists: ${Boolean(codeVerifier)} | ` +
+                `Client ID matches request: ${Boolean(desktopClientId && desktopClientId === authParams.get("client_id"))} | ` +
+                `Redirect URI matches request: ${Boolean(callbackUrl === authParams.get("redirect_uri"))}`
+              );
+
+              let userFacingMsg = `Authentication error: ${sanitizedErrorDesc}`;
+              if (sanitizedErrorCode === "invalid_request" && sanitizedErrorDesc.includes("client_secret")) {
+                userFacingMsg = "Google OAuth requires the Desktop Client Secret. Please set GOOGLE_DESKTOP_CLIENT_SECRET in .env.";
+              } else if (sanitizedErrorCode === "invalid_grant") {
+                userFacingMsg = "Authorization code expired or has already been used. Please try signing in again.";
+              } else if (sanitizedErrorCode === "invalid_client") {
+                userFacingMsg = "Invalid OAuth client configuration. Please verify your client ID and client secret in .env.";
+              }
+
               res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
               res.end(`<!DOCTYPE html><html><body style="background:#09090b;color:#ef4444;font-family:sans-serif;text-align:center;padding:50px;">
-                <h2>Authentication Error</h2><p>Failed to exchange authorization token with Google.</p>
+                <h2>Authentication Error</h2><p>${userFacingMsg}</p>
+                <p style="color:#a1a1aa;font-size:13px;">Return to BG AI to try again.</p>
               </body></html>`);
               return cleanupAndResolve({
                 success: false,
-                error: "Token exchange with Google failed.",
+                error: userFacingMsg,
               });
             }
 

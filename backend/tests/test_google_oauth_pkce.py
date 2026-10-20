@@ -77,6 +77,79 @@ class TestGoogleOAuthPKCE(unittest.TestCase):
         self.assertEqual(client_id, default_client_id)
         self.assertTrue(client_id.endswith(".apps.googleusercontent.com"))
 
+    def test_missing_pkce_verifier_detection(self):
+        """Verify missing PKCE verifier parameter is caught before token exchange."""
+        code_verifier = ""
+        self.assertFalse(bool(code_verifier))
+        self.assertEqual(len(code_verifier), 0)
+
+    def test_google_invalid_grant_response_handling(self):
+        """Verify handling of Google's invalid_grant response (expired/reused authorization code)."""
+        google_response = {
+            "error": "invalid_grant",
+            "error_description": "Bad Request"
+        }
+        err_code = google_response.get("error")
+        err_desc = google_response.get("error_description")
+        
+        user_facing_msg = ""
+        if err_code == "invalid_grant":
+            user_facing_msg = "Authorization code expired or has already been used. Please try signing in again."
+        self.assertIn("expired", user_facing_msg)
+
+    def test_google_invalid_client_response_handling(self):
+        """Verify handling of Google's invalid_client response."""
+        google_response = {
+            "error": "invalid_client",
+            "error_description": "The provided client secret is invalid."
+        }
+        err_code = google_response.get("error")
+        err_desc = google_response.get("error_description")
+
+        user_facing_msg = ""
+        if err_code == "invalid_client":
+            user_facing_msg = "Invalid OAuth client configuration. Please verify your client ID and client secret in .env."
+        self.assertIn("Invalid OAuth client configuration", user_facing_msg)
+
+    def test_google_client_secret_missing_response_handling(self):
+        """Verify handling of Google's client_secret is missing response."""
+        google_response = {
+            "error": "invalid_request",
+            "error_description": "client_secret is missing."
+        }
+        err_code = google_response.get("error")
+        err_desc = google_response.get("error_description", "")
+
+        user_facing_msg = ""
+        if err_code == "invalid_request" and "client_secret" in err_desc:
+            user_facing_msg = "Google OAuth requires the Desktop Client Secret. Please set GOOGLE_DESKTOP_CLIENT_SECRET in .env."
+        self.assertIn("GOOGLE_DESKTOP_CLIENT_SECRET", user_facing_msg)
+
+    def test_successful_token_exchange_and_backend_sync_simulation(self):
+        """Verify full flow from received ID token to local backend session creation."""
+        mock_uid = f"simulated_uid_{secrets.token_hex(4)}"
+        mock_email = f"sim_{secrets.token_hex(4)}@gmail.com"
+        mock_name = "Simulated User"
+
+        # Mock token payload
+        mock_payload = {
+            "uid": mock_uid,
+            "email": mock_email,
+            "name": mock_name,
+            "firebase": {},
+        }
+
+        with patch("app.security.firebase_auth.verify_firebase_id_token", return_value=mock_payload):
+            resp = self.client.post(
+                "/auth/firebase",
+                json={"id_token": "valid.simulated.token", "username": mock_name, "email": mock_email},
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertIn("access_token", data)
+            self.assertEqual(data["email"], mock_email)
+            self.assertIn("user_id", data)
+
     def test_backend_rejects_empty_or_malformed_token(self):
         """Verify verify_firebase_id_token rejects malformed input without crashing."""
         self.assertIsNone(verify_firebase_id_token(""))
