@@ -638,10 +638,13 @@ ipcMain.handle("bgai:start-google-auth", async () => {
     ...process.env,
   };
 
+  const DEFAULT_GOOGLE_DESKTOP_CLIENT_ID =
+    "1045610580763-dvtqgpm0dla9laa7r8q9m883qdr7itjd.apps.googleusercontent.com";
+
   const desktopClientId =
     envVars.GOOGLE_DESKTOP_CLIENT_ID ||
     process.env.GOOGLE_DESKTOP_CLIENT_ID ||
-    "";
+    DEFAULT_GOOGLE_DESKTOP_CLIENT_ID;
 
   if (!desktopClientId) {
     const errorMsg =
