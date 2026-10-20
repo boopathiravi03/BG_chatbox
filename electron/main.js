@@ -17,6 +17,11 @@ if (!gotTheLock) {
   process.exit(0);
 }
 
+// Global Chrome User-Agent to prevent Google OAuth 403: disallowed_useragent
+const CHROME_OAUTH_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+app.userAgentFallback = CHROME_OAUTH_UA;
+
 let mainWindow = null;
 let splashWindow = null;
 let backendProcess = null;
@@ -292,28 +297,84 @@ function startFrontendServer() {
     frontendServer = http.createServer((req, res) => {
       let reqPath = decodeURI(req.url.split("?")[0]);
       if (reqPath === "/" || !reqPath) reqPath = "/index.html";
-      let filePath = path.join(distDir, reqPath);
+
+      // 1. Resolve candidate paths for static files
+      const candidates = [
+        path.join(distDir, reqPath),
+      ];
+      if (app.isPackaged && process.resourcesPath) {
+        candidates.push(
+          path.join(process.resourcesPath, "app.asar.unpacked", "frontend", "dist", reqPath),
+          path.join(process.resourcesPath, path.basename(reqPath)),
+          path.join(process.resourcesPath, "backend", reqPath)
+        );
+      }
+      candidates.push(
+        path.join(__dirname, "..", "frontend", "public", reqPath),
+        path.join(__dirname, "..", "frontend", "public", path.basename(reqPath))
+      );
+
+      let filePath = candidates.find((p) => {
+        try {
+          return fs.existsSync(p) && !fs.statSync(p).isDirectory();
+        } catch {
+          return false;
+        }
+      });
 
       // SPA fallback: any missing path serves index.html
-      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      if (!filePath) {
         filePath = distIndex;
       }
 
       const ext = path.extname(filePath).toLowerCase();
       const contentType = mimeTypes[ext] || "application/octet-stream";
 
-      fs.readFile(filePath, (err, content) => {
-        if (err) {
-          res.writeHead(500);
-          res.end("Internal Server Error");
-          return;
+      let stat;
+      try {
+        stat = fs.statSync(filePath);
+      } catch (err) {
+        res.writeHead(500);
+        res.end("Internal Server Error");
+        return;
+      }
+
+      const fileSize = stat.size;
+      const range = req.headers.range;
+
+      // Handle HTTP Range requests for video/media streaming
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+        if (isNaN(start) || start >= fileSize || end >= fileSize || start > end) {
+          res.writeHead(416, {
+            "Content-Range": `bytes */${fileSize}`,
+            "Access-Control-Allow-Origin": "*",
+          });
+          return res.end();
         }
-        res.writeHead(200, {
+
+        const chunkSize = end - start + 1;
+        const fileStream = fs.createReadStream(filePath, { start, end });
+        res.writeHead(206, {
+          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": chunkSize,
           "Content-Type": contentType,
           "Access-Control-Allow-Origin": "*",
         });
-        res.end(content);
-      });
+        fileStream.pipe(res);
+      } else {
+        res.writeHead(200, {
+          "Content-Length": fileSize,
+          "Content-Type": contentType,
+          "Accept-Ranges": "bytes",
+          "Access-Control-Allow-Origin": "*",
+        });
+        fs.createReadStream(filePath).pipe(res);
+      }
     });
 
     frontendServer.listen(0, "127.0.0.1", () => {
@@ -396,12 +457,36 @@ function createMainWindow() {
 
   // Navigation and external link safety
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // Permit Firebase and Google OAuth popup authentication windows
-    if (
+    // 1. Permit initial empty/about:blank popup initialization used by Firebase Auth SDK
+    if (!url || url === "about:blank" || url === "about:blank#") {
+      logDesktopEvent("[OAuth Popup] Allowing initial blank window for Firebase Auth");
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 680,
+          autoHideMenuBar: true,
+          title: "Sign in with Google — BG AI",
+          modal: false,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: false, // Essential for cross-origin window.opener.postMessage authentication exchange
+            sandbox: false,
+          },
+        },
+      };
+    }
+
+    // 2. Permit Firebase and Google OAuth popup authentication windows
+    const isAuthUrl =
       url.includes("firebaseapp.com") ||
       url.includes("accounts.google.com") ||
-      url.includes("google.com/o/oauth2")
-    ) {
+      url.includes("google.com/o/oauth2") ||
+      url.includes("oauth2.googleapis.com") ||
+      url.includes("apis.google.com") ||
+      url.includes("gstatic.com");
+
+    if (isAuthUrl) {
       logDesktopEvent(`Permitting Google / Firebase OAuth popup: ${url.split("?")[0]}`);
       return {
         action: "allow",
@@ -413,7 +498,7 @@ function createMainWindow() {
           modal: false,
           webPreferences: {
             nodeIntegration: false,
-            contextIsolation: true,
+            contextIsolation: false, // Essential for cross-origin window.opener.postMessage authentication exchange
             sandbox: false,
           },
         },
@@ -426,11 +511,34 @@ function createMainWindow() {
     return { action: "deny" };
   });
 
-  // Ensure child popup windows (e.g. Google Sign-In) also use standard Chrome User-Agent
+  // Ensure child popup windows (e.g. Google Sign-In) use standard Chrome User-Agent and retain navigation
   mainWindow.webContents.on("did-create-window", (childWindow) => {
-    const chromeUA =
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-    childWindow.webContents.setUserAgent(chromeUA);
+    childWindow.webContents.setUserAgent(CHROME_OAUTH_UA);
+
+    // Keep all OAuth redirections inside the popup; only external non-auth links escape to system browser
+    childWindow.webContents.on("will-navigate", (event, navUrl) => {
+      const isAllowedNav =
+        navUrl.includes("firebaseapp.com") ||
+        navUrl.includes("accounts.google.com") ||
+        navUrl.includes("google.com") ||
+        navUrl.includes("googleapis.com") ||
+        navUrl.includes("gstatic.com") ||
+        navUrl.startsWith("http://localhost:") ||
+        navUrl.startsWith("http://127.0.0.1:") ||
+        navUrl.startsWith("about:");
+
+      if (!isAllowedNav) {
+        event.preventDefault();
+        shell.openExternal(navUrl);
+      }
+    });
+
+    childWindow.webContents.setWindowOpenHandler(({ url: childUrl }) => {
+      if (childUrl.startsWith("http:") || childUrl.startsWith("https:")) {
+        shell.openExternal(childUrl);
+      }
+      return { action: "deny" };
+    });
   });
 
   // Capture diagnostic logs from renderer to desktop log
@@ -503,6 +611,12 @@ ipcMain.handle("bgai:open-app-data", async () => {
 });
 
 ipcMain.on("bgai:get-intro-video-path", (event) => {
+  // If local frontend server is running, use HTTP URL to match window origin (avoiding file:// CORS restrictions)
+  if (frontendUrl) {
+    event.returnValue = `${frontendUrl}/bg-ai-intro.mp4`;
+    return;
+  }
+
   // 1. Packaged production: check app.asar.unpacked
   if (app.isPackaged) {
     const unpacked = path.join(
@@ -553,12 +667,19 @@ app.on("second-instance", () => {
 
 app.whenReady().then(async () => {
   // 1. Set pure Google Chrome User-Agent so Google OAuth does not block with disallowed_useragent
-  const chromeUA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-  session.defaultSession.setUserAgent(chromeUA);
+  session.defaultSession.setUserAgent(CHROME_OAUTH_UA);
 
-  // 2. Enforce Content-Security-Policy permitting local backend, Firebase Auth, Google OAuth, fonts, and media
+  // 2. Enforce Content-Security-Policy ONLY on local application pages (never onto external identity providers)
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const isLocalApp =
+      details.url.startsWith("http://localhost:") ||
+      details.url.startsWith("http://127.0.0.1:") ||
+      details.url.startsWith("file://");
+
+    if (!isLocalApp) {
+      return callback({ responseHeaders: details.responseHeaders });
+    }
+
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -571,6 +692,7 @@ app.whenReady().then(async () => {
           "https://accounts.google.com " +
           "https://apis.google.com " +
           "https://thebg.co.in " +
+          "https://thebg.con.in " +
           "https://fonts.googleapis.com " +
           "https://fonts.gstatic.com " +
           "https://cdn.jsdelivr.net; " +
@@ -581,7 +703,8 @@ app.whenReady().then(async () => {
           "https://*.firebaseapp.com " +
           "https://identitytoolkit.googleapis.com " +
           "https://securetoken.googleapis.com " +
-          "https://thebg.co.in; " +
+          "https://thebg.co.in " +
+          "https://thebg.con.in; " +
           "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; " +
           "img-src 'self' data: blob: https://*.googleusercontent.com https://*.gstatic.com https://*.googleapis.com; " +
           "media-src 'self' data: blob: file:;"

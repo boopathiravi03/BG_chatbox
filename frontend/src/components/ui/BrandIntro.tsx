@@ -71,6 +71,7 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissedRef = useRef<boolean>(false);
+  const endingTriggeredRef = useRef<boolean>(false);
 
   const videoSrc = resolveVideoSrc();
   const logoSrc = resolveLogoSrc();
@@ -99,6 +100,18 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
     onComplete?.();
   }, [onComplete]);
 
+  // Triggered when video naturally finishes playing all frames
+  const handleVideoEnded = useCallback(() => {
+    if (endingTriggeredRef.current || dismissedRef.current) return;
+    endingTriggeredRef.current = true;
+    setProgress(100);
+
+    // Brief, polished lingering on the completed brand mark before fading out
+    setTimeout(() => {
+      handleDismiss();
+    }, 450);
+  }, [handleDismiss]);
+
   // Graceful fallback if video fails to load or play
   const handleVideoError = useCallback(() => {
     console.warn(
@@ -126,10 +139,18 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
     };
     window.addEventListener("keydown", handleKeyDown);
 
-    // Safety fallback: if video doesn't end within 6.0s, dismiss gracefully
+    // Generous safety watchdog: ensures the screen is never stuck indefinitely
+    // if video stalls or never starts. Does NOT interrupt an actively playing video!
     safetyTimerRef.current = setTimeout(() => {
+      const vid = videoRef.current;
+      if (vid && !vid.paused && !vid.ended && vid.currentTime > 0.5) {
+        // Video is actively playing; wait for the remainder of playback
+        const remaining = Math.max(1, (vid.duration || 5.042) - vid.currentTime);
+        safetyTimerRef.current = setTimeout(handleDismiss, (remaining + 2) * 1000);
+        return;
+      }
       handleDismiss();
-    }, 6000);
+    }, 15000);
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
@@ -166,9 +187,14 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
 
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
-    const duration = videoRef.current.duration || 5.04;
+    const duration = videoRef.current.duration || 5.042;
     const current = videoRef.current.currentTime;
     setProgress(Math.min(100, (current / duration) * 100));
+
+    // When playback approaches or reaches duration, trigger smooth completion
+    if (duration > 0 && current >= duration - 0.08) {
+      handleVideoEnded();
+    }
   };
 
   const handleManualPlay = () => {
@@ -267,13 +293,14 @@ export default function BrandIntro({ onComplete }: BrandIntroProps) {
             <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-[#09090b]">
               <video
                 ref={videoRef}
+                src={videoSrc}
                 playsInline
                 muted
                 autoPlay
                 preload="auto"
                 poster={logoSrc}
                 onTimeUpdate={handleTimeUpdate}
-                onEnded={handleDismiss}
+                onEnded={handleVideoEnded}
                 onError={handleVideoError}
                 className="w-full h-full object-cover"
               >

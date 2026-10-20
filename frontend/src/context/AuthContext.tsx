@@ -127,8 +127,10 @@ function formatAuthError(err: any): string {
       return 'Sign-in window was closed before completion.';
     case 'auth/popup-blocked':
       return 'Sign-in window was blocked. Please permit popups or use email/password sign-in.';
-    case 'auth/unauthorized-domain':
-      return 'Domain not authorized in Firebase. Please add thebg.co.in to Firebase Console > Authentication > Settings > Authorized domains.';
+    case 'auth/unauthorized-domain': {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'thebg.co.in';
+      return `Domain not authorized in Firebase: "${currentHost}". Please add "${currentHost}" (and "thebg.co.in") to Firebase Console > Authentication > Settings > Authorized domains.`;
+    }
     case 'auth/internal-error':
       return 'Authentication could not be completed. Please verify your credentials and try again.';
     default:

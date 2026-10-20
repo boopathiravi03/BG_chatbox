@@ -25,7 +25,12 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-_PRODUCTION_ORIGINS = ["https://thebg.co.in"]
+_PRODUCTION_ORIGINS = [
+    "https://thebg.co.in",
+    "https://thebg.con.in",
+    "http://thebg.co.in",
+    "http://thebg.con.in",
+]
 _DEV_ORIGINS = os.getenv("BGAI_EXTRA_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000").split(",")
 _ALLOWED_ORIGINS = _PRODUCTION_ORIGINS + [o.strip() for o in _DEV_ORIGINS if o.strip()]
 if os.getenv("BGAI_DESKTOP_MODE") == "1":
