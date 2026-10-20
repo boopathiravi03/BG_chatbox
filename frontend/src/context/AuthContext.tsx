@@ -478,13 +478,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logAuthDiagnostic('DESKTOP_GOOGLE_AUTH_SUCCESS', { email: desktopResult.email });
         logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_START');
 
-        const res = await authBackendFetch('/auth/firebase', {
+        // Exchange Google OAuth token with backend dedicated /auth/google endpoint (with fallback to /auth/firebase)
+        let res = await authBackendFetch('/auth/google', {
           body: {
             id_token: desktopResult.idToken,
-            email: desktopResult.email,
-            username: desktopResult.username,
+            access_token: desktopResult.accessToken,
           },
         });
+
+        if (!res.ok && res.status === 404) {
+          res = await authBackendFetch('/auth/firebase', {
+            body: {
+              id_token: desktopResult.idToken,
+            },
+          });
+        }
 
         logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_STATUS', { status: res.status });
         if (res.ok) {

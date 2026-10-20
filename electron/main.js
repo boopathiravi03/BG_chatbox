@@ -679,6 +679,13 @@ ipcMain.handle("bgai:start-google-auth", async () => {
         } catch {}
         activeOAuthServer = null;
       }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        } catch {}
+      }
       resolve(result);
     };
 
@@ -881,21 +888,34 @@ ipcMain.handle("bgai:start-google-auth", async () => {
   <title>BG AI — Authentication Successful</title>
   <style>
     body { background: #09090b; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    .card { text-align: center; padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); background: #121215; max-width: 420px; width: 90%; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
-    .icon { font-size: 40px; margin-bottom: 12px; color: #22c55e; }
-    h2 { margin: 0 0 10px; font-size: 20px; font-weight: 700; color: #22c55e; }
-    p { color: #a1a1aa; font-size: 14px; margin: 0 0 16px; }
-    .btn { display: inline-block; background: #6366f1; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .card { text-align: center; padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); background: #121215; max-width: 440px; width: 90%; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .icon { font-size: 44px; margin-bottom: 12px; color: #22c55e; }
+    h2 { margin: 0 0 10px; font-size: 22px; font-weight: 700; color: #22c55e; }
+    p { color: #a1a1aa; font-size: 14px; margin: 0 0 16px; line-height: 1.5; }
+    .hint { font-size: 13px; color: #71717a; margin-top: 14px; }
+    .btn { display: inline-block; background: #6366f1; color: #fff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; cursor: pointer; border: none; }
+    .btn:hover { background: #4f46e5; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="icon">✓</div>
+    <div class="icon">&#10003;</div>
     <h2>Sign-In Successful!</h2>
-    <p>You have successfully authenticated with BG AI. You can safely close this browser window and return to the application.</p>
-    <a class="btn" href="javascript:window.close()">Close Window</a>
+    <p>You have successfully authenticated with BG AI. Your desktop application is ready.</p>
+    <button class="btn" id="closeBtn" onclick="attemptClose()">Close Tab</button>
+    <p class="hint" id="statusHint">You can safely close this browser tab and return to the BG AI app.</p>
   </div>
-  <script>setTimeout(function(){ window.close(); }, 2000);</script>
+  <script>
+    function attemptClose() {
+      try { window.close(); } catch (e) {}
+      try { window.open('', '_self', ''); window.close(); } catch (e) {}
+      var hint = document.getElementById('statusHint');
+      var btn = document.getElementById('closeBtn');
+      if (hint) hint.innerText = 'Browser security prevented scripts from closing this tab. Please close this tab manually and switch back to BG AI.';
+      if (btn) btn.style.display = 'none';
+    }
+    setTimeout(attemptClose, 1000);
+  </script>
 </body>
 </html>`);
 
@@ -903,6 +923,7 @@ ipcMain.handle("bgai:start-google-auth", async () => {
             cleanupAndResolve({
               success: true,
               idToken: idToken,
+              accessToken: tokenData.access_token || null,
               email: email,
               username: displayName,
               uid: uid,

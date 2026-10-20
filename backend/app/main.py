@@ -210,6 +210,11 @@ class FirebaseLoginRequest(BaseModel):
     email: Optional[str] = None
 
 
+class GoogleLoginRequest(BaseModel):
+    id_token: str
+    access_token: Optional[str] = None
+
+
 class LookupEmailRequest(BaseModel):
     username: str
 
@@ -414,13 +419,51 @@ def auth_login(req: LoginRequest, request: Request):
     }
 
 
+@app.post("/auth/google")
+@limiter.limit("20/minute")
+def auth_google_login(req: GoogleLoginRequest, request: Request):
+    from app.security.firebase_auth import verify_google_id_token
+    from app.security.sessions import sync_firebase_user
+
+    payload = verify_google_id_token(req.id_token, access_token=req.access_token)
+    if not payload:
+        client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
+        get_intrusion_engine().record_auth_failure(
+            ip_address=client_ip,
+            username="google_user",
+            user_id="auth_failure",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, expired, or unauthorized Google authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    uid = payload["uid"]
+    # Cryptographically verified claims only — never trust unverified client fields
+    email = payload.get("email")
+    name = payload.get("name") or (email.split("@")[0] if email else "google_user")
+
+    user = sync_firebase_user(uid, email=email, display_name=name)
+    token = create_access_token(user["user_id"], user["username"])
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user_id": user["user_id"],
+        "username": user["username"],
+        "email": user.get("email"),
+    }
+
+
 @app.post("/auth/firebase")
 @limiter.limit("20/minute")
 def auth_firebase_login(req: FirebaseLoginRequest, request: Request):
-    from app.security.firebase_auth import verify_firebase_id_token
+    from app.security.firebase_auth import verify_identity_token
     from app.security.sessions import sync_firebase_user
 
-    payload = verify_firebase_id_token(req.id_token)
+    # Handles Firebase ID tokens and Google OAuth tokens securely
+    payload = verify_identity_token(req.id_token)
     if not payload:
         client_ip = getattr(request.state, "client_ip", None) or extract_client_ip(request)
         get_intrusion_engine().record_auth_failure(
@@ -435,8 +478,9 @@ def auth_firebase_login(req: FirebaseLoginRequest, request: Request):
         )
 
     uid = payload["uid"]
-    email = payload.get("email") or req.email
-    name = payload.get("name") or req.username
+    # Cryptographically verified claims only — never trust unverified client fields
+    email = payload.get("email")
+    name = payload.get("name") or (email.split("@")[0] if email else "user")
 
     user = sync_firebase_user(uid, email=email, display_name=name)
     token = create_access_token(user["user_id"], user["username"])

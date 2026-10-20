@@ -47,6 +47,7 @@ declare global {
       startGoogleAuth?: () => Promise<{
         success: boolean;
         idToken?: string;
+        accessToken?: string;
         email?: string;
         username?: string;
         uid?: string;
