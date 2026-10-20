@@ -44,6 +44,14 @@ declare global {
       isDesktop: () => boolean;
       getVersion?: () => string;
       openExternal?: (url: string) => Promise<void>;
+      startGoogleAuth?: () => Promise<{
+        success: boolean;
+        idToken?: string;
+        email?: string;
+        username?: string;
+        uid?: string;
+        error?: string;
+      }>;
     };
   }
 }

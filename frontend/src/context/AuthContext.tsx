@@ -54,7 +54,7 @@ function logAuthDiagnostic(stage: string, details?: Record<string, any>) {
     }
   }
 
-  console.log(`[BG AI Auth Flow] [${stage}]`, sanitized);
+  console.log(`[BG AI Auth Flow] [${stage}] ${JSON.stringify(sanitized)}`);
 }
 
 /**
@@ -137,7 +137,7 @@ function formatAuthError(err: any): string {
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
         return 'Network connection error. Please verify your internet connection and local backend status.';
       }
-      return 'Invalid username/email or password.';
+      return safeMsg || 'Authentication failed. Please verify your credentials and try again.';
   }
 }
 
@@ -286,7 +286,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: 'Invalid username/email or password.' };
     };
 
-    // 1. If an email is supplied: prioritize Firebase Authentication first (cloud account)
+    const isDesktop = typeof window !== 'undefined' && Boolean(window.electronAPI?.isDesktop?.());
+
+    // In desktop mode: always try local SQLite first for instantaneous, reliable sign-in
+    if (isDesktop) {
+      const localResult = await tryLocalLogin();
+      if (localResult.success) return localResult;
+      // If local returned an explicit instruction (like Google Auth Required), return immediately
+      if (localResult.error && localResult.error.includes("Google Sign-In")) {
+        return localResult;
+      }
+      if (localResult.error && localResult.error.includes("Incorrect password")) {
+        return localResult;
+      }
+    }
+
+    // If an email is supplied (or local user not found on desktop): try Firebase Authentication
     if (isEmailInput) {
       logAuthDiagnostic('FIREBASE_SIGN_IN_START', { email: cleanIdent });
       try {
@@ -296,18 +311,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (exchange.success) return exchange;
       } catch (fbErr: any) {
         logAuthDiagnostic('FIREBASE_SIGN_IN_FAILED', { code: fbErr?.code, message: fbErr?.message });
-        // If rate-limited or account disabled, don't fall back
         if (fbErr?.code === 'auth/too-many-requests' || fbErr?.code === 'auth/user-disabled') {
           return { success: false, error: formatAuthError(fbErr) };
         }
       }
 
-      // If Firebase failed (e.g. offline, or user only exists in local SQLite), fallback to local SQLite
-      const localResult = await tryLocalLogin();
-      return localResult;
+      if (!isDesktop) {
+        const localResult = await tryLocalLogin();
+        return localResult;
+      }
     }
 
-    // 2. If a username is supplied: try local SQLite first (fast, local-first)
+    // Try local SQLite for web / non-email inputs
     const localResult = await tryLocalLogin();
     if (localResult.success) return localResult;
 
@@ -445,6 +460,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const loginWithGoogle = useCallback(async () => {
+    logAuthDiagnostic('GOOGLE_SIGN_IN_START');
+
+    // 1. Desktop Flow: Native System Browser + Loopback Server (RFC 8252)
+    if (typeof window !== 'undefined' && window.electronAPI?.isDesktop?.()) {
+      try {
+        logAuthDiagnostic('DESKTOP_GOOGLE_AUTH_START');
+        const desktopResult = await window.electronAPI.startGoogleAuth?.();
+        if (!desktopResult || !desktopResult.success) {
+          logAuthDiagnostic('DESKTOP_GOOGLE_AUTH_FAILED', { error: desktopResult?.error });
+          return {
+            success: false,
+            error: desktopResult?.error || 'Google sign-in was cancelled.',
+          };
+        }
+
+        logAuthDiagnostic('DESKTOP_GOOGLE_AUTH_SUCCESS', { email: desktopResult.email });
+        logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_START');
+
+        const res = await authBackendFetch('/auth/firebase', {
+          body: {
+            id_token: desktopResult.idToken,
+            email: desktopResult.email,
+            username: desktopResult.username,
+          },
+        });
+
+        logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_STATUS', { status: res.status });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.access_token) {
+            setAuthToken(data.access_token);
+            setToken(data.access_token);
+            setUser({ user_id: data.user_id, username: data.username, email: data.email });
+            logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'google_oauth_desktop' });
+            return { success: true };
+          }
+        }
+
+        const data = await res.json().catch(() => ({}));
+        logAuthDiagnostic('BACKEND_FIREBASE_EXCHANGE_REJECTED', { detail: data.detail });
+        return { success: false, error: data.detail || 'Backend session creation failed.' };
+      } catch (err: any) {
+        logAuthDiagnostic('DESKTOP_GOOGLE_AUTH_ERROR', { error: err?.message });
+        return { success: false, error: err?.message || 'Google sign-in encountered an error.' };
+      }
+    }
+
+    // 2. Web Browser Flow: standard signInWithPopup
     let firebaseError: any = null;
     logAuthDiagnostic('GOOGLE_POPUP_SIGN_IN_START');
     try {
@@ -471,7 +534,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAuthToken(data.access_token);
           setToken(data.access_token);
           setUser({ user_id: data.user_id, username: data.username, email: data.email });
-          logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'google_oauth' });
+          logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'google_oauth_web' });
           return { success: true };
         }
       } else {
@@ -484,7 +547,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       firebaseError = err;
       logAuthDiagnostic('GOOGLE_POPUP_SIGN_IN_FAILED', {
         code: err?.code,
-        category: 'google_oauth_error',
+        message: err?.message,
       });
     }
 

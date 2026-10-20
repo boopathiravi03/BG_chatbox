@@ -105,11 +105,12 @@ def sync_firebase_user(
         )
 
         if not record:
-            existing = db.query(UserRecord).filter(
-                UserRecord.username == clean_username
-            ).first()
-            if existing:
-                clean_username = f"{clean_username}_{uid[:4]}"
+            candidate_username = clean_username
+            suffix_counter = 1
+            while db.query(UserRecord).filter(UserRecord.username == candidate_username).first():
+                candidate_username = f"{clean_username}_{uid[-4:]}_{suffix_counter}"
+                suffix_counter += 1
+            clean_username = candidate_username
 
             record = UserRecord(
                 id=uid,
@@ -202,6 +203,8 @@ def authenticate_user_detailed(username: str, password: str) -> tuple[Optional[d
             return None, "USER_NOT_FOUND"
         if not record.is_active:
             return None, "ACCOUNT_INACTIVE"
+        if record.hashed_password == "FIREBASE_AUTHENTICATED":
+            return None, "GOOGLE_AUTH_REQUIRED"
         if not verify_password(password, record.hashed_password):
             return None, "INVALID_PASSWORD"
 

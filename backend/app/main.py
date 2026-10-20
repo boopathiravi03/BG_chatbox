@@ -382,6 +382,11 @@ def auth_login(req: LoginRequest, request: Request):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is inactive. Please contact your administrator.",
             )
+        elif reason == "GOOGLE_AUTH_REQUIRED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account was registered with Google Sign-In. Please sign in using the 'Sign in with Google' button.",
+            )
         elif reason == "USER_NOT_FOUND":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

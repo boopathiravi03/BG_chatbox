@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   /**
+   * Starts native Google OAuth via external system browser with loopback redirect.
+   */
+  startGoogleAuth: () => ipcRenderer.invoke("bgai:start-google-auth"),
+
+  /**
    * Opens the local AppData folder containing logs and databases.
    */
   openAppDataFolder: () => {

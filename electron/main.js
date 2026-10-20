@@ -610,6 +610,281 @@ ipcMain.handle("bgai:open-app-data", async () => {
   await shell.openPath(getAppDataDir());
 });
 
+// ── Native Google OAuth Loopback Flow (RFC 8252 with PKCE) ───────────────────
+let activeOAuthServer = null;
+
+ipcMain.handle("bgai:start-google-auth", async () => {
+  if (activeOAuthServer) {
+    try {
+      activeOAuthServer.close();
+    } catch {}
+    activeOAuthServer = null;
+  }
+
+  // Load environment variables for Google Desktop Client ID from all configuration locations
+  const dataDir = getAppDataDir();
+  const appDataEnv = path.join(dataDir, ".env");
+  const packagedEnv = path.join(process.resourcesPath || "", "backend", ".env");
+  const devEnv = path.join(__dirname, "..", "backend", ".env");
+  const rootEnv = path.join(__dirname, "..", ".env");
+  const frontendEnv = path.join(__dirname, "..", "frontend", ".env");
+
+  const envVars = {
+    ...loadEnvFile(rootEnv),
+    ...loadEnvFile(frontendEnv),
+    ...loadEnvFile(devEnv),
+    ...loadEnvFile(packagedEnv),
+    ...loadEnvFile(appDataEnv),
+    ...process.env,
+  };
+
+  const desktopClientId =
+    envVars.GOOGLE_DESKTOP_CLIENT_ID ||
+    process.env.GOOGLE_DESKTOP_CLIENT_ID ||
+    "";
+
+  if (!desktopClientId) {
+    const errorMsg =
+      "Google Sign-In on Desktop requires an OAuth Client ID of type 'Desktop app' (RFC 8252).\n" +
+      "1. Open Google Cloud Console: https://console.cloud.google.com/apis/credentials?project=bg-platform-4b882\n" +
+      "2. Click 'Create Credentials' > 'OAuth client ID'\n" +
+      "3. Select Application type: 'Desktop app' (e.g. 'BG AI Desktop') and click Create\n" +
+      "4. Add the generated Client ID to .env as: GOOGLE_DESKTOP_CLIENT_ID=<your-client-id>";
+    logDesktopEvent(`[OAuth] Error: ${errorMsg}`);
+    return {
+      success: false,
+      error: errorMsg,
+    };
+  }
+
+  return new Promise((resolve) => {
+    let finished = false;
+    let timeoutTimer = null;
+
+    const cleanupAndResolve = (result) => {
+      if (finished) return;
+      finished = true;
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (activeOAuthServer) {
+        try {
+          activeOAuthServer.close();
+        } catch {}
+        activeOAuthServer = null;
+      }
+      resolve(result);
+    };
+
+    const server = http.createServer();
+    activeOAuthServer = server;
+
+    // 2-minute safety timeout
+    timeoutTimer = setTimeout(() => {
+      cleanupAndResolve({
+        success: false,
+        error: "Google sign-in timed out or was cancelled by user.",
+      });
+    }, 120000);
+
+    server.on("error", (err) => {
+      logDesktopEvent(`[OAuth Loopback Server Error] ${err.message}`);
+      cleanupAndResolve({
+        success: false,
+        error: `Could not start local authentication listener: ${err.message}`,
+      });
+    });
+
+    server.listen(0, "127.0.0.1", async () => {
+      const port = server.address().port;
+      const callbackUrl = `http://127.0.0.1:${port}/callback`;
+
+      // 1. Generate PKCE code verifier and code challenge (RFC 7636)
+      const codeVerifier = crypto.randomBytes(32).toString("base64url");
+      const codeChallenge = crypto
+        .createHash("sha256")
+        .update(codeVerifier)
+        .digest("base64url");
+
+      // 2. Generate cryptographically unpredictable state parameter (RFC 6749 Section 10.12)
+      const oauthState = crypto.randomBytes(16).toString("hex");
+
+      logDesktopEvent(`[OAuth] Started loopback listener on ${callbackUrl} (PKCE enabled)`);
+
+      // 3. Construct Google OAuth 2.0 authorization URL for Desktop apps
+      const authParams = new URLSearchParams({
+        client_id: desktopClientId,
+        redirect_uri: callbackUrl,
+        response_type: "code",
+        scope: "openid email profile",
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+        state: oauthState,
+        access_type: "offline",
+        prompt: "select_account",
+      });
+
+      const authUri = `https://accounts.google.com/o/oauth2/v2/auth?${authParams.toString()}`;
+
+      server.on("request", async (req, res) => {
+        const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+
+        if (req.method === "GET" && reqUrl.pathname === "/callback") {
+          const code = reqUrl.searchParams.get("code");
+          const state = reqUrl.searchParams.get("state");
+          const error = reqUrl.searchParams.get("error");
+          const errorDesc = reqUrl.searchParams.get("error_description");
+
+          // Validate state parameter to mitigate CSRF attacks
+          if (!state || state !== oauthState) {
+            logDesktopEvent("[OAuth] State parameter mismatch or missing");
+            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(`<!DOCTYPE html><html><body style="background:#09090b;color:#ef4444;font-family:sans-serif;text-align:center;padding:50px;">
+              <h2>Authentication Failed</h2><p>Security validation failed: invalid OAuth state. Please return to BG AI and try again.</p>
+            </body></html>`);
+            return cleanupAndResolve({
+              success: false,
+              error: "OAuth state validation failed (possible CSRF attempt).",
+            });
+          }
+
+          if (error) {
+            logDesktopEvent(`[OAuth] Google returned error: ${error} - ${errorDesc}`);
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(`<!DOCTYPE html><html><body style="background:#09090b;color:#ef4444;font-family:sans-serif;text-align:center;padding:50px;">
+              <h2>Sign-In Cancelled</h2><p>${errorDesc || error}</p><p>You can close this tab and return to BG AI.</p>
+            </body></html>`);
+            return cleanupAndResolve({
+              success: false,
+              error: errorDesc || error || "Google sign-in was cancelled.",
+            });
+          }
+
+          if (!code) {
+            logDesktopEvent("[OAuth] No authorization code received in callback");
+            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(`<!DOCTYPE html><html><body style="background:#09090b;color:#ef4444;font-family:sans-serif;text-align:center;padding:50px;">
+              <h2>Missing Authorization Code</h2><p>Please return to BG AI and try again.</p>
+            </body></html>`);
+            return cleanupAndResolve({
+              success: false,
+              error: "No authorization code returned from Google.",
+            });
+          }
+
+          // 4. Exchange authorization code + code_verifier for tokens with PKCE (RFC 7636)
+          try {
+            logDesktopEvent("[OAuth] Exchanging authorization code with Google token endpoint");
+            const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                client_id: desktopClientId,
+                code: code,
+                code_verifier: codeVerifier,
+                grant_type: "authorization_code",
+                redirect_uri: callbackUrl,
+              }),
+            });
+
+            if (!tokenRes.ok) {
+              const tokenErrText = await tokenRes.text();
+              logDesktopEvent(`[OAuth] Token exchange failed (${tokenRes.status}): ${tokenErrText}`);
+              res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+              res.end(`<!DOCTYPE html><html><body style="background:#09090b;color:#ef4444;font-family:sans-serif;text-align:center;padding:50px;">
+                <h2>Authentication Error</h2><p>Failed to exchange authorization token with Google.</p>
+              </body></html>`);
+              return cleanupAndResolve({
+                success: false,
+                error: "Token exchange with Google failed.",
+              });
+            }
+
+            const tokenData = await tokenRes.json();
+            const idToken = tokenData.id_token;
+
+            if (!idToken) {
+              logDesktopEvent("[OAuth] No id_token returned from token endpoint");
+              res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+              res.end(`<!DOCTYPE html><html><body style="background:#09090b;color:#ef4444;font-family:sans-serif;text-align:center;padding:50px;">
+                <h2>Authentication Error</h2><p>No ID token received from Google.</p>
+              </body></html>`);
+              return cleanupAndResolve({
+                success: false,
+                error: "Google did not provide an ID token.",
+              });
+            }
+
+            // Decode unverified payload to extract display info for UX (backend cryptographically verifies token)
+            let email = "";
+            let displayName = "";
+            let uid = "";
+            try {
+              const parts = idToken.split(".");
+              if (parts.length >= 2) {
+                const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+                email = payload.email || "";
+                displayName = payload.name || (email ? email.split("@")[0] : "google_user");
+                uid = payload.sub || "";
+              }
+            } catch {}
+
+            // Send successful response to browser
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+            res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>BG AI — Authentication Successful</title>
+  <style>
+    body { background: #09090b; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { text-align: center; padding: 40px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); background: #121215; max-width: 420px; width: 90%; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .icon { font-size: 40px; margin-bottom: 12px; color: #22c55e; }
+    h2 { margin: 0 0 10px; font-size: 20px; font-weight: 700; color: #22c55e; }
+    p { color: #a1a1aa; font-size: 14px; margin: 0 0 16px; }
+    .btn { display: inline-block; background: #6366f1; color: #fff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✓</div>
+    <h2>Sign-In Successful!</h2>
+    <p>You have successfully authenticated with BG AI. You can safely close this browser window and return to the application.</p>
+    <a class="btn" href="javascript:window.close()">Close Window</a>
+  </div>
+  <script>setTimeout(function(){ window.close(); }, 2000);</script>
+</body>
+</html>`);
+
+            logDesktopEvent(`[OAuth] Successfully authenticated Google user via PKCE: ${email}`);
+            cleanupAndResolve({
+              success: true,
+              idToken: idToken,
+              email: email,
+              username: displayName,
+              uid: uid,
+            });
+          } catch (tokenErr) {
+            logDesktopEvent(`[OAuth] Token exchange exception: ${tokenErr.message}`);
+            cleanupAndResolve({
+              success: false,
+              error: `Token exchange error: ${tokenErr.message}`,
+            });
+          }
+          return;
+        }
+
+        res.writeHead(404);
+        res.end("Not Found");
+      });
+
+      logDesktopEvent("[OAuth] Opening default system browser for Google sign-in with PKCE");
+      await shell.openExternal(authUri);
+    });
+  });
+});
+
 ipcMain.on("bgai:get-intro-video-path", (event) => {
   // If local frontend server is running, use HTTP URL to match window origin (avoiding file:// CORS restrictions)
   if (frontendUrl) {
