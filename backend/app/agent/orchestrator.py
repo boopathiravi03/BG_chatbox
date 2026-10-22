@@ -1832,11 +1832,14 @@ def _handle_update_operation(
 
 
 
+def _detect_operation(message: str) -> str:
     """
     Detect database modification operation from natural language.
     """
-
     message = message.lower().strip()
+
+    if re.search(r"\b(create table|add table|new table|create index|create view)\b", message):
+        return "create"
 
     if re.search(r"\b(update|modify|change|edit)\b", message):
         return "update"
@@ -1844,17 +1847,23 @@ def _handle_update_operation(
     if re.search(r"\b(delete|remove|erase)\b", message):
         return "delete"
 
-    if re.search(r"\b(drop|remove table|delete table)\b", message):
+    if re.search(r"\b(drop|remove table|delete table|drop index|drop view)\b", message):
         return "drop"
 
     if re.search(r"\b(truncate|empty table|clear table)\b", message):
         return "truncate"
 
     if re.search(
-        r"\b(alter|add column|remove column|rename column|change column)\b",
+        r"\b(alter|add column|remove column|drop column|rename column|change column|rename table)\b",
         message,
     ):
         return "alter"
+
+    if re.search(r"\b(vacuum)\b", message):
+        return "vacuum"
+
+    if re.search(r"\b(analyze)\b", message):
+        return "analyze"
 
     return ""
 
@@ -1865,9 +1874,13 @@ def _build_modification_sql(
     schema: dict,
 ) -> str:
 
-    table = _extract_table(user_message, schema)
+    if operation == "create":
+        m_tbl = re.search(r"\b(?:create\s+table|new\s+table|table)\s+([`\"\[\w\.]+)", user_message, re.I)
+        table = m_tbl.group(1).strip("`\"[]") if m_tbl else "new_table"
+    else:
+        table = _extract_table(user_message, schema)
 
-    if not table:
+    if not table and operation != "create":
         return ""
 
     prompt = f"""
@@ -1884,14 +1897,12 @@ OPERATION:
 
 RULES:
 
-1. Use ONLY tables that exist in the schema.
-2. Use ONLY columns that exist in the schema.
-3. Never invent tables or columns.
-4. Never modify another table.
-5. Return exactly ONE SQL statement.
-6. Return RAW SQL ONLY.
-7. Do not use markdown.
-8. Do not explain anything.
+1. For existing tables, use ONLY tables and columns present in the schema.
+2. For CREATE TABLE: generate a well-formed CREATE TABLE statement with appropriate columns and types.
+3. Return exactly ONE SQL statement.
+4. Return RAW SQL ONLY.
+5. Do not use markdown code fences.
+6. Do not explain anything.
 
 SAFETY:
 
@@ -1903,6 +1914,9 @@ For DELETE:
 - WHERE is mandatory.
 - Never generate DELETE without WHERE.
 
+For CREATE:
+- Generate CREATE TABLE for the requested new table name with appropriate column definitions.
+
 For DROP:
 - Generate DROP TABLE only for the identified existing table.
 
@@ -1911,7 +1925,7 @@ For TRUNCATE:
 
 For ALTER:
 - Only perform the specific alteration requested by the user.
-- Use only existing table/column names.
+- Use existing table/column names.
 
 SQL:
 """
@@ -1950,9 +1964,13 @@ def _handle_database_modification(
     # Detect table
     # ---------------------------------------------------------
 
-    table = _extract_table(user_message, schema)
+    if operation == "create":
+        m_tbl = re.search(r"\b(?:create\s+table|new\s+table|table)\s+([`\"\[\w\.]+)", user_message, re.I)
+        table = m_tbl.group(1).strip("`\"[]") if m_tbl else "new_table"
+    else:
+        table = _extract_table(user_message, schema)
 
-    if not table:
+    if not table and operation != "create":
 
         return {
             "generated_sql": "",
@@ -2107,43 +2125,45 @@ def _handle_database_modification(
                     pass
 
     # ---------------------------------------------------------
-    # Confirmation message
+    # Confirmation message & Staging
     # ---------------------------------------------------------
 
-    dangerous = operation in {
-        "drop",
-        "alter",
-        "truncate",
-    }
+    from app.crud.confirmation import store_pending
 
-    if dangerous:
+    is_high_risk = validation.get("is_high_risk", False)
+    impact_summary = validation.get("impact_summary") or f"This operation will modify `{table}`."
+    target_objs = validation.get("target_objects") or [table]
+    rollback_supported = validation.get("rollback_supported", True)
+    rollback_limitations = validation.get("rollback_limitations", "")
 
-        warning = {
-            "drop": (
-                f"This will permanently DROP the table "
-                f"`{table}` and its data."
-            ),
-            "truncate": (
-                f"This will permanently remove ALL rows "
-                f"from `{table}`."
-            ),
-            "alter": (
-                f"This will change the structure of "
-                f"`{table}`."
-            ),
-        }.get(operation, "")
+    pending_data = store_pending(
+        session_id=session_id,
+        operation=operation,
+        table=table,
+        sql=sql,
+        preview_rows=preview_rows,
+        extra={
+            "is_high_risk": is_high_risk,
+            "impact_summary": impact_summary,
+            "target_objects": target_objs,
+            "where_clause": where_clause if "where_clause" in locals() else None,
+            "estimated_affected_rows": len(preview_rows) if preview_rows else validation.get("estimated_affected_rows"),
+            "rollback_supported": rollback_supported,
+            "rollback_limitations": rollback_limitations,
+        },
+    )
 
-    else:
+    fingerprint = pending_data.get("fingerprint")
 
-        warning = (
-            f"This operation will modify `{table}`."
-        )
-
-    conversation_state[session_id] = {
-        "pending_operation": operation,
-        "pending_sql": sql,
-        "pending_table": table,
-    }
+    explanation_lines = [
+        f"### Confirm {operation.upper()}\n\n",
+        f"{impact_summary}\n\n",
+        f"```sql\n{sql}\n```\n\n",
+        f"**Target Object:** `{table}`\n\n",
+    ]
+    if rollback_limitations:
+        explanation_lines.append(f"**Rollback Note:** {rollback_limitations}\n\n")
+    explanation_lines.append("Please review the command details and confirm execution.")
 
     return {
         "generated_sql": sql,
@@ -2154,17 +2174,21 @@ def _handle_database_modification(
             "rows_returned": len(preview_rows),
             "pending_confirmation": True,
             "operation": operation,
+            "fingerprint": fingerprint,
+            "is_high_risk": is_high_risk,
+            "impact_summary": impact_summary,
+            "rollback_supported": rollback_supported,
+            "rollback_limitations": rollback_limitations,
         },
         "chart": None,
         "diagram": None,
         "requires_confirmation": True,
-        "dangerous": dangerous,
-        "explanation": (
-            f"### Confirm {operation.upper()}\n\n"
-            f"{warning}\n\n"
-            f"```sql\n{sql}\n```\n\n"
-            "Please confirm before I apply this change."
-        ),
+        "is_high_risk": is_high_risk,
+        "fingerprint": fingerprint,
+        "operation": operation,
+        "table": table,
+        "dangerous": is_high_risk,
+        "explanation": "".join(explanation_lines),
         "followups": [],
     }
 
@@ -4422,6 +4446,36 @@ SQL RULES:
             }
 
         if validation.get("requires_confirmation"):
+            from app.crud.confirmation import store_pending
+            table_target = validation.get("primary_table") or "database"
+            is_high_risk = validation.get("is_high_risk", False)
+            impact_summary = validation.get("impact_summary") or "Database change requires confirmation."
+            rollback_note = validation.get("rollback_limitations") or ""
+
+            pending_data = store_pending(
+                session_id=session_id,
+                operation=validation.get("operation", "query"),
+                table=table_target,
+                sql=sql,
+                extra={
+                    "is_high_risk": is_high_risk,
+                    "impact_summary": impact_summary,
+                    "target_objects": validation.get("target_objects", [table_target]),
+                    "rollback_supported": validation.get("rollback_supported", True),
+                    "rollback_limitations": rollback_note,
+                },
+            )
+
+            fingerprint = pending_data.get("fingerprint")
+            explanation_parts = [
+                f"### Confirm {validation['operation'].upper()}\n\n",
+                f"{impact_summary}\n\n",
+                f"```sql\n{sql}\n```\n\n",
+            ]
+            if rollback_note:
+                explanation_parts.append(f"**Rollback Note:** {rollback_note}\n\n")
+            explanation_parts.append("Please review the SQL and confirm before this change is applied to your database.")
+
             return {
                 "generated_sql": sql,
                 "result": {
@@ -4430,15 +4484,19 @@ SQL RULES:
                     "rows": [],
                     "pending_confirmation": True,
                     "operation": validation["operation"],
+                    "fingerprint": fingerprint,
+                    "is_high_risk": is_high_risk,
+                    "impact_summary": impact_summary,
+                    "rollback_supported": validation.get("rollback_supported", True),
+                    "rollback_limitations": rollback_note,
                 },
                 "chart": None,
                 "diagram": None,
                 "requires_confirmation": True,
-                "explanation": (
-                    "Database change requires confirmation.\n\n"
-                    f"Operation: `{validation['operation']}`\n\n"
-                    "Please review the SQL before continuing."
-                ),
+                "is_high_risk": is_high_risk,
+                "fingerprint": fingerprint,
+                "operation": validation["operation"],
+                "explanation": "".join(explanation_parts),
                 "followups": _get_followups(user_message),
             }
 

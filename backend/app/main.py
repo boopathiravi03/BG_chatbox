@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 import logging
 from pathlib import Path
 
@@ -287,6 +288,8 @@ class OptimizationRequest(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     connection_id: str | None = None
+    session_id: str | None = None
+    params: dict | None = None
 
 
 class AgentRunRequest(BaseModel):
@@ -575,6 +578,7 @@ def confirm_query(request: ConfirmQueryRequest, user: AuthenticatedUser = Depend
             f"{user.user_id}:{request.session_id}",
             fingerprint=request.fingerprint,
             high_risk_confirmed=request.high_risk_confirmed,
+            user_id=user.user_id,
         )
     except Exception as e:
         return {"success": False, "confirmed": False, "error": str(e)}
@@ -891,8 +895,16 @@ def database_connection_info(
 def run_query(request: Request, req: QueryRequest, user: AuthenticatedUser = Depends(get_current_user)):
     target_conn_id = req.connection_id or request.headers.get("X-Connection-ID")
     _activate(user, target_conn_id, request=request)
+    session_id = req.session_id or f"direct_{uuid.uuid4().hex[:10]}"
+    full_session_id = f"{user.user_id}:{session_id}"
     try:
-        return execute_query(req.query, connection_id=target_conn_id)
+        return execute_query(
+            sql=req.query,
+            connection_id=target_conn_id,
+            user_id=user.user_id,
+            session_id=full_session_id,
+            params=req.params,
+        )
     except Exception as e:
         return {"success": False, "columns": [], "rows": [], "error": str(e), "rows_returned": 0}
 
@@ -1237,8 +1249,16 @@ def execute_connection_query(
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     _activate(user, connection_id)
+    session_id = req.session_id or f"direct_{uuid.uuid4().hex[:10]}"
+    full_session_id = f"{user.user_id}:{session_id}"
     try:
-        return execute_query(req.query, connection_id=connection_id)
+        return execute_query(
+            sql=req.query,
+            connection_id=connection_id,
+            user_id=user.user_id,
+            session_id=full_session_id,
+            params=req.params,
+        )
     except Exception as e:
         return {"success": False, "columns": [], "rows": [], "error": str(e)}
 

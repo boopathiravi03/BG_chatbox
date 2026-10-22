@@ -52,8 +52,10 @@ class PolicyEngine:
         if _DDL_PATTERN.search(op_text):
             pol = get_policy("sys_sql_ddl_safety")
             if pol and pol.enabled:
-                applied_policies.append(pol.policy_id)
-                return PolicyDecision.DENY, applied_policies, "Blocked by policy 'sys_sql_ddl_safety': Destructive schema DDL operations prohibited."
+                has_confirmation = bool(ctx.get("confirmed") or ctx.get("user_confirmed") or ctx.get("confirmation_token"))
+                if not has_confirmation:
+                    applied_policies.append(pol.policy_id)
+                    return PolicyDecision.DENY, applied_policies, "Blocked by policy 'sys_sql_ddl_safety': Destructive schema DDL operations prohibited without explicit human confirmation."
 
         # 2. Prompt Injection Guard Policy
         if _INJECTION_PATTERN.search(op_text):
