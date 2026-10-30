@@ -17,7 +17,6 @@ import WorkspaceSidebar, {
   type WorkspaceTab,
 } from "../components/workspace/WorkspaceSidebar";
 import WorkspaceHeader from "../components/workspace/WorkspaceHeader";
-import AICommandBar from "../components/workspace/AICommandBar";
 import OverviewView from "../components/workspace/views/OverviewView";
 import DataExplorerView from "../components/workspace/views/DataExplorerView";
 import AnalyticsView from "../components/workspace/views/AnalyticsView";
@@ -876,16 +875,6 @@ export default function Home() {
             />
           )}
         </main>
-
-        {/* Global AI Command Bar (Rendered on non-chat, non-analytics views where no central search bar exists) */}
-        {activeTab !== "chat" && activeTab !== "analytics" && (
-          <AICommandBar
-            onSend={handleSend}
-            connections={connections}
-            activeConnectionId={activeConnectionId}
-            loading={loading}
-          />
-        )}
       </div>
 
       {/* Global Modals */}
