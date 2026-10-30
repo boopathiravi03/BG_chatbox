@@ -3,6 +3,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  getRedirectResult,
   browserPopupRedirectResolver,
   signOut,
   updateProfile,
@@ -202,7 +203,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => setIsLoading(false));
     } else {
-      setIsLoading(false);
+      // Check if user just completed a redirect-based OAuth login flow
+      const isDesktop = typeof window !== 'undefined' && Boolean(window.electronAPI?.isDesktop?.());
+      if (!isDesktop) {
+        getRedirectResult(auth, browserPopupRedirectResolver)
+          .then(async (cred) => {
+            if (cred?.user) {
+              logAuthDiagnostic('GOOGLE_REDIRECT_SIGN_IN_SUCCESS', { email: cred.user.email });
+              const idToken = await cred.user.getIdToken();
+              const res = await authBackendFetch('/auth/firebase', {
+                body: {
+                  id_token: idToken,
+                  email: cred.user.email,
+                  username: cred.user.displayName || cred.user.email?.split('@')[0] || 'google_user',
+                },
+              });
+              if (res.ok) {
+                const data = await res.json();
+                if (data.access_token) {
+                  setAuthToken(data.access_token);
+                  setToken(data.access_token);
+                  setUser({ user_id: data.user_id, username: data.username, email: data.email });
+                  logAuthDiagnostic('SIGN_IN_COMPLETE', { method: 'google_oauth_redirect' });
+                }
+              }
+            }
+          })
+          .catch((err) => {
+            logAuthDiagnostic('GOOGLE_REDIRECT_ERROR', { code: err?.code, message: err?.message });
+          })
+          .finally(() => setIsLoading(false));
+      } else {
+        setIsLoading(false);
+      }
     }
   }, [logout]);
 

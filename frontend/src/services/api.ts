@@ -63,14 +63,44 @@ declare global {
 }
 
 export function getApiBase(): string {
+  // 1. Electron Desktop mode: Always prioritize the local Electron sidecar backend URL
   if (typeof window !== "undefined" && window.electronAPI?.getBackendUrl) {
     try {
       const desktopUrl = window.electronAPI.getBackendUrl();
       if (desktopUrl) return desktopUrl.replace(/\/+$/, "");
     } catch {
-      // fallback to env
+      // fallback to browser / env resolution
     }
   }
+
+  // 2. Production Domain detection: When accessed on thebg.co.in or subdomains,
+  // ensure we target the production Render cloud backend
+  if (typeof window !== "undefined" && window.location) {
+    const host = window.location.hostname;
+    if (
+      host === "thebg.co.in" ||
+      host.endsWith(".thebg.co.in") ||
+      host === "thebg.con.in" ||
+      host.endsWith(".thebg.con.in")
+    ) {
+      const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
+      if (envUrl && !envUrl.includes("127.0.0.1") && !envUrl.includes("localhost")) {
+        return envUrl.replace(/\/+$/, "");
+      }
+      return "https://bg-chatbox.onrender.com";
+    }
+  }
+
+  // 3. Vite Production Build: Default to deployed backend unless custom URL is explicitly non-local
+  if (import.meta.env.PROD) {
+    const prodUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
+    if (prodUrl && !prodUrl.includes("127.0.0.1") && !prodUrl.includes("localhost")) {
+      return prodUrl.replace(/\/+$/, "");
+    }
+    return "https://bg-chatbox.onrender.com";
+  }
+
+  // 4. Local dev fallback
   return (
     import.meta.env.VITE_API_URL ||
     import.meta.env.VITE_API_BASE_URL ||
