@@ -877,8 +877,8 @@ export default function Home() {
           )}
         </main>
 
-        {/* Global AI Command Bar (Rendered on non-chat views) */}
-        {activeTab !== "chat" && (
+        {/* Global AI Command Bar (Rendered on non-chat, non-analytics views where no central search bar exists) */}
+        {activeTab !== "chat" && activeTab !== "analytics" && (
           <AICommandBar
             onSend={handleSend}
             connections={connections}
