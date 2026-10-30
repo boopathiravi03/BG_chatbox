@@ -24,3 +24,4 @@ build/bgai_backend/
 backend/scratch/read_live_db.py
 backend/scratch/test_auth_desktop.py
 backend/scratch/test_hashes.py
+.vscode/
