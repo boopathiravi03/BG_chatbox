@@ -61,10 +61,6 @@ export default function DatabaseConnectionsManager({
   const [testingId, setTestingId] = useState<string | null>(null);
   const [reconnectingId, setReconnectingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchConnections();
-  }, []);
-
   const fetchConnections = async () => {
     try {
       const data = await listDatabaseConnections();
@@ -78,6 +74,10 @@ export default function DatabaseConnectionsManager({
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    fetchConnections();
+  }, []);
 
   const handleRefresh = () => {
     setRefreshing(true);

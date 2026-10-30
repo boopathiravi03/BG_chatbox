@@ -22,6 +22,7 @@ from sqlalchemy import (
     Column, String, Integer, Boolean, Text, DateTime, Index,
     create_engine, desc
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 from app.intelligence.learning.models import (
@@ -57,10 +58,15 @@ def _get_engine(custom_engine=None):
                     "BGAI_LEARNING_DB_URL",
                     f"sqlite:///{_DEFAULT_DB_PATH}"
                 )
+                engine_kwargs = {
+                    "connect_args": {"check_same_thread": False} if "sqlite" in db_url else {},
+                    "echo": False,
+                }
+                if "sqlite" in db_url:
+                    engine_kwargs["poolclass"] = NullPool
                 _engine = create_engine(
                     db_url,
-                    connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
-                    echo=False,
+                    **engine_kwargs,
                 )
                 Base.metadata.create_all(_engine)
                 _SessionFactory = sessionmaker(bind=_engine, autoflush=False, autocommit=False)

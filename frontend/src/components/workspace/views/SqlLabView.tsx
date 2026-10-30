@@ -112,7 +112,9 @@ export default function SqlLabView({
     setHistory(updated);
     try {
       localStorage.setItem("bgai_sql_history", JSON.stringify(updated));
-    } catch {}
+    } catch {
+      // Ignore localStorage errors
+    }
   };
 
   const handleRun = async () => {

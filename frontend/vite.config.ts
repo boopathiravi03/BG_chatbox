@@ -18,12 +18,14 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes("node_modules")) {
-            if (
-              id.includes("mermaid") ||
-              id.includes("cytoscape") ||
-              id.includes("katex")
-            ) {
+            if (id.includes("mermaid")) {
               return "vendor-mermaid";
+            }
+            if (id.includes("cytoscape")) {
+              return "vendor-cytoscape";
+            }
+            if (id.includes("katex")) {
+              return "vendor-katex";
             }
             if (id.includes("@xyflow")) {
               return "vendor-xyflow";

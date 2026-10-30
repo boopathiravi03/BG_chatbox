@@ -6,12 +6,27 @@ from app.database.database_manager import get_engine, get_current_db_type
 
 
 def quote_identifier(ident: str, db_type: str | None = None) -> str:
-    """Safely quote table/column identifiers across SQLite, MySQL, and PostgreSQL."""
-    if db_type == "mysql":
-        escaped = ident.replace("`", "``")
+    """
+    Safely quote table/column identifiers across SQLite, MySQL, PostgreSQL, MSSQL, Oracle, DuckDB.
+    Enforces null-byte rejection and dialect-specific delimiter escaping without breaking valid identifiers.
+    """
+    if not ident:
+        return '""'
+    ident_str = str(ident)
+    if "\x00" in ident_str:
+        raise ValueError("Identifier contains prohibited null byte.")
+
+    dialect = (db_type or "sqlite").lower()
+    if dialect in ("mysql", "mariadb"):
+        escaped = ident_str.replace("`", "``")
         return f"`{escaped}`"
-    escaped = ident.replace('"', '""')
-    return f'"{escaped}"'
+    elif dialect in ("mssql", "sqlserver"):
+        escaped = ident_str.replace("]", "]]")
+        return f"[{escaped}]"
+    else:
+        # Standard ANSI SQL (PostgreSQL, SQLite, DuckDB, Oracle, Snowflake)
+        escaped = ident_str.replace('"', '""')
+        return f'"{escaped}"'
 
 
 def analyze_schema(engine, db_type: str) -> dict[str, Any]:

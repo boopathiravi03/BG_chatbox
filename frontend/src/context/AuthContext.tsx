@@ -3,6 +3,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  browserPopupRedirectResolver,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -133,6 +134,8 @@ function formatAuthError(err: any): string {
     }
     case 'auth/internal-error':
       return 'Authentication could not be completed. Please verify your credentials and try again.';
+    case 'auth/argument-error':
+      return 'Authentication configuration or parameters invalid. Please try again or refresh the page.';
     default:
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
         return 'Network connection error. Please verify your internet connection and local backend status.';
@@ -516,10 +519,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // 2. Web Browser Flow: standard signInWithPopup
-    let firebaseError: any = null;
     logAuthDiagnostic('GOOGLE_POPUP_SIGN_IN_START');
     try {
-      const cred = await signInWithPopup(auth, googleProvider);
+      const cred = await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
       logAuthDiagnostic('GOOGLE_POPUP_SIGN_IN_SUCCESS', { email: cred.user.email });
 
       logAuthDiagnostic('FIREBASE_TOKEN_RETRIEVAL_START');
@@ -552,14 +554,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return { success: false, error: 'Google sign-in failed.' };
     } catch (err: any) {
-      firebaseError = err;
       logAuthDiagnostic('GOOGLE_POPUP_SIGN_IN_FAILED', {
         code: err?.code,
         message: err?.message,
       });
+      return { success: false, error: formatAuthError(err) };
     }
-
-    return { success: false, error: formatAuthError(firebaseError) };
   }, []);
 
   return (

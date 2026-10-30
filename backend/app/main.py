@@ -5134,3 +5134,206 @@ def update_guardian_incident_status(
 
 
 
+
+
+# ── Autonomous Monitoring & Business Investigation Routes (Sprint 2 - 4) ─────
+
+class ScheduleConfigRequest(BaseModel):
+    connection_id: Optional[str] = "default"
+    interval_minutes: Optional[int] = 60
+    is_enabled: Optional[bool] = True
+
+
+class ManualScanRequest(BaseModel):
+    connection_id: Optional[str] = "default"
+
+
+class StartInvestigationRequest(BaseModel):
+    question: Optional[str] = None
+    connection_id: Optional[str] = "default"
+    signal_id: Optional[str] = None
+    target_metric: Optional[str] = None
+    target_table: Optional[str] = None
+
+
+@app.get("/health/ready")
+@app.get("/api/health/ready")
+def health_ready():
+    """Readiness probe for staging orchestrators and container health monitors."""
+    current_env = (os.getenv("BGAI_ENV") or os.getenv("APP_ENV") or "development").lower()
+    return {
+        "status": "ready",
+        "app": "BG AI",
+        "environment": current_env,
+        "monitoring_active": True,
+    }
+
+
+@app.post("/monitoring/schedule")
+def set_monitoring_schedule_endpoint(
+    req: ScheduleConfigRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Sets automated quality monitoring schedule for user connection."""
+    if req.interval_minutes is not None and (req.interval_minutes < 1 or req.interval_minutes > 43200):
+        raise HTTPException(
+            status_code=400,
+            detail="Schedule interval must be between 1 and 43200 minutes (30 days).",
+        )
+    from app.intelligence.monitoring.baseline_store import save_schedule_config
+    saved = save_schedule_config(
+        user_id=user.user_id,
+        connection_id=req.connection_id or "default",
+        interval_minutes=req.interval_minutes if req.interval_minutes is not None else 60,
+        is_enabled=req.is_enabled if req.is_enabled is not None else True,
+    )
+    return {"status": "success", "schedule": saved}
+
+
+@app.get("/monitoring/schedule")
+def get_monitoring_schedule_endpoint(
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Fetches automated quality monitoring schedule configuration."""
+    from app.intelligence.monitoring.baseline_store import get_schedule_config
+    cfg = get_schedule_config(
+        user_id=user.user_id,
+        connection_id=connection_id or "default",
+    )
+    if not cfg:
+        cfg = {
+            "user_id": user.user_id,
+            "connection_id": connection_id or "default",
+            "interval_minutes": 60,
+            "is_enabled": False,
+            "status": "idle",
+        }
+    return {"status": "success", "schedule": cfg}
+
+
+@app.post("/monitoring/scan")
+def trigger_manual_scan_endpoint(
+    req: ManualScanRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Triggers an immediate read-only data quality and anomaly scan."""
+    from app.intelligence.monitoring.quality_monitor import run_database_health_monitoring
+    res = run_database_health_monitoring(
+        user_id=user.user_id,
+        connection_id=req.connection_id or "default",
+        manual=True,
+    )
+    return {"status": "success", "scan": res}
+
+
+@app.get("/monitoring/history")
+def get_monitoring_history_endpoint(
+    connection_id: Optional[str] = None,
+    limit: int = 20,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Fetches historical monitoring scan execution records."""
+    from app.intelligence.monitoring.baseline_store import get_scan_history
+    history = get_scan_history(
+        user_id=user.user_id,
+        connection_id=connection_id,
+        limit=limit,
+    )
+    return {"status": "success", "history": history}
+
+
+@app.get("/monitoring/anomalies")
+def get_monitoring_anomalies_endpoint(
+    connection_id: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Fetches proactive anomaly alerts for connection."""
+    from app.intelligence.proactive.alert_store import get_alerts
+    alerts = get_alerts(
+        user_id=user.user_id,
+    )
+    return {"status": "success", "anomalies": [a.to_dict() for a in alerts]}
+
+
+@app.post("/proactive/alerts/{alert_id}/dismiss")
+def dismiss_proactive_alert_endpoint(
+    alert_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Dismisses a proactive business alert."""
+    from app.intelligence.proactive.alert_store import update_alert_status
+    from app.intelligence.proactive.models import AlertStatus
+    updated = update_alert_status(
+        alert_id=alert_id,
+        new_status=AlertStatus.DISMISSED,
+        user_id=user.user_id,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Alert not found or unauthorized.")
+    return {"status": "success", "alert": updated.to_dict()}
+
+
+@app.post("/investigation/start")
+def start_investigation_endpoint(
+    req: StartInvestigationRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Starts an evidence-based business investigation."""
+    from app.intelligence.investigation.business_investigator import run_business_investigation
+    res = run_business_investigation(
+        user_id=user.user_id,
+        connection_id=req.connection_id or "default",
+        question=req.question,
+        signal_id=req.signal_id,
+        target_metric=req.target_metric,
+        target_table=req.target_table,
+    )
+    res["status"] = "success"
+    return res
+
+
+@app.get("/investigation/reports")
+def list_investigation_reports_endpoint(
+    connection_id: Optional[str] = None,
+    limit: int = 20,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Lists saved business investigation reports."""
+    from app.intelligence.investigation.investigation_store import list_investigation_reports
+    reps = list_investigation_reports(
+        user_id=user.user_id,
+        connection_id=connection_id,
+        limit=limit,
+    )
+    return {"status": "success", "reports": reps}
+
+
+@app.get("/investigation/reports/{report_id}")
+def get_investigation_report_endpoint(
+    report_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Fetches a specific business investigation report."""
+    from app.intelligence.investigation.investigation_store import get_investigation_report
+    rep = get_investigation_report(
+        report_id=report_id,
+        user_id=user.user_id,
+    )
+    if not rep:
+        raise HTTPException(status_code=404, detail="Investigation report not found.")
+    return {"status": "success", "report": rep}
+
+
+@app.delete("/investigation/reports/{report_id}")
+def delete_investigation_report_endpoint(
+    report_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Deletes a business investigation report."""
+    from app.intelligence.investigation.investigation_store import delete_investigation_report
+    ok = delete_investigation_report(
+        report_id=report_id,
+        user_id=user.user_id,
+    )
+    return {"status": "success", "deleted": ok}

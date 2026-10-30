@@ -4,6 +4,7 @@ import {
   initializeAuth,
   browserLocalPersistence,
   inMemoryPersistence,
+  browserPopupRedirectResolver,
   GoogleAuthProvider,
 } from "firebase/auth";
 
@@ -29,6 +30,7 @@ export const auth = (() => {
   try {
     return initializeAuth(app, {
       persistence: [browserLocalPersistence, inMemoryPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
     });
   } catch {
     return getAuth(app);

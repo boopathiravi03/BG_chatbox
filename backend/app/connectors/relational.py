@@ -747,17 +747,22 @@ class SQLiteConnector(RelationalConnector):
             # Handle in-memory or file path
             is_mem = self.database_path in (":memory:", "memory")
             if is_mem:
-                url_str = "sqlite:///:memory:"
+                from sqlalchemy.pool import StaticPool
+                self._engine = create_engine(
+                    "sqlite:///:memory:",
+                    connect_args={"check_same_thread": False},
+                    poolclass=StaticPool,
+                )
             else:
                 p = Path(self.database_path).resolve()
                 p.parent.mkdir(parents=True, exist_ok=True)
-                url_str = f"sqlite:///{p}"
-
-            self._engine = create_engine(
-                url_str,
-                connect_args={"check_same_thread": False},
-                pool_pre_ping=True,
-            )
+                from sqlalchemy.pool import NullPool
+                self._engine = create_engine(
+                    f"sqlite:///{p}",
+                    connect_args={"check_same_thread": False},
+                    poolclass=NullPool,
+                    pool_pre_ping=True,
+                )
 
             with self._engine.connect() as conn:
                 conn.execute(text("SELECT 1"))

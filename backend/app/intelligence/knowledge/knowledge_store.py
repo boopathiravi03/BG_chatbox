@@ -19,6 +19,7 @@ from sqlalchemy import (
     Column, String, Integer, Float, Text, Boolean, Index,
     create_engine, desc
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 from app.intelligence.knowledge.models import (
@@ -173,6 +174,7 @@ def _get_engine(db_path: Optional[str] = None):
         _engine = create_engine(
             f"sqlite:///{path}",
             connect_args={"check_same_thread": False},
+            poolclass=NullPool,
             echo=False,
         )
         Base.metadata.create_all(_engine)

@@ -50,28 +50,59 @@ def generate_suggestions(schema: dict, database_context: str) -> list[str]:
 
 
 def _get_followups(user_message: str) -> list[str]:
+    msg = user_message.lower().strip()
+    followups = []
+
+    if any(w in msg for w in ["revenue", "sales", "product", "price", "amount", "top"]):
+        followups.extend([
+            "Show monthly revenue trends",
+            "Which products have the highest quantities sold?",
+            "Which customers generate the most revenue?",
+            "Break down sales by product category",
+        ])
+    elif any(w in msg for w in ["customer", "order", "client", "inactive", "recent"]):
+        followups.extend([
+            "Which customers have not placed an order recently?",
+            "Show top 10 customers by order count",
+            "What is the average order value per customer?",
+            "Count total orders by status",
+        ])
+    elif any(w in msg for w in ["missing", "duplicate", "null", "quality", "health"]):
+        followups.extend([
+            "Show tables with highest null percentage",
+            "Show duplicate records in primary tables",
+            "How do I add a primary key to affected tables?",
+            "Run comprehensive AI Database Guardian diagnosis",
+        ])
+    elif any(w in msg for w in ["correlat", "decline", "trend", "factor", "growth"]):
+        followups.extend([
+            "What factors correlate with revenue changes?",
+            "Show month-over-month performance comparison",
+            "Compare metrics across product categories",
+        ])
+
     try:
         schema = get_schema()
     except Exception:
-        return []
+        schema = None
 
-    profile = None
+    if schema:
+        tables = list(schema.keys())
+        for t in tables[:3]:
+            cand = f"Show all {t}"
+            if cand not in followups:
+                followups.append(cand)
+        if len(tables) > 1 and "Show table relationships" not in followups:
+            followups.append("Show table relationships")
 
-    try:
-        from app.database.database_context import get_database_profile
-        profile = get_database_profile()
-    except Exception:
-        pass
+    if not followups:
+        followups = [
+            "Show database schema",
+            "Which tables contain missing or duplicate data?",
+            "Analyze my database",
+        ]
 
-    database_context = ""
-
-    if profile and profile.analyzed:
-        database_context = profile.to_context()
-
-    return generate_suggestions(
-        schema,
-        database_context
-    )
+    return followups[:5]
 
 
 def _is_general_knowledge_question(user_message: str) -> bool:
@@ -459,6 +490,102 @@ def _handle_analysis_request(user_message: str) -> dict:
                 "What databases do you support?",
             ],
         }
+
+
+
+def _is_data_quality_question(user_message: str) -> bool:
+    msg = user_message.lower().strip()
+    return bool(
+        re.search(r"\b(missing\s+or\s+duplicate|duplicate\s+or\s+missing|missing\s+data|duplicate\s+data|duplicate\s+records?|null\s+values?|data\s+health|quality\s+issues?|data\s+anomal(?:y|ies))\b", msg)
+        or ("which tables" in msg and any(w in msg for w in ["missing", "duplicate", "null", "empty", "quality"]))
+        or ("what tables" in msg and any(w in msg for w in ["missing", "duplicate", "null", "empty", "quality"]))
+        or ("tables contain" in msg and any(w in msg for w in ["missing", "duplicate", "null", "empty"]))
+    )
+
+
+def _handle_data_quality_question(user_message: str) -> dict:
+    from app.database.database_context import get_database_profile, refresh_database_profile
+    profile = get_database_profile()
+    if profile is None or not profile.analyzed or profile.total_tables == 0:
+        profile = refresh_database_profile()
+
+    if profile is None or profile.total_tables == 0:
+        return {
+            "generated_sql": "",
+            "result": {"success": False, "columns": [], "rows": [], "rows_returned": 0},
+            "chart": None,
+            "diagram": None,
+            "analytics": None,
+            "explanation": "No database tables found to analyze for missing or duplicate data.",
+            "followups": ["How do I connect a database?", "What databases do you support?"],
+        }
+
+    findings = profile.data_health_findings or []
+    rows = []
+    for f in findings:
+        rows.append({
+            "table": f.table,
+            "column": f.column or "(all columns)",
+            "severity": f.severity.upper(),
+            "issue_type": f.type,
+            "metric_value": str(f.metric_value) if f.metric_value is not None else "-",
+            "suggested_action": f.suggested_action,
+        })
+
+    chart = None
+    table_counts = {}
+    for f in findings:
+        table_counts[f.table] = table_counts.get(f.table, 0) + 1
+
+    if table_counts:
+        chart = {
+            "chart_type": "bar",
+            "title": "Data Quality Issues by Table",
+            "labels": list(table_counts.keys()),
+            "values": list(table_counts.values()),
+            "x_key": "table",
+            "y_keys": ["issues_count"],
+        }
+
+    if findings:
+        bullet_lines = []
+        for f in findings[:6]:
+            col_part = f" (column `{f.column}`)" if f.column else ""
+            bullet_lines.append(f"- **{f.table}**{col_part}: {f.description}")
+        bullet_text = "\n".join(bullet_lines)
+
+        explanation = (
+            f"### 🩺 Data Quality Diagnostic Findings (Health Score: {profile.health_score}/100)\n\n"
+            f"Analysis detected **{len(findings)} data health issue(s)** across {len(table_counts)} table(s):\n\n"
+            f"{bullet_text}\n\n"
+            f"Review the table below for specific details and recommended corrective actions."
+        )
+    else:
+        explanation = (
+            f"### 🩺 Data Quality Diagnostic Findings (Health Score: {profile.health_score}/100)\n\n"
+            f"✅ **No missing or duplicate data issues detected.** All {profile.total_tables} tables have verified primary keys, valid record populations, and normal null distributions."
+        )
+
+    return {
+        "generated_sql": "",
+        "result": {
+            "success": True,
+            "columns": ["table", "column", "severity", "issue_type", "metric_value", "suggested_action"],
+            "rows": rows,
+            "rows_returned": len(rows),
+            "execution_time_ms": 1.0,
+        },
+        "chart": chart,
+        "diagram": None,
+        "analytics": None,
+        "explanation": explanation,
+        "followups": [
+            "Show duplicate records in primary tables",
+            "Show tables with highest null percentage",
+            "Which products generate the most revenue?",
+            "Run comprehensive AI Database Guardian diagnosis",
+        ],
+    }
 
 
 def _handle_no_database_request(user_message: str) -> dict:
@@ -4089,6 +4216,12 @@ def run_agent(
     if _is_analysis_request(user_message):
         return _handle_analysis_request(user_message)
 
+    # ---------------------------------------------------------
+    # Data Quality & Missing/Duplicate Data questions
+    # ---------------------------------------------------------
+    if _is_data_quality_question(user_message):
+        return _handle_data_quality_question(user_message)
+
     if not schema:
         msg_clean = user_message.lower().strip()
         greetings = {"hi", "hello", "hey", "hii", "heyy", "good morning", "good afternoon", "good evening", "howdy", "sup"}
@@ -4505,8 +4638,16 @@ SQL RULES:
         chart = None
         if is_chart:
             chart = generate_chart(user_message, result)
+        elif result.get("success") and len(result.get("columns", [])) >= 2 and len(result.get("rows", [])) >= 1:
+            try:
+                chart = generate_chart(user_message, result)
+            except Exception:
+                chart = None
 
         explanation = explain_data(user_message, result)
+        msg_lower = user_message.lower()
+        if any(w in msg_lower for w in ["correlat", "cause", "causation", "factors associated", "factors correlate"]):
+            explanation += "\n\n> ℹ️ **Analyst Note on Correlation:** The observed statistical association in this dataset indicates co-occurrence within the recorded data and does not prove causal attribution." 
 
         return {
             "generated_sql": sql,

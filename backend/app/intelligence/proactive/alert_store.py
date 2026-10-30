@@ -22,6 +22,7 @@ from sqlalchemy import (
     Column, String, Float, DateTime, Text, Index,
     create_engine, desc
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 from app.intelligence.proactive.models import (
@@ -45,6 +46,10 @@ _SessionFactory = None
 
 def _get_engine(custom_engine=None):
     global _engine, _SessionFactory
+    if custom_engine is False:
+        _engine = None
+        _SessionFactory = None
+        return None
     if custom_engine is not None:
         _engine = custom_engine
         Base.metadata.create_all(_engine)
@@ -58,10 +63,15 @@ def _get_engine(custom_engine=None):
                     "BGAI_PROACTIVE_DB_URL",
                     f"sqlite:///{_DEFAULT_DB_PATH}"
                 )
+                engine_kwargs = {
+                    "connect_args": {"check_same_thread": False} if "sqlite" in db_url else {},
+                    "pool_pre_ping": True,
+                }
+                if "sqlite" in db_url:
+                    engine_kwargs["poolclass"] = NullPool
                 _engine = create_engine(
                     db_url,
-                    connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
-                    pool_pre_ping=True,
+                    **engine_kwargs,
                 )
                 Base.metadata.create_all(_engine)
                 _SessionFactory = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
@@ -194,8 +204,11 @@ def save_alert(alert: BusinessAlert, user_id: Optional[str] = None) -> BusinessA
             existing.recommendation = alert.recommendation
             existing.action_suggestion_json = json.dumps(alert.action_suggestion) if alert.action_suggestion else None
             existing.updated_at = now
-            if alert.status == AlertStatus.RESOLVED and not existing.resolved_at:
-                existing.resolved_at = now
+            if alert.status == AlertStatus.RESOLVED:
+                if not existing.resolved_at:
+                    existing.resolved_at = now
+            elif alert.status in AlertStatus.ACTIVE_STATUSES:
+                existing.resolved_at = None
             session.commit()
             return _entity_to_model(existing)
 
@@ -298,7 +311,7 @@ def update_alert_status(
 
         rec.status = new_status
         rec.updated_at = datetime.utcnow()
-        if new_status == AlertStatus.RESOLVED:
+        if new_status in (AlertStatus.RESOLVED, AlertStatus.DISMISSED):
             rec.resolved_at = datetime.utcnow()
         session.commit()
         return _entity_to_model(rec)

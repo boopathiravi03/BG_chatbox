@@ -14,6 +14,7 @@ from sqlalchemy import (
     create_engine
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.pool import NullPool
 
 from app.paths import get_app_data_file
 
@@ -23,6 +24,7 @@ _USERS_DB_PATH = get_app_data_file("bgai_users.db")
 _users_engine = create_engine(
     f"sqlite:///{_USERS_DB_PATH}",
     connect_args={"check_same_thread": False},
+    poolclass=NullPool,
     pool_pre_ping=True,
 )
 

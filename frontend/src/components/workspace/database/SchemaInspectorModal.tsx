@@ -41,11 +41,6 @@ export default function SchemaInspectorModal({
   const [previewColumns, setPreviewColumns] = useState<string[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  useEffect(() => {
-    if (!connection) return;
-    loadSchema();
-  }, [connection]);
-
   const loadSchema = async () => {
     if (!connection) return;
     setLoading(true);
@@ -66,9 +61,9 @@ export default function SchemaInspectorModal({
   };
 
   useEffect(() => {
-    if (!connection || !selectedTable || activeTab !== "preview") return;
-    loadTablePreview();
-  }, [connection, selectedTable, activeTab]);
+    if (!connection) return;
+    loadSchema();
+  }, [connection]);
 
   const loadTablePreview = async () => {
     if (!connection || !selectedTable) return;
@@ -94,6 +89,11 @@ export default function SchemaInspectorModal({
       setPreviewLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!connection || !selectedTable || activeTab !== "preview") return;
+    loadTablePreview();
+  }, [connection, selectedTable, activeTab]);
 
   if (!connection) return null;
 

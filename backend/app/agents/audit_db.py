@@ -28,6 +28,7 @@ from sqlalchemy import (
     create_engine, Index, text as sa_text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.paths import get_app_data_file
 
@@ -37,6 +38,7 @@ _AUDIT_DB_PATH = get_app_data_file("bgai_audit.db")
 _audit_engine = create_engine(
     f"sqlite:///{_AUDIT_DB_PATH}",
     connect_args={"check_same_thread": False},
+    poolclass=NullPool,
     pool_pre_ping=True,
 )
 

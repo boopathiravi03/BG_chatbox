@@ -195,6 +195,11 @@ class CommandPolicy:
                 ft_val = str(first_token).upper() if first_token else ""
 
                 if ft_val == "WITH":
+                    # Check nested tokens recursively for mutations or DDL inside CTEs
+                    flattened_words = [t.value.upper() for t in stmt.flatten() if t.is_keyword]
+                    for mut_kw in ("DROP", "TRUNCATE", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE"):
+                        if mut_kw in flattened_words:
+                            return mut_kw, ft_val
                     for tok in stmt.tokens:
                         if tok.is_keyword and tok.value.upper() in (
                             "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"
@@ -216,7 +221,7 @@ class CommandPolicy:
             return "", ""
         first_word = tokens[0].upper()
         if first_word == "WITH":
-            for verb in ("INSERT", "UPDATE", "DELETE", "SELECT"):
+            for verb in ("DROP", "TRUNCATE", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE"):
                 if re.search(rf"\b{verb}\b", cleaned_sql, re.I):
                     return verb, first_word
             return "SELECT", first_word
@@ -600,9 +605,20 @@ class CommandPolicy:
         ).lower()
 
         # Handle Non-Relational connectors natively
+        relational_dialects = {
+            "sqlite", "sqlite3", "postgres", "postgresql", "mysql",
+            "mariadb", "mssql", "sqlserver", "oracle", "duckdb"
+        }
+        is_relational = (
+            resolved_dialect in relational_dialects
+            or (connector and getattr(connector, "category", "") == "relational")
+        )
         is_non_relational = (
-            (connector and getattr(connector, "category", "") != "relational")
-            or resolved_dialect in ("mongodb", "mongo", "redis", "qdrant", "chroma")
+            not is_relational
+            and (
+                (connector and getattr(connector, "category", "") not in ("", "relational"))
+                or resolved_dialect in ("mongodb", "mongo", "redis", "qdrant", "chroma")
+            )
         )
         if is_non_relational:
             return cls._validate_nonrelational(
@@ -1018,3 +1034,28 @@ def generate_command_fingerprint(
 
     payload = f"{canon_op}|{canon_target}|{canon_sql}|{canon_db}|{canon_conn}|{canon_user}|{canon_session}|{canon_params}|{canon_exp}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ── Audit Logging SQL Sanitization ──────────────────────────────────────────
+_SENSITIVE_AUDIT_PATTERNS = [
+    (re.compile(r"(IDENTIFIED\s+BY\s+)['\"][^'\"]+['\"]", re.I), r"\1'***'"),
+    (re.compile(r"(PASSWORD\s*=\s*)['\"][^'\"]+['\"]", re.I), r"\1'***'"),
+    (re.compile(r"((?:secret|api_key|access_token|private_key|token)\s*=\s*)['\"][^'\"]+['\"]", re.I), r"\1'***'"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.I), "Bearer ***"),
+    (re.compile(r"(\bSET\s+(?:password|secret|hash)\s*=\s*)['\"][^'\"]+['\"]", re.I), r"\1'***'"),
+]
+
+
+def sanitize_sql_for_audit(sql: str) -> str:
+    """
+    Sanitizes SQL commands prior to recording in telemetry, security logs, or audit chains.
+    Redacts explicit credentials, passwords, tokens, and secret keys while preserving
+    structural AST clarity for operational auditing.
+    """
+    if not sql:
+        return ""
+    sanitized = sql
+    for pattern, repl in _SENSITIVE_AUDIT_PATTERNS:
+        sanitized = pattern.sub(repl, sanitized)
+    return sanitized
+

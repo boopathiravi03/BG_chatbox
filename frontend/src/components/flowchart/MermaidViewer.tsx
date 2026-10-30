@@ -1,11 +1,4 @@
 import { useEffect, useRef } from "react";
-import mermaid from "mermaid";
-
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "dark",
-  securityLevel: "loose",
-});
 
 export default function MermaidViewer({
   diagram,
@@ -16,11 +9,32 @@ export default function MermaidViewer({
 
   useEffect(() => {
     if (!ref.current || !diagram) return;
-    mermaid.render(`mermaid-${Date.now()}`, diagram.diagram).then((result) => {
-      if (ref.current) {
-        ref.current.innerHTML = result.svg;
+    let isMounted = true;
+
+    import("mermaid").then(({ default: mermaid }) => {
+      if (!isMounted || !ref.current) return;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "dark",
+        securityLevel: "loose",
+      });
+
+      return mermaid
+        .render(`mermaid-${Date.now()}`, diagram.diagram)
+        .then((result) => {
+          if (isMounted && ref.current) {
+            ref.current.innerHTML = result.svg;
+          }
+        });
+    }).catch(() => {
+      if (isMounted && ref.current) {
+        ref.current.innerHTML = `<p class="text-xs text-red-400">Failed to render ER diagram.</p>`;
       }
     });
+
+    return () => {
+      isMounted = false;
+    };
   }, [diagram]);
 
   if (!diagram || diagram.type !== "mermaid") return null;

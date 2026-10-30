@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 
 from app.connectors.base import (
     BaseConnector,
@@ -88,6 +89,7 @@ class CSVConnector(RelationalConnector):
             self._engine = create_engine(
                 "sqlite:///:memory:",
                 connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
             )
 
             # Load CSV into table
@@ -216,6 +218,7 @@ class ExcelConnector(RelationalConnector):
             self._engine = create_engine(
                 "sqlite:///:memory:",
                 connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
             )
 
             wb = openpyxl.load_workbook(self.file_path, data_only=True, read_only=True)
@@ -311,6 +314,7 @@ class JSONConnector(RelationalConnector):
             self._engine = create_engine(
                 "sqlite:///:memory:",
                 connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
             )
 
             # Extract list of records

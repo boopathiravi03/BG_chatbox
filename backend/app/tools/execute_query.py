@@ -14,7 +14,77 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 
 from app.database.database_manager import get_engine, get_current_db_type
-from app.tools.command_policy import CommandPolicy, CommandCategory
+from app.tools.command_policy import CommandPolicy, CommandCategory, sanitize_sql_for_audit
+
+
+def sanitize_error_message(err_msg: str) -> str:
+    """Redacts connection strings, passwords, and sensitive tokens from database errors."""
+    if not err_msg:
+        return ""
+    # Redact standard database connection strings: protocol://user:pass@host:port/db
+    # Handles special characters like @, !, #, $, %, etc. in password up to host
+    s = re.sub(r"://([^:\s]+?):(.+?)@([\w\.\-]+(?::\d+)?(?:/|$|\?))", r"://\1:***@\3", str(err_msg))
+    # Redact user '...':'password'@'...' style errors (e.g. PyMySQL/MySQL)
+    s = re.sub(r"(['\"][^'\"]+['\"]):['\"][^'\"]+['\"]@", r"\1:'***'@", s)
+    # Redact password parameters: password='...' or password = "..." or pwd=...
+    s = re.sub(r"((?:password|pwd|secret|auth)\s*=\s*)['\"][^'\"]+['\"]", r"\1'***'", s, flags=re.I)
+    # Redact bearer tokens and secret keys
+    s = re.sub(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", r"\1***", s, flags=re.I)
+    s = re.sub(r"(sk_live_[A-Za-z0-9]+)", r"[REDACTED_SECRET]", s)
+    s = re.sub(r"((?:api[_-]?key|access_token|private_key)\s*[:=]\s*)['\"][^'\"]+['\"]", r"\1'***'", s, flags=re.I)
+    return s
+
+
+def _record_execution_audit(
+    sql: str,
+    operation: str,
+    success: bool,
+    user_id: Optional[str] = None,
+    connection_id: Optional[str] = None,
+    affected_rows: int = 0,
+    error: Optional[str] = None,
+) -> None:
+    """Safely captures audit telemetry with credential and secret redaction."""
+    try:
+        from app.intelligence.governance.audit_store import save_audit_event
+        from app.intelligence.governance.models import (
+            GovernanceAuditEvent,
+            GovernanceEventType,
+            ActorType,
+            RiskLevel,
+        )
+        from datetime import datetime, timezone
+        import uuid
+
+        sanitized_sql = sanitize_sql_for_audit(sql)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        op_upper = (operation or "UNKNOWN").upper()
+        is_mutation = op_upper in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE")
+        risk = RiskLevel.MEDIUM if is_mutation else RiskLevel.LOW
+        if op_upper in ("DROP", "TRUNCATE"):
+            risk = RiskLevel.HIGH
+
+        audit_ev = GovernanceAuditEvent(
+            event_id=f"ev_{uuid.uuid4().hex[:8]}",
+            timestamp=now_iso,
+            user_id=user_id or "default_user",
+            database_identity=connection_id or "default_database",
+            event_type=GovernanceEventType.QUERY_EXECUTED,
+            resource_type="DATABASE",
+            resource_id=connection_id or "default_database",
+            actor_type=ActorType.USER,
+            action=op_upper,
+            result="SUCCESS" if success else "FAILED",
+            risk_level=risk,
+            metadata={
+                "sanitized_sql": sanitized_sql,
+                "affected_rows": affected_rows,
+                "error": error,
+            },
+        )
+        save_audit_event(audit_ev)
+    except Exception:
+        pass
 
 # Compatibility sets
 MUTATION_COMMANDS = {
@@ -90,6 +160,8 @@ def execute_query(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     params: Optional[Dict[str, Any]] = None,
+    engine: Optional[Any] = None,
+    db_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Executes a SQL query or database command across relational or non-relational connectors
@@ -114,13 +186,16 @@ def execute_query(
             if connection_id:
                 target_conn = reg.get_connector(uid, connection_id)
                 if not target_conn:
-                    return {
-                        "success": False,
-                        "columns": [],
-                        "rows": [],
-                        "error": f"Connection '{connection_id}' not found or unauthorized.",
-                        "rows_returned": 0,
-                    }
+                    from app.database.connection_context import get_user_context
+                    u_ctx = get_user_context(uid)
+                    if not (u_ctx and u_ctx.context_id == connection_id and u_ctx.engine is not None):
+                        return {
+                            "success": False,
+                            "columns": [],
+                            "rows": [],
+                            "error": f"Connection '{connection_id}' not found or unauthorized.",
+                            "rows_returned": 0,
+                        }
             else:
                 target_conn = reg.get_active_connector(uid)
     except Exception:
@@ -189,6 +264,15 @@ def execute_query(
 
         # Confirmed execution on non-relational connector
         res = target_conn.execute_query(sql, params=params)
+        _record_execution_audit(
+            sql=sql,
+            operation=validation.get("operation", "query"),
+            success=res.success,
+            user_id=uid,
+            connection_id=connection_id or getattr(target_conn, "connection_id", None),
+            affected_rows=res.affected_rows or 0,
+            error=res.error,
+        )
         return {
             "success": res.success,
             "columns": res.columns,
@@ -204,15 +288,15 @@ def execute_query(
         }
 
     # 2. Relational Policy-Based Validation
-    db_type = (
-        target_conn.connector_type
-        if target_conn
-        else get_current_db_type()
+    resolved_db_type = (
+        db_type
+        or (target_conn.connector_type if target_conn else None)
+        or get_current_db_type()
     )
 
     validation = CommandPolicy.validate(
         sql=sql,
-        dialect=db_type,
+        dialect=resolved_db_type,
         connector=target_conn,
         user_id=uid,
     ).to_dict()
@@ -341,17 +425,26 @@ def execute_query(
         }
 
     # 4. Engine Resolution
-    engine = None
-    if target_conn and hasattr(target_conn, "get_engine"):
+    resolved_engine = engine
+    if resolved_engine is None and uid:
         try:
-            engine = target_conn.get_engine()
+            from app.database.connection_context import get_user_context
+            u_ctx = get_user_context(uid)
+            if u_ctx and u_ctx.engine is not None:
+                resolved_engine = u_ctx.engine
         except Exception:
-            engine = None
+            pass
 
-    if engine is None:
-        engine = get_engine()
+    if resolved_engine is None and target_conn and hasattr(target_conn, "get_engine"):
+        try:
+            resolved_engine = target_conn.get_engine()
+        except Exception:
+            resolved_engine = None
 
-    if engine is None:
+    if resolved_engine is None:
+        resolved_engine = get_engine()
+
+    if resolved_engine is None:
         return {
             "success": False,
             "columns": [],
@@ -368,9 +461,9 @@ def execute_query(
         operation = validation["operation"]
         clean_stmt = validation.get("clean_sql") or sql.strip()
 
-        with engine.begin() as conn:
+        with resolved_engine.begin() as conn:
             # Dialect adaptation: SQLite TRUNCATE simulation
-            if db_type == "sqlite" and operation == "truncate":
+            if resolved_db_type == "sqlite" and operation == "truncate":
                 primary_table = validation.get("primary_table")
                 if not primary_table:
                     m = re.search(r"\bTRUNCATE\s+(?:TABLE\s+)?([`\"\[\w\.]+)", clean_stmt, re.I)
@@ -390,30 +483,62 @@ def execute_query(
                     "rows": [],
                     "rows_returned": 0,
                     "operation": "truncate",
-                    "database": db_type,
+                    "database": resolved_db_type,
                     "affected_rows": affected,
                     "execution_time_ms": elapsed,
                     "message": f"Table '{primary_table}' truncated successfully (via SQLite delete).",
                 }
 
             # Standard SQL execution with parameters if provided
-            stmt = text(clean_stmt)
+            stmt = text(clean_stmt).execution_options(yield_per=500)
             result = conn.execute(stmt, params or {})
 
             elapsed = round((time.perf_counter() - start_time) * 1000.0, 2)
 
             # Query returns rowset (SELECT, PRAGMA, SHOW, DESCRIBE, EXPLAIN)
             if result.returns_rows:
-                rows = [dict(row._mapping) for row in result]
-                columns = list(result.keys())
+                # Execution-layer bounded fetch to protect against OOM
+                MAX_ROWS_LIMIT = 2000
+                BATCH_SIZE = 500
+                rows = []
+                truncated = False
+                while len(rows) < MAX_ROWS_LIMIT:
+                    chunk = result.fetchmany(min(BATCH_SIZE, MAX_ROWS_LIMIT - len(rows)))
+                    if not chunk:
+                        break
+                    for row in chunk:
+                        rows.append(dict(row._mapping))
+
+                if len(rows) >= MAX_ROWS_LIMIT:
+                    extra = result.fetchmany(1)
+                    if extra:
+                        truncated = True
+
+                try:
+                    result.close()
+                except Exception:
+                    pass
+
+                columns = list(result.keys()) if hasattr(result, "keys") else []
+
+                _record_execution_audit(
+                    sql=sql,
+                    operation=operation,
+                    success=True,
+                    user_id=uid,
+                    connection_id=connection_id or getattr(target_conn, "connection_id", None),
+                    affected_rows=0,
+                )
 
                 return {
                     "success": True,
                     "columns": columns,
                     "rows": rows,
                     "rows_returned": len(rows),
+                    "truncated": truncated,
+                    "max_rows_limit": MAX_ROWS_LIMIT,
                     "operation": operation,
-                    "database": db_type,
+                    "database": resolved_db_type,
                     "affected_rows": 0,
                     "execution_time_ms": elapsed,
                 }
@@ -425,13 +550,22 @@ def execute_query(
                 else 0
             )
 
+            _record_execution_audit(
+                sql=sql,
+                operation=operation,
+                success=True,
+                user_id=uid,
+                connection_id=connection_id or getattr(target_conn, "connection_id", None),
+                affected_rows=affected_rows,
+            )
+
             return {
                 "success": True,
                 "columns": [],
                 "rows": [],
                 "rows_returned": 0,
                 "operation": operation,
-                "database": db_type,
+                "database": resolved_db_type,
                 "affected_rows": affected_rows,
                 "execution_time_ms": elapsed,
                 "message": f"{operation.capitalize()} completed successfully.",
@@ -439,14 +573,24 @@ def execute_query(
 
     except Exception as e:
         elapsed = round((time.perf_counter() - start_time) * 1000.0, 2)
+        sanitized_err = sanitize_error_message(str(e))
+        _record_execution_audit(
+            sql=sql,
+            operation=validation.get("operation", "query"),
+            success=False,
+            user_id=uid,
+            connection_id=connection_id or getattr(target_conn, "connection_id", None),
+            affected_rows=0,
+            error=sanitized_err,
+        )
         return {
             "success": False,
             "columns": [],
             "rows": [],
             "rows_returned": 0,
             "operation": validation["operation"],
-            "database": db_type,
+            "database": resolved_db_type,
             "affected_rows": 0,
             "execution_time_ms": elapsed,
-            "error": str(e),
+            "error": sanitized_err,
         }

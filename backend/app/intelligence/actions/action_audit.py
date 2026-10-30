@@ -18,6 +18,7 @@ from sqlalchemy import (
     Column, String, Integer, DateTime, Text, Index,
     create_engine, desc
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 from app.intelligence.actions.models import (
@@ -89,9 +90,14 @@ def _get_engine(custom_engine=None):
         with _store_lock:
             if _engine is None:
                 db_url = os.getenv("BGAI_ACTIONS_DB_URL", f"sqlite:///{_DEFAULT_DB_PATH}")
+                engine_kwargs = {
+                    "connect_args": {"check_same_thread": False} if "sqlite" in db_url else {},
+                }
+                if "sqlite" in db_url:
+                    engine_kwargs["poolclass"] = NullPool
                 _engine = create_engine(
                     db_url,
-                    connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
+                    **engine_kwargs,
                 )
                 Base.metadata.create_all(_engine)
                 _SessionFactory = sessionmaker(bind=_engine, autoflush=False, autocommit=False)

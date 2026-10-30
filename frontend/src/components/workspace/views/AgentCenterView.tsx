@@ -75,20 +75,6 @@ export default function AgentCenterView({
     message: string;
   } | null>(null);
 
-  useEffect(() => {
-    loadAgents();
-    loadActions();
-  }, [dbConnected]);
-
-  useEffect(() => {
-    if (initialPrompt) {
-      setTaskPrompt(initialPrompt);
-    }
-    if (initialAgent) {
-      setSelectedAgent(initialAgent);
-    }
-  }, [initialPrompt, initialAgent]);
-
   const loadAgents = async () => {
     setLoadingAgents(true);
     try {
@@ -112,6 +98,20 @@ export default function AgentCenterView({
       setLoadingActions(false);
     }
   };
+
+  useEffect(() => {
+    loadAgents();
+    loadActions();
+  }, [dbConnected]);
+
+  useEffect(() => {
+    if (initialPrompt) {
+      setTaskPrompt(initialPrompt);
+    }
+    if (initialAgent) {
+      setSelectedAgent(initialAgent);
+    }
+  }, [initialPrompt, initialAgent]);
 
   const handleRunTask = async (customPrompt?: string, agentOverride?: string) => {
     const promptToUse = customPrompt || taskPrompt;

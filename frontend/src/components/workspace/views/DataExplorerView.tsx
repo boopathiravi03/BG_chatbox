@@ -115,7 +115,7 @@ function parseColumnInfo(
     !isPrimaryKey &&
     (colName.toLowerCase().endsWith("_id") || colName.toLowerCase().endsWith("id"));
 
-  let constraint = "Standard";
+  let constraint: string;
   if (isPrimaryKey) {
     constraint = "PRIMARY KEY NOT NULL";
   } else if (!isNullable) {
@@ -409,7 +409,9 @@ export default function DataExplorerView({
           try {
             cleanData[k] = JSON.parse(v);
             continue;
-          } catch {}
+          } catch {
+            // Keep as string if not valid JSON
+          }
         }
         cleanData[k] = v;
       }

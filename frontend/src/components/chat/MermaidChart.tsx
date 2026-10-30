@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import mermaid from "mermaid";
 
 interface Props {
   chart: string;
@@ -9,26 +8,31 @@ export default function MermaidChart({ chart }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: "dark",
-    });
+    let isMounted = true;
 
-    const render = async () => {
-      if (!ref.current) return;
+    import("mermaid").then(({ default: mermaid }) => {
+      if (!isMounted || !ref.current) return;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "dark",
+      });
 
       const id = "diagram-" + Date.now();
-
-      try {
-        const { svg } = await mermaid.render(id, chart);
-        ref.current.innerHTML = svg;
-      } catch (err) {
+      return mermaid.render(id, chart).then(({ svg }) => {
+        if (isMounted && ref.current) {
+          ref.current.innerHTML = svg;
+        }
+      });
+    }).catch(() => {
+      if (isMounted && ref.current) {
         ref.current.innerHTML =
           "<p style='color:red'>Failed to render Mermaid diagram.</p>";
       }
-    };
+    });
 
-    render();
+    return () => {
+      isMounted = false;
+    };
   }, [chart]);
 
   return (

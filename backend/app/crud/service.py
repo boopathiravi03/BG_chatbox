@@ -233,7 +233,9 @@ def execute_confirmed(
         if result.get("success"):
             # Invalidate schema cache so UI and agent immediately see updated entities
             try:
-                refresh_database_profile()
+                from app.database.database_context import invalidate_database_profile
+                invalidate_database_profile(user_id=expected_uid, connection_id=conn_id)
+                refresh_database_profile(user_id=expected_uid, connection_id=conn_id)
             except Exception:
                 pass
 

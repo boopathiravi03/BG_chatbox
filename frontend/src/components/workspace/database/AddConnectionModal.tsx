@@ -81,12 +81,6 @@ export default function AddConnectionModal({
   const getConnName = (item: ConnectorCatalogItem): string =>
     item.name || item.display_name || "";
 
-  useEffect(() => {
-    if (!isOpen) return;
-    loadCatalog();
-    setError(null);
-  }, [isOpen]);
-
   const loadCatalog = async () => {
     setLoadingCatalog(true);
     try {
@@ -99,6 +93,12 @@ export default function AddConnectionModal({
       setLoadingCatalog(false);
     }
   };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    loadCatalog();
+    setError(null);
+  }, [isOpen]);
 
   const handleSelectConnector = (item: ConnectorCatalogItem) => {
     setSelectedConnector(item);

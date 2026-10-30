@@ -106,13 +106,6 @@ export const EnterpriseKnowledgeSection: React.FC<EnterpriseKnowledgeSectionProp
     fetchKnowledge();
   }, [dbConnected]);
 
-  // Load Lineage when tab changes or metric selected
-  useEffect(() => {
-    if (activeTab === "lineage" && selectedMetricId) {
-      loadLineage(selectedMetricId);
-    }
-  }, [activeTab, selectedMetricId]);
-
   const loadLineage = async (metricId: string) => {
     setLineageLoading(true);
     try {
@@ -126,6 +119,13 @@ export const EnterpriseKnowledgeSection: React.FC<EnterpriseKnowledgeSectionProp
       setLineageLoading(false);
     }
   };
+
+  // Load Lineage when tab changes or metric selected
+  useEffect(() => {
+    if (activeTab === "lineage" && selectedMetricId) {
+      loadLineage(selectedMetricId);
+    }
+  }, [activeTab, selectedMetricId]);
 
   const handleParseContext = async () => {
     if (!contextInput.trim()) return;

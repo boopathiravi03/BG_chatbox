@@ -161,16 +161,38 @@ def set_user_context_for_request(
     ctx_id = None
 
     # Check Multi-Connection Registry first
+    connection_lookup_failed = False
     try:
         from app.connectors.registry import get_connection_registry
         from app.connectors.relational import RelationalConnector
         reg = get_connection_registry()
         connector = None
         if connection_id:
-            reg.set_active_connector(user_id, connection_id)
             connector = reg.get_connector(user_id, connection_id)
-        if not connector:
+            if connector:
+                reg.set_active_connector(user_id, connection_id)
+            else:
+                # Check if connection matches user's registered context
+                user_ctx = _registry.get(user_id)
+                if user_ctx and user_ctx.context_id == connection_id and user_ctx.engine is not None:
+                    engine = user_ctx.engine
+                    db_type = user_ctx.database_type
+                    ctx_id = user_ctx.context_id
+                    _request_connection_id.set(ctx_id)
+                else:
+                    # Critical security: If explicit connection_id was requested but not found
+                    # or belongs to another user, DO NOT fall back silently to another database!
+                    connection_lookup_failed = True
+        else:
             connector = reg.get_active_connector(user_id)
+
+        if connection_lookup_failed:
+            _request_engine.set(None)
+            _request_db_type.set("none")
+            _request_user_id.set(user_id)
+            _request_context_id.set(None)
+            _request_connection_id.set(None)
+            return _make_empty_context(user_id)
 
         if connector:
             ctx_id = connector.connection_id
@@ -186,6 +208,15 @@ def set_user_context_for_request(
             _request_connection_id.set(connector.connection_id)
     except Exception:
         pass
+
+    # If explicit connection_id was requested but not found, abort fallback
+    if connection_lookup_failed:
+        _request_engine.set(None)
+        _request_db_type.set("none")
+        _request_user_id.set(user_id)
+        _request_context_id.set(None)
+        _request_connection_id.set(None)
+        return _make_empty_context(user_id)
 
     # If registry didn't have an engine, fall back to legacy user context
     if engine is None and db_type == "none":
@@ -203,7 +234,8 @@ def set_user_context_for_request(
                 engine = existing_ctx.engine
                 if db_type == "none":
                     db_type = existing_ctx.database_type
-            else:
+            elif user_id in ("default_user", "default", None):
+                # Fallback to database_manager ONLY for single-user dev/testing
                 try:
                     from app.database.database_manager import get_engine as get_dm_engine, get_current_db_type as get_dm_db_type
                     dm_eng = get_dm_engine()

@@ -1999,5 +1999,129 @@ export interface IPThreatListResponse {
   message?: string;
 }
 
+// ── Sprint 2: Autonomous Business Intelligence & Scheduled Monitoring ─────────
 
+export interface MonitoringSchedule {
+  user_id: string;
+  connection_id: string;
+  interval_minutes: number;
+  is_enabled: boolean;
+  status: string;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  last_error?: string | null;
+}
 
+export interface ScanHistoryItem {
+  scan_id: string;
+  connection_id: string;
+  scanned_at: string;
+  health_score: number;
+  total_findings: number;
+  new_findings: number;
+  resolved_findings: number;
+  anomalies_detected: number;
+  scan_duration_ms: number;
+  status: string;
+  error_message?: string | null;
+  summary?: any;
+}
+
+export interface HealthScanResponse {
+  status: string;
+  scan_id: string;
+  connection_id?: string;
+  scanned_at: string;
+  health_score: number;
+  total_findings: number;
+  new_findings: any[];
+  resolved_findings: any[];
+  persistent_findings: any[];
+  schema_changes: string[];
+  row_count_shifts: any[];
+  anomalies: any[];
+  scan_duration_ms: number;
+  is_manual?: boolean;
+  error?: string;
+  message?: string;
+}
+
+// ── Sprint 3: AI Business Investigator Types ─────────────────────────────────
+
+export interface BusinessInvestigationReportItem {
+  report_id: string;
+  connection_id: string;
+  question: string;
+  title: string;
+  status: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface BusinessInvestigationResult {
+  status: string;
+  investigation_id: string;
+  user_id: string;
+  connection_id: string;
+  question: string;
+  title: string;
+  summary: string;
+  report?: {
+    investigation_id: string;
+    question: string;
+    title: string;
+    status: string;
+    primary_table?: string;
+    observed_change?: {
+      metric: string;
+      current_value: any;
+      previous_value: any;
+      delta?: number;
+      delta_percent?: number;
+      time_period: string;
+      formatted_change: string;
+    };
+    evidence?: any[];
+    contributing_factors?: Array<{
+      factor_id: string;
+      dimension: string;
+      dimension_value: string;
+      impact_type: string;
+      contribution_percent?: number;
+      observed_change: string;
+    }>;
+    hypotheses?: Array<{
+      hypothesis_id: string;
+      statement: string;
+      confidence_level: string;
+      status: string;
+      causality_caveat: string;
+    }>;
+    recommendations?: Array<{
+      recommendation_id: string;
+      action_title: string;
+      reason: string;
+      target_data: string;
+      expected_information_gained?: string;
+      priority: string;
+    }>;
+    charts?: Array<{
+      chart_type: string;
+      title: string;
+      x_key: string;
+      y_keys: string[];
+      data: any[];
+    }>;
+    missing_reasons?: string[];
+    provenance?: {
+      connection_id: string;
+      database_type: string;
+      tables_inspected: string[];
+      lineage_steps: string[];
+      comparison_periods: string[];
+      analyzed_columns: string[];
+    };
+    created_at: string;
+  };
+  created_at: string;
+}

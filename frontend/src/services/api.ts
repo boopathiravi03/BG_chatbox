@@ -33,6 +33,11 @@ import type {
   SecurityPostureScanResult,
   SecurityPostureFinding,
   SecurityFindingExplanation,
+  MonitoringSchedule,
+  ScanHistoryItem,
+  HealthScanResponse,
+  BusinessInvestigationResult,
+  BusinessInvestigationReportItem,
 } from "../types";
 
 declare global {
@@ -136,7 +141,7 @@ export async function apiFetch<T = any>(
       headers,
     });
   } catch (err: any) {
-    throw new Error(err.message || "Network error. Is the server running?");
+    throw new Error(err?.message || "Network error. Is the server running?", { cause: err });
   }
 
   if (response.status === 401) {
@@ -575,6 +580,12 @@ export async function acknowledgeProactiveAlert(alertId: string): Promise<{ aler
 
 export async function resolveProactiveAlert(alertId: string): Promise<{ alert: ProactiveAlert }> {
   return apiFetch<{ alert: ProactiveAlert }>(`/proactive/alerts/${encodeURIComponent(alertId)}/resolve`, {
+    method: "POST",
+  });
+}
+
+export async function dismissProactiveAlert(alertId: string): Promise<{ alert: ProactiveAlert }> {
+  return apiFetch<{ alert: ProactiveAlert }>(`/proactive/alerts/${encodeURIComponent(alertId)}/dismiss`, {
     method: "POST",
   });
 }
@@ -1967,9 +1978,118 @@ export async function updateGuardianIncidentStatus(
 }
 
 
+// ── Sprint 2: Autonomous Business Intelligence & Scheduled Monitoring ─────────
 
+export async function getMonitoringSchedule(
+  connectionId?: string
+): Promise<{ status: string; schedule: MonitoringSchedule; message?: string }> {
+  const query = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/monitoring/schedule${query}`);
+}
 
+export async function setMonitoringSchedule(
+  intervalMinutes: number,
+  isEnabled: boolean = true,
+  connectionId?: string
+): Promise<{ status: string; schedule: MonitoringSchedule; message?: string }> {
+  return apiFetch("/monitoring/schedule", {
+    method: "POST",
+    body: JSON.stringify({
+      connection_id: connectionId,
+      interval_minutes: intervalMinutes,
+      is_enabled: isEnabled,
+    }),
+  });
+}
 
+export async function pauseMonitoringSchedule(
+  connectionId?: string
+): Promise<{ status: string; schedule: MonitoringSchedule; message?: string }> {
+  return apiFetch("/monitoring/schedule/pause", {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId }),
+  });
+}
 
+export async function resumeMonitoringSchedule(
+  connectionId?: string
+): Promise<{ status: string; schedule: MonitoringSchedule; message?: string }> {
+  return apiFetch("/monitoring/schedule/resume", {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId }),
+  });
+}
 
+export async function triggerHealthMonitoringScan(
+  connectionId?: string
+): Promise<HealthScanResponse> {
+  return apiFetch("/monitoring/scan", {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId }),
+  });
+}
 
+export async function getMonitoringHistory(
+  connectionId?: string,
+  limit: number = 20
+): Promise<{ status: string; history: ScanHistoryItem[]; message?: string }> {
+  const params = new URLSearchParams();
+  if (connectionId) params.append("connection_id", connectionId);
+  params.append("limit", limit.toString());
+  return apiFetch(`/monitoring/history?${params.toString()}`);
+}
+
+export async function getMonitoringBaseline(
+  connectionId?: string
+): Promise<{ status: string; baseline: any; message?: string }> {
+  const query = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/monitoring/baseline${query}`);
+}
+
+export async function getBusinessAnomalies(
+  connectionId?: string
+): Promise<{ status: string; anomalies: any[]; message?: string }> {
+  const query = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  return apiFetch(`/monitoring/anomalies${query}`);
+}
+
+// ── Sprint 3: AI Business Investigator Endpoints ──────────────────────────────
+
+export async function startBusinessInvestigation(params: {
+  question?: string;
+  connection_id?: string;
+  signal_id?: string;
+  target_metric?: string;
+  target_table?: string;
+  time_period?: string;
+  context_data?: Record<string, any>;
+}): Promise<BusinessInvestigationResult> {
+  return apiFetch<BusinessInvestigationResult>("/investigation/start", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function listInvestigationReports(
+  connectionId?: string,
+  limit: number = 20
+): Promise<{ status: string; reports: BusinessInvestigationReportItem[]; message?: string }> {
+  const params = new URLSearchParams();
+  if (connectionId) params.append("connection_id", connectionId);
+  params.append("limit", limit.toString());
+  return apiFetch(`/investigation/reports?${params.toString()}`);
+}
+
+export async function getInvestigationReport(
+  reportId: string
+): Promise<{ status: string; report: any; message?: string }> {
+  return apiFetch(`/investigation/reports/${encodeURIComponent(reportId)}`);
+}
+
+export async function deleteInvestigationReport(
+  reportId: string
+): Promise<{ status: string; deleted?: boolean; message?: string }> {
+  return apiFetch(`/investigation/reports/${encodeURIComponent(reportId)}`, {
+    method: "DELETE",
+  });
+}

@@ -711,12 +711,18 @@ export default function Home() {
           {activeTab === "analytics" && (
             <AnalyticsView
               dbConnected={dbConnected}
+              activeConnectionId={activeConnectionId}
+              connections={connections}
               onRunAnalysis={() =>
                 handleSend("Analyze my business performance")
               }
               onConnectDatabase={() => {
                 setConnectModalType("sqlite");
                 setShowConnectModal(true);
+              }}
+              onTabChange={setActiveTab}
+              onOpenExplorerWithTable={(_t) => {
+                setActiveTab("explorer");
               }}
             />
           )}
@@ -793,9 +799,18 @@ export default function Home() {
             <DataHealthView
               dbConnected={dbConnected}
               activeConnectionId={activeConnectionId}
+              connections={connections}
               onConnectDatabase={() => {
                 setConnectModalType("sqlite");
                 setShowConnectModal(true);
+              }}
+              onTabChange={setActiveTab}
+              onOpenExplorerWithTable={(_t) => {
+                setActiveTab("explorer");
+              }}
+              onOpenSqlLabWithQuery={(q) => {
+                setSqlLabInitialQuery(q);
+                setActiveTab("sqllab");
               }}
             />
           )}
